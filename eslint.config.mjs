@@ -15,7 +15,7 @@ const eslintConfig = [
     // Specific rules for build time
     rules: {
       // Disable warnings for unused variables
-      "@typescript-eslint/no-unused-vars": "warn",
+      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^_", ignoreRestSiblings: true }],
       
       // Allow explicit any types in specific cases
       "@typescript-eslint/no-explicit-any": "warn",

@@ -1,198 +1,278 @@
 'use client';
 
-import { useState, Suspense } from 'react';
-import { signIn } from 'next-auth/react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { getSession, signIn } from 'next-auth/react';
+import { ArrowRight, BedDouble, Building2, CalendarCheck2, ChartLine, CircleAlert, ConciergeBell, Eye, EyeOff, Loader2, Luggage, PhoneCall, type LucideIcon } from 'lucide-react';
+import { AuthLayout } from '@/components/auth/AuthLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import Navigation from '@/components/Navigation';
-import { LogIn, Mail, Lock } from 'lucide-react';
-import Image from 'next/image';
+import { Field } from '@/components/ui/label';
+import { canAccessConsolePath, homeForRole, isStaffRole } from '@/lib/routes';
+import { cn } from '@/lib/utils';
+import { PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL, demoEmail } from '@/config/product';
+
+const DEMO_ENABLED = process.env.NEXT_PUBLIC_DEMO_MODE === 'true' || (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_DEMO_MODE !== 'false');
+const DEMO_PASSWORD = 'demo1234';
+
+const DEMO_ACCOUNTS: { label: string; email: string; hint: string; icon: LucideIcon }[] = [
+  { label: 'Owner', email: demoEmail('owner'), hint: 'Everything, incl. rates and team', icon: Building2 },
+  { label: 'Manager', email: demoEmail('manager'), hint: 'Bookings, rates and reports', icon: ChartLine },
+  { label: 'Front desk', email: demoEmail('frontdesk'), hint: 'Arrivals, check-in, the agent', icon: ConciergeBell },
+  { label: 'Housekeeping', email: demoEmail('housekeeping'), hint: 'Room list on a phone', icon: BedDouble },
+  { label: 'Guest', email: demoEmail('guest'), hint: 'Trips and the booking flow', icon: Luggage },
+];
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Only same-site relative paths are accepted as a post-login destination. */
+function safeCallback(raw: string | null): string | null {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return null;
+  if (raw.startsWith('/login') || raw.startsWith('/register')) return null;
+  return raw;
+}
+
+function destinationFor(role: string | undefined, callback: string | null): string {
+  if (callback) {
+    const isConsole = callback.startsWith('/admin');
+    if (!isConsole) return callback;
+    if (isStaffRole(role) && (callback === '/admin' || canAccessConsolePath(role, callback))) return callback;
+  }
+  // Staff land on /admin, which opens their preferred surface (Classic or Agentic).
+  return isStaffRole(role) ? '/admin' : homeForRole(role);
+}
+
+type FieldErrors = { email?: string; password?: string };
 
 function LoginForm() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const callback = safeCallback(params.get('callbackUrl'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [show, setShow] = useState(false);
+  const [pending, setPending] = useState<string | null>(null); // 'form' or a demo email
   const [error, setError] = useState('');
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const loading = pending !== null;
 
-  const handleGoogleSignIn = async () => {
-    setIsGoogleLoading(true);
+  function validate(): boolean {
+    const next: FieldErrors = {};
+    if (!email.trim()) next.email = 'Enter your email address.';
+    else if (!EMAIL_RE.test(email.trim())) next.email = 'Enter an email address like name@example.com.';
+    if (!password) next.password = 'Enter your password.';
+    setFieldErrors(next);
+    if (next.email) emailRef.current?.focus();
+    else if (next.password) passwordRef.current?.focus();
+    return !next.email && !next.password;
+  }
+
+  async function login(creds: { email: string; password: string }, key: string) {
+    setPending(key);
     setError('');
-    try {
-      await signIn('google', { callbackUrl });
-    } catch (error) {
-      console.error('Google sign in error:', error);
-      setError('Failed to sign in with Google. Please try again.');
-      setIsGoogleLoading(false);
+    const res = await signIn('credentials', { email: creds.email, password: creds.password, redirect: false });
+    if (!res || res.error) {
+      setError('That email and password don’t match an account. Check them and try again.');
+      setPending(null);
+      return;
     }
-  };
+    const session = await getSession();
+    router.replace(destinationFor(session?.user?.role, callback));
+    router.refresh();
+  }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setIsLoading(true);
-    setError('');
-
-    try {
-      const result = await signIn('credentials', {
-        email,
-        password,
-        redirect: false,
-        callbackUrl,
-      });
-
-      if (result?.error) {
-        // Handle different error types
-        if (result.error === 'CredentialsSignin') {
-          setError('Invalid email or password. Please check your credentials and try again.');
-        } else {
-          setError('An error occurred during login. Please try again.');
-        }
-      } else if (result?.ok) {
-        // Successful login - redirect to callback URL or dashboard
-        router.push(callbackUrl);
-        router.refresh();
-      }
-    } catch (error) {
-      console.error('Login error:', error);
-      setError('An unexpected error occurred. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    if (loading || !validate()) return;
+    void login({ email: email.trim(), password }, 'form');
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navigation />
-      
-      <div className="flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-md w-full space-y-8">
-          <Card>
-            <CardHeader className="text-center">
-              <div className="mx-auto w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-4">
-                <LogIn className="h-6 w-6 text-blue-600" />
-              </div>
-              <CardTitle className="text-2xl font-bold">Sign in to your account</CardTitle>
-              <CardDescription>
-                Enter your credentials to access your account
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {error && (
-                <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg text-sm">
-                  {error}
-                </div>
-              )}
+    <>
+      <h1 className="font-display text-3xl font-medium tracking-tight sm:text-[2rem]">Welcome back</h1>
+      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Guests and hotel teams sign in here — we’ll take you to the right place.</p>
 
-              {/* Google Sign In */}
-              <Button
+      <form onSubmit={onSubmit} className="mt-8 space-y-5" noValidate aria-describedby={error ? 'login-error' : undefined}>
+        <Field label="Email" htmlFor="email" error={fieldErrors.email}>
+          <Input
+            ref={emailRef}
+            id="email"
+            type="email"
+            inputMode="email"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            required
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (fieldErrors.email) setFieldErrors((f) => ({ ...f, email: undefined }));
+            }}
+            placeholder="you@example.com"
+            className="h-11 text-base md:text-sm"
+          />
+        </Field>
+
+        <div className="relative">
+          <Field label="Password" htmlFor="password" error={fieldErrors.password}>
+            <div className="relative">
+              <Input
+                ref={passwordRef}
+                id="password"
+                type={show ? 'text' : 'password'}
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (fieldErrors.password) setFieldErrors((f) => ({ ...f, password: undefined }));
+                }}
+                className="h-11 pr-12 text-base md:text-sm"
+              />
+              <button
                 type="button"
-                variant="outline"
-                className="w-full flex items-center justify-center gap-3 py-6 border-2 hover:bg-gray-50 transition-colors"
-                onClick={handleGoogleSignIn}
-                disabled={isGoogleLoading || isLoading}
+                onClick={() => setShow((s) => !s)}
+                className="absolute inset-y-0.5 right-0.5 flex w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label={show ? 'Hide password' : 'Show password'}
+                aria-pressed={show}
+                aria-controls="password"
               >
-                <svg className="w-5 h-5" viewBox="0 0 24 24">
-                  <path
-                    fill="#4285F4"
-                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                  />
-                  <path
-                    fill="#EA4335"
-                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                  />
-                </svg>
-                {isGoogleLoading ? 'Connecting to Google...' : 'Continue with Google'}
-              </Button>
-
-              <div className="relative my-6">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-200"></div>
-                </div>
-                <div className="relative flex justify-center text-sm">
-                  <span className="px-4 bg-white text-gray-500">Or continue with email</span>
-                </div>
-              </div>
-
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <label htmlFor="email" className="text-sm font-medium">
-                    Email Address
-                  </label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                    <Input
-                      id="email"
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="Enter your email"
-                      className="pl-10"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label htmlFor="password" className="text-sm font-medium">
-                    Password
-                  </label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                    <Input
-                      id="password"
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Enter your password"
-                      className="pl-10"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <Button 
-                  type="submit" 
-                  className="w-full" 
-                  disabled={isLoading || isGoogleLoading}
-                >
-                  {isLoading ? 'Signing in...' : 'Sign in with Email'}
-                </Button>
-              </form>
-
-              <div className="mt-6 text-center space-y-2">
-                <p className="text-sm text-gray-600">
-                  Don&apos;t have an account?{' '}
-                  <Link href="/register" className="text-blue-600 hover:text-blue-500 font-medium">
-                    Sign up
-                  </Link>
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+                {show ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
+              </button>
+            </div>
+          </Field>
+          {/* Outside the <label>, top-right of the field. */}
+          <a
+            href={`mailto:${PRODUCT_SUPPORT_EMAIL}?subject=${encodeURIComponent(`${PRODUCT_NAME} password reset`)}`}
+            className="absolute right-0 top-0 rounded-sm text-xs font-medium leading-5 text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Forgot password?
+          </a>
         </div>
-      </div>
+
+        {error && (
+          <div
+            id="login-error"
+            role="alert"
+            className="flex items-start gap-2.5 rounded-xl border border-destructive/25 bg-destructive-soft px-3.5 py-3 text-sm text-destructive-soft-foreground"
+          >
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            <p>{error}</p>
+          </div>
+        )}
+
+        <Button type="submit" size="lg" className="w-full" loading={pending === 'form'} disabled={loading}>
+          {pending === 'form' ? 'Signing in…' : 'Sign in'}
+          {pending !== 'form' && <ArrowRight className="h-4 w-4" aria-hidden />}
+        </Button>
+      </form>
+
+      <p className="mt-6 text-center text-sm text-muted-foreground">
+        New here?{' '}
+        <Link href={`/register${callback ? `?callbackUrl=${encodeURIComponent(callback)}` : ''}`} className="font-medium text-primary underline-offset-4 hover:underline">
+          Create a guest account
+        </Link>{' '}
+        or{' '}
+        <Link href="/onboarding" className="font-medium text-primary underline-offset-4 hover:underline">
+          set up your hotel
+        </Link>
+      </p>
+
+      {DEMO_ENABLED && (
+        <section className="mt-10 rounded-2xl border bg-surface-sunken p-4 sm:p-5" aria-labelledby="demo-heading">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 id="demo-heading" className="text-sm font-semibold">
+              Try the live demo
+            </h2>
+            <span className="text-xs text-muted-foreground">One click, no typing</span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Pick a role to explore. Every demo login uses the password <span className="font-mono text-foreground">{DEMO_PASSWORD}</span>.
+          </p>
+          <ul className="mt-4 grid grid-cols-1 gap-2 min-[400px]:grid-cols-2">
+            {DEMO_ACCOUNTS.map((a) => {
+              const busy = pending === a.email;
+              const Icon = busy ? Loader2 : a.icon;
+              return (
+                <li key={a.email} className={cn(a.label === 'Guest' && 'min-[400px]:col-span-2')}>
+                  <button
+                    type="button"
+                    disabled={loading}
+                    aria-busy={busy || undefined}
+                    aria-label={`Sign in as the demo ${a.label.toLowerCase()}: ${a.hint}`}
+                    onClick={() => login({ email: a.email, password: DEMO_PASSWORD }, a.email)}
+                    className="group flex min-h-14 w-full items-center gap-3 rounded-xl border bg-card px-3 py-2.5 text-left shadow-xs transition-[border-color,box-shadow,transform] hover:-translate-y-px hover:border-primary/40 hover:shadow-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface-sunken disabled:pointer-events-none disabled:opacity-60 motion-reduce:hover:translate-y-0"
+                  >
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary-soft-foreground">
+                      <Icon className={cn('h-[18px] w-[18px]', busy && 'animate-spin')} aria-hidden />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">{a.label}</span>
+                      <span className="block text-xs leading-snug text-muted-foreground">{a.hint}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
+      <p className="sr-only" role="status" aria-live="polite">
+        {loading ? 'Signing you in…' : ''}
+      </p>
+    </>
+  );
+}
+
+function LoginAside() {
+  return (
+    <div className="max-w-md">
+      <p className="text-2xs font-semibold uppercase tracking-[0.18em] text-highlight">{PRODUCT_NAME}</p>
+      <p className="mt-4 font-display text-4xl leading-[1.15] tracking-tight">Every booking direct. Every call answered.</p>
+      <p className="mt-4 text-base leading-relaxed text-inverse-foreground/75">
+        Guests manage their stays here. Hotel teams run the front desk, rates and the phone agent — from the same sign-in.
+      </p>
+      <ul className="mt-10 grid gap-4 text-sm text-inverse-foreground/85">
+        {[
+          { icon: CalendarCheck2, text: 'Bookings on your own website, with no commission' },
+          { icon: PhoneCall, text: 'An AI front desk that picks up day and night' },
+          { icon: ConciergeBell, text: 'Arrivals, rooms and rates in one console' },
+        ].map((f) => (
+          <li key={f.text} className="flex items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-inverse-foreground/10 text-highlight">
+              <f.icon className="h-[18px] w-[18px]" aria-hidden />
+            </span>
+            {f.text}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function LoginFallback() {
+  // Matches the form's footprint so nothing jumps when it mounts.
+  return (
+    <div aria-hidden className="space-y-5">
+      <div className="skeleton h-9 w-48" />
+      <div className="skeleton h-4 w-full" />
+      <div className="skeleton mt-8 h-11 w-full" />
+      <div className="skeleton h-11 w-full" />
+      <div className="skeleton h-12 w-full" />
     </div>
   );
 }
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div>Loading...</div>}>
-      <LoginForm />
-    </Suspense>
+    <AuthLayout aside={<LoginAside />}>
+      <Suspense fallback={<LoginFallback />}>
+        <LoginForm />
+      </Suspense>
+    </AuthLayout>
   );
 }

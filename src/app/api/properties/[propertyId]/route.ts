@@ -1,135 +1,60 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { getAvailableRooms } from '@/lib/room-availability';
+import { notFound } from '@/server/errors';
+import { handleRoute, json } from '@/server/http';
+import { voiceAvailable } from '@/server/voice/provider';
+import { LISTED_PROPERTY } from '@/server/concierge/facts';
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ propertyId: string }> }
-) {
-  try {
-    // Await params before accessing properties
-    const { propertyId } = await params;
+type Params = { params: Promise<{ propertyId: string }> };
 
-    // Get search parameters for date-specific availability
-    const searchParams = request.nextUrl.searchParams;
-    const checkInParam = searchParams.get('checkIn');
-    const checkOutParam = searchParams.get('checkOut');
-    const guestsParam = searchParams.get('guests');
-    
-    // Parse search parameters with proper date handling
-    let checkIn: Date | null = null;
-    let checkOut: Date | null = null;
-    
-    // Process check-in date if provided
-    if (checkInParam) {
-      // Remove any cache-busting query params that might have been added
-      const cleanCheckInParam = checkInParam.split('?')[0].trim();
-      
-      // Ensure the date is in YYYY-MM-DD format and set to noon UTC to avoid timezone issues
-      checkIn = new Date(`${cleanCheckInParam}T12:00:00Z`);
-      
-      // Validate date is valid
-      if (isNaN(checkIn.getTime())) {
-        console.error(`Invalid check-in date format: ${cleanCheckInParam}`);
-        checkIn = null;
-      } else {
-        console.log(`Using check-in date: ${cleanCheckInParam} (${checkIn.toISOString()})`);
-      }
-    }
-    
-    // Process check-out date if provided
-    if (checkOutParam) {
-      // Ensure the date is in YYYY-MM-DD format and set to noon UTC to avoid timezone issues
-      const checkOutStr = checkOutParam.trim();
-      checkOut = new Date(`${checkOutStr}T12:00:00Z`);
-      
-      // Validate date is valid
-      if (isNaN(checkOut.getTime())) {
-        console.error(`Invalid check-out date format: ${checkOutParam}`);
-        checkOut = null;
-      } else {
-        console.log(`Using check-out date: ${checkOutStr} (${checkOut.toISOString()})`);
-      }
-    }
-    
-    // If dates are valid, validate them
-    if (checkIn && checkOut) {
-      if (checkIn >= checkOut) {
-        console.warn('Check-in date must be before check-out date. Ignoring date filters.');
-        checkIn = null;
-        checkOut = null;
-      }
-    }
-    
-    // Get property with all related data
-    const property = await prisma.property.findUnique({
-      where: {
-        id: propertyId,
-        isActive: true,
+/**
+ * GET — the public booking-page view of a property: story, photos, brand
+ * and its room types. Live prices come from ./availability for a stay.
+ */
+export const GET = handleRoute(async (_req: NextRequest, { params }: Params) => {
+  const { propertyId } = await params;
+  const p = await prisma.property.findFirst({
+    where: { id: propertyId, ...LISTED_PROPERTY },
+    include: {
+      photos: { orderBy: [{ isMain: 'desc' }, { createdAt: 'asc' }], select: { id: true, url: true, isMain: true } },
+      roomTypes: {
+        where: { isActive: true },
+        orderBy: { basePrice: 'asc' },
+        include: { photos: { orderBy: [{ isMain: 'desc' }, { createdAt: 'asc' }], select: { id: true, url: true, isMain: true } } },
       },
-      include: {
-        photos: true,
-        roomTypes: {
-          where: { isActive: true },
-          include: {
-            photos: true,
-          },
-        },
-      },
-    });
-
-    if (!property) {
-      return NextResponse.json(
-        { error: 'Property not found' },
-        { 
-          status: 404,
-          headers: {
-            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
-          }
-        }
-      );
-    }
-
-    // If we have valid dates, calculate date-specific availability for each room type
-    if (checkIn && checkOut) {
-      console.log(`Calculating date-specific availability for property ${property.name}`);
-      
-      // Process each room type to calculate real-time availability
-      for (const roomType of property.roomTypes) {
-        try {
-          // Use the utility function to calculate available rooms
-          const { availableRooms, availabilityByDate } = await getAvailableRooms(roomType.id, checkIn, checkOut);
-          
-          console.log(`Room type ${roomType.name}: Total=${roomType.totalRooms}, Available=${availableRooms}`);
-          
-          // Add calculated availability to the room type
-          (roomType as any).calculatedAvailableRooms = availableRooms;
-          (roomType as any).availabilityByDate = availabilityByDate;
-        } catch (error) {
-          console.error(`Error calculating availability for room type ${roomType.name}:`, error);
-          // Default to 0 available rooms if there's an error
-          (roomType as any).calculatedAvailableRooms = 0;
-          (roomType as any).availabilityByDate = {};
-        }
-      }
-    }
-
-    return NextResponse.json(property, {
-      status: 200,
-      headers: {
-        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching property:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { 
-        status: 500,
-        headers: {
-          'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
-        }
-      }
-    );
-  }
-}
+      voiceAgent: { select: { enabled: true, guestWidget: true } },
+    },
+  });
+  if (!p) throw notFound('Property');
+  return json(
+    {
+      id: p.id,
+      name: p.name,
+      tagline: p.tagline,
+      type: p.type,
+      description: p.description,
+      address: p.address,
+      city: p.city,
+      state: p.state,
+      zipCode: p.zipCode,
+      phone: p.phone,
+      email: p.email,
+      amenities: p.amenities,
+      primaryColor: p.primaryColor,
+      logoUrl: p.logoUrl,
+      isDemo: p.isDemo,
+      voice: { available: voiceAvailable() && (p.voiceAgent?.enabled ?? true) && (p.voiceAgent?.guestWidget ?? true) },
+      photos: p.photos,
+      roomTypes: p.roomTypes.map((rt) => ({
+        id: rt.id,
+        name: rt.name,
+        description: rt.description,
+        capacity: rt.capacity,
+        basePrice: Number(rt.basePrice),
+        amenities: rt.amenities,
+        photos: rt.photos,
+      })),
+    },
+    { headers: { 'Cache-Control': 'no-store' } }
+  );
+});

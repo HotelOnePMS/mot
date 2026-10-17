@@ -1,24 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { staffGuard } from '@/server/guard';
 import { uploadImage, deleteImage } from '@/lib/cloudinary';
 
 // POST - Upload photos to a property
 export async function POST(
   request: NextRequest,
-  { params }: { params: { propertyId: string } }
+  { params }: { params: Promise<{ propertyId: string }> }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await staffGuard('property.write', { propertyId: (await params).propertyId });
+    if ('error' in guard) return guard.error;
 
-    const { propertyId } = params;
+    const { propertyId } = await params;
 
     // Check if property exists
     const property = await prisma.property.findUnique({
@@ -85,19 +79,13 @@ export async function POST(
 // GET - Get all photos for a property
 export async function GET(
   request: NextRequest,
-  { params }: { params: { propertyId: string } }
+  { params }: { params: Promise<{ propertyId: string }> }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await staffGuard(null, { propertyId: (await params).propertyId });
+    if ('error' in guard) return guard.error;
 
-    const { propertyId } = params;
+    const { propertyId } = await params;
 
     const photos = await prisma.propertyPhoto.findMany({
       where: { propertyId },
@@ -120,17 +108,11 @@ export async function GET(
 // DELETE - Delete a photo
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { propertyId: string } }
+  { params }: { params: Promise<{ propertyId: string }> }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await staffGuard('property.write', { propertyId: (await params).propertyId });
+    if ('error' in guard) return guard.error;
 
     const { searchParams } = new URL(request.url);
     const photoId = searchParams.get('photoId');
@@ -172,7 +154,7 @@ export async function DELETE(
     // If this was the main photo, set another photo as main
     if (photo.isMain) {
       const nextPhoto = await prisma.propertyPhoto.findFirst({
-        where: { propertyId: params.propertyId },
+        where: { propertyId: (await params).propertyId },
         orderBy: { createdAt: 'asc' },
       });
 
@@ -197,17 +179,11 @@ export async function DELETE(
 // PATCH - Set a photo as main
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { propertyId: string } }
+  { params }: { params: Promise<{ propertyId: string }> }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await staffGuard('property.write', { propertyId: (await params).propertyId });
+    if ('error' in guard) return guard.error;
 
     const body = await request.json();
     const { photoId } = body;
@@ -221,7 +197,7 @@ export async function PATCH(
 
     // First, unset all photos as main for this property
     await prisma.propertyPhoto.updateMany({
-      where: { propertyId: params.propertyId },
+      where: { propertyId: (await params).propertyId },
       data: { isMain: false },
     });
 

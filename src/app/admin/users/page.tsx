@@ -1,612 +1,541 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import * as React from 'react';
+import useSWR from 'swr';
+import { toast } from 'sonner';
+import { BriefcaseBusiness, Building2, Check, ConciergeBell, Crown, KeyRound, MoreHorizontal, Search, ShieldCheck, Brush, UserPlus, Users, type LucideIcon } from 'lucide-react';
+import { api, fetcher } from '@/lib/fetcher';
+import { formatPhone } from '@/lib/format';
+import { formatNumber, roleLabel } from '@/lib/status';
+import { cn } from '@/lib/utils';
+import { Badge, type BadgeProps } from '@/components/ui/badge';
+import { Button, IconButton } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { 
-  Users, 
-  Plus,
-  Search,
-  Loader2,
-  Edit2,
-  Trash2,
-  X,
-  Building2,
-  Shield
-} from 'lucide-react';
+import { Field } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Avatar, EmptyState, PageHeader, Skeleton } from '@/components/ui/primitives';
+import { SegmentedControl } from '@/components/ui/segmented';
+import { ConfirmDialog } from '@/components/frontdesk/dialogs';
+import { useConsole } from '@/components/console/ConsoleProvider';
+import { CopyButton } from '@/components/setup/CopyButton';
 
-type User = {
+interface UserRow {
   id: string;
   email: string;
   firstName: string;
   lastName: string;
-  phone?: string;
+  phone: string | null;
   role: string;
   isActive: boolean;
   createdAt: string;
-  assignedProperties?: {
-    id: string;
-    property: {
-      id: string;
-      name: string;
-    };
-  }[];
-};
+  assignedProperties: { property: { id: string; name: string } }[];
+  _count: { bookings: number };
+}
 
-type Property = {
-  id: string;
-  name: string;
-};
+const FRAME = 'mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8';
 
-const ROLES = [
-  { value: 'ADMIN', label: 'Admin', description: 'Full system access' },
-  { value: 'OWNER', label: 'Owner', description: 'Property owner with full property access' },
-  { value: 'MANAGER', label: 'Manager', description: 'Manages assigned properties' },
-  { value: 'FRONT_DESK', label: 'Front Desk', description: 'Check-in/out and front desk operations' },
-  { value: 'HOUSEKEEPER', label: 'Housekeeper', description: 'Room cleaning status updates' },
-  { value: 'CUSTOMER', label: 'Customer', description: 'Regular booking customer' },
+const STAFF_ROLES = [
+  { value: 'MANAGER', desc: 'Runs operations: front desk, housekeeping, rates and the team.' },
+  { value: 'FRONT_DESK', desc: 'Arrivals, check-in and check-out, reservations and the agent.' },
+  { value: 'HOUSEKEEPER', desc: 'Their cleaning list, designed for a phone.' },
+  { value: 'OWNER', desc: 'Everything, including properties, rates and team.' },
 ];
 
-export default function AdminUsersPage() {
-  const [users, setUsers] = useState<User[]>([]);
-  const [properties, setProperties] = useState<Property[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState<string>('all');
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [error, setError] = useState('');
+/** Roles are identities, not states: told apart by icon and fill, never by status colours. */
+const ROLE_LOOK: Record<string, { icon: LucideIcon; variant: BadgeProps['variant'] }> = {
+  ADMIN: { icon: ShieldCheck, variant: 'outline' },
+  OWNER: { icon: Crown, variant: 'primary' },
+  MANAGER: { icon: BriefcaseBusiness, variant: 'outline' },
+  FRONT_DESK: { icon: ConciergeBell, variant: 'neutral' },
+  HOUSEKEEPER: { icon: Brush, variant: 'neutral' },
+};
 
-  useEffect(() => {
-    fetchUsers();
-    fetchProperties();
-  }, []);
-
-  const fetchUsers = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch('/api/admin/users');
-      if (response.ok) {
-        const data = await response.json();
-        setUsers(data);
-      }
-    } catch (err) {
-      console.error('Error fetching users:', err);
-      setError('Failed to load users');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchProperties = async () => {
-    try {
-      const response = await fetch('/api/admin/properties');
-      if (response.ok) {
-        const data = await response.json();
-        setProperties(data);
-      }
-    } catch (err) {
-      console.error('Error fetching properties:', err);
-    }
-  };
-
-  const deleteUser = async (userId: string) => {
-    if (!confirm('Are you sure you want to delete this user?')) return;
-    
-    try {
-      const response = await fetch(`/api/admin/users/${userId}`, {
-        method: 'DELETE',
-      });
-      
-      if (response.ok) {
-        await fetchUsers();
-      } else {
-        const data = await response.json();
-        setError(data.error || 'Failed to delete user');
-      }
-    } catch (err) {
-      console.error('Error deleting user:', err);
-      setError('Failed to delete user');
-    }
-  };
-
-  const getRoleBadge = (role: string) => {
-    const styles: Record<string, string> = {
-      'ADMIN': 'bg-purple-100 text-purple-800',
-      'OWNER': 'bg-blue-100 text-blue-800',
-      'MANAGER': 'bg-green-100 text-green-800',
-      'FRONT_DESK': 'bg-yellow-100 text-yellow-800',
-      'HOUSEKEEPER': 'bg-orange-100 text-orange-800',
-      'CUSTOMER': 'bg-gray-100 text-gray-800',
-    };
-    return styles[role] || 'bg-gray-100 text-gray-800';
-  };
-
-  const filteredUsers = users.filter(user => {
-    const matchesSearch = searchQuery === '' ||
-      user.firstName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.lastName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesRole = roleFilter === 'all' || user.role === roleFilter;
-    
-    return matchesSearch && matchesRole;
-  });
-
-  // Group by role for staff display
-  const staffUsers = filteredUsers.filter(u => u.role !== 'CUSTOMER');
-  const customerUsers = filteredUsers.filter(u => u.role === 'CUSTOMER');
-
-  if (loading) {
-    return (
-      <div className="p-6 flex justify-center items-center min-h-[60vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-      </div>
-    );
-  }
-
+function RoleBadge({ role }: { role: string }) {
+  const look = ROLE_LOOK[role] ?? { icon: Users, variant: 'neutral' as const };
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
-          <p className="text-gray-500">Manage staff and customer accounts</p>
-        </div>
-        <Button onClick={() => setShowAddModal(true)}>
-          <Plus className="h-4 w-4 mr-1" />
-          Add Staff User
-        </Button>
-      </div>
+    <Badge variant={look.variant} size="sm" icon={look.icon}>
+      {roleLabel(role)}
+    </Badge>
+  );
+}
 
-      {error && (
-        <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-          {error}
-          <button onClick={() => setError('')} className="float-right">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      )}
+function tempPassword() {
+  const words = ['harbor', 'maple', 'cedar', 'coral', 'linen', 'amber', 'willow', 'ember', 'tide', 'meadow'];
+  const pick = () => words[Math.floor(Math.random() * words.length)];
+  return `${pick()}-${pick()}-${Math.floor(100 + Math.random() * 900)}`;
+}
 
-      {/* Filters */}
-      <div className="flex flex-col md:flex-row gap-4 mb-6">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <Input
-            placeholder="Search by name or email..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
-          />
-        </div>
-        <select
-          value={roleFilter}
-          onChange={(e) => setRoleFilter(e.target.value)}
-          className="border rounded-md px-3 py-2 text-sm"
-        >
-          <option value="all">All Roles</option>
-          {ROLES.map(role => (
-            <option key={role.value} value={role.value}>{role.label}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Staff Users */}
-      <Card className="mb-6">
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Shield className="h-5 w-5 text-blue-600" />
-            <CardTitle className="text-lg">Staff Users</CardTitle>
-          </div>
-          <CardDescription>Users with administrative or operational roles</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {staffUsers.length === 0 ? (
-            <p className="text-gray-500 text-center py-8">No staff users found</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b text-left text-sm text-gray-500">
-                    <th className="pb-3 font-medium">Name</th>
-                    <th className="pb-3 font-medium">Email</th>
-                    <th className="pb-3 font-medium">Role</th>
-                    <th className="pb-3 font-medium">Assigned Properties</th>
-                    <th className="pb-3 font-medium">Status</th>
-                    <th className="pb-3 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {staffUsers.map(user => (
-                    <tr key={user.id} className="border-b last:border-0">
-                      <td className="py-3">
-                        <div className="font-medium">{user.firstName} {user.lastName}</div>
-                      </td>
-                      <td className="py-3 text-sm">{user.email}</td>
-                      <td className="py-3">
-                        <Badge className={getRoleBadge(user.role)}>
-                          {user.role.replace('_', ' ')}
-                        </Badge>
-                      </td>
-                      <td className="py-3 text-sm">
-                        {user.assignedProperties && user.assignedProperties.length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {user.assignedProperties.map(ap => (
-                              <Badge key={ap.id} variant="outline" className="text-xs">
-                                {ap.property.name}
-                              </Badge>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-gray-400">
-                            {['ADMIN', 'OWNER'].includes(user.role) ? 'All Properties' : 'None'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3">
-                        <Badge className={user.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
-                          {user.isActive ? 'Active' : 'Inactive'}
-                        </Badge>
-                      </td>
-                      <td className="py-3">
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setSelectedUser(user);
-                              setShowEditModal(true);
-                            }}
-                          >
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-red-600"
-                            onClick={() => deleteUser(user.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Customer Users */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Users className="h-5 w-5 text-gray-600" />
-            <CardTitle className="text-lg">Customers</CardTitle>
-          </div>
-          <CardDescription>Regular booking customers</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {customerUsers.length === 0 ? (
-            <p className="text-gray-500 text-center py-8">No customers found</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b text-left text-sm text-gray-500">
-                    <th className="pb-3 font-medium">Name</th>
-                    <th className="pb-3 font-medium">Email</th>
-                    <th className="pb-3 font-medium">Phone</th>
-                    <th className="pb-3 font-medium">Joined</th>
-                    <th className="pb-3 font-medium">Status</th>
-                    <th className="pb-3 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {customerUsers.slice(0, 20).map(user => (
-                    <tr key={user.id} className="border-b last:border-0">
-                      <td className="py-3">
-                        <div className="font-medium">{user.firstName} {user.lastName}</div>
-                      </td>
-                      <td className="py-3 text-sm">{user.email}</td>
-                      <td className="py-3 text-sm">{user.phone || '-'}</td>
-                      <td className="py-3 text-sm">
-                        {new Date(user.createdAt).toLocaleDateString()}
-                      </td>
-                      <td className="py-3">
-                        <Badge className={user.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
-                          {user.isActive ? 'Active' : 'Inactive'}
-                        </Badge>
-                      </td>
-                      <td className="py-3">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setSelectedUser(user);
-                            setShowEditModal(true);
-                          }}
-                        >
-                          <Edit2 className="h-4 w-4" />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {customerUsers.length > 20 && (
-                <p className="text-center text-sm text-gray-500 mt-4">
-                  Showing 20 of {customerUsers.length} customers
-                </p>
+/** Role picker: a native radio group (arrow keys work), styled as cards. */
+function RoleChooser({ value, onChange, allowOwner, name }: { value: string; onChange: (v: string) => void; allowOwner: boolean; name: string }) {
+  return (
+    <fieldset>
+      <legend className="mb-2 text-sm font-medium">Role</legend>
+      <div className="grid gap-2">
+        {STAFF_ROLES.filter((r) => allowOwner || r.value !== 'OWNER').map((r) => {
+          const on = value === r.value;
+          return (
+            <label
+              key={r.value}
+              className={cn(
+                'flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-left transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-popover',
+                on ? 'border-primary/60 bg-primary-soft/50 ring-1 ring-primary/30' : 'hover:bg-accent/60'
               )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            >
+              <input type="radio" name={name} value={r.value} checked={on} onChange={() => onChange(r.value)} className="sr-only" />
+              <span
+                className={cn('mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border border-border-strong', on && 'border-primary bg-primary text-primary-foreground')}
+                aria-hidden
+              >
+                {on && <Check className="size-2.5" />}
+              </span>
+              <span>
+                <span className="block text-sm font-medium">{roleLabel(r.value)}</span>
+                <span className="block text-sm text-muted-foreground">{r.desc}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
 
-      {/* Add User Modal */}
-      {showAddModal && (
-        <UserFormModal
-          mode="add"
-          properties={properties}
-          onClose={() => setShowAddModal(false)}
-          onSuccess={() => {
-            setShowAddModal(false);
-            fetchUsers();
-          }}
-        />
-      )}
-
-      {/* Edit User Modal */}
-      {showEditModal && selectedUser && (
-        <UserFormModal
-          mode="edit"
-          user={selectedUser}
-          properties={properties}
-          onClose={() => {
-            setShowEditModal(false);
-            setSelectedUser(null);
-          }}
-          onSuccess={() => {
-            setShowEditModal(false);
-            setSelectedUser(null);
-            fetchUsers();
-          }}
-        />
-      )}
+/** Which properties someone works at: a labelled group of toggle buttons. */
+function PropertyChecks({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const { ctx } = useConsole();
+  const props = ctx?.properties ?? [];
+  const labelId = React.useId();
+  if (props.length <= 1) return null;
+  return (
+    <div role="group" aria-labelledby={labelId} aria-describedby={`${labelId}-hint`}>
+      <p id={labelId} className="mb-2 text-sm font-medium">
+        Works at
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {props.map((p) => {
+          const on = value.includes(p.id);
+          return (
+            <button
+              key={p.id}
+              type="button"
+              aria-pressed={on}
+              onClick={() => onChange(on ? value.filter((x) => x !== p.id) : [...value, p.id])}
+              className={cn(
+                'inline-flex min-h-10 items-center gap-1.5 rounded-lg border px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover',
+                on ? 'border-primary/60 bg-primary-soft font-medium text-primary-soft-foreground' : 'border-border-strong/50 hover:bg-accent'
+              )}
+            >
+              {on ? <Check className="size-4" aria-hidden /> : <Building2 className="size-4 text-muted-foreground" aria-hidden />}
+              {p.name}
+            </button>
+          );
+        })}
+      </div>
+      <p id={`${labelId}-hint`} className={cn('mt-2 text-xs', value.length ? 'text-muted-foreground' : 'font-medium text-destructive')}>
+        {value.length ? 'They only see reservations and rooms at these properties.' : 'Pick at least one property.'}
+      </p>
     </div>
   );
 }
 
-// User Form Modal Component
-function UserFormModal({
-  mode,
-  user,
-  properties,
-  onClose,
-  onSuccess,
-}: {
-  mode: 'add' | 'edit';
-  user?: User;
-  properties: Property[];
-  onClose: () => void;
-  onSuccess: () => void;
-}) {
-  const [formData, setFormData] = useState({
-    email: user?.email || '',
-    password: '',
-    firstName: user?.firstName || '',
-    lastName: user?.lastName || '',
-    phone: user?.phone || '',
-    role: user?.role || 'FRONT_DESK',
-    isActive: user?.isActive ?? true,
-    assignedPropertyIds: user?.assignedProperties?.map(ap => ap.property.id) || [],
-  });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+function InviteDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+  const { propertyId, role: myRole } = useConsole();
+  const [form, setForm] = React.useState({ firstName: '', lastName: '', email: '', role: 'FRONT_DESK', password: tempPassword() });
+  const [props, setProps] = React.useState<string[]>([]);
+  const [busy, setBusy] = React.useState(false);
+  const [created, setCreated] = React.useState<{ email: string; password: string; name: string } | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  React.useEffect(() => {
+    if (open) {
+      setForm({ firstName: '', lastName: '', email: '', role: 'FRONT_DESK', password: tempPassword() });
+      setProps(propertyId ? [propertyId] : []);
+      setCreated(null);
+    }
+  }, [open, propertyId]);
+
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    
-    if (!formData.email || !formData.firstName || !formData.lastName) {
-      setError('Please fill in all required fields');
-      return;
-    }
-
-    if (mode === 'add' && !formData.password) {
-      setError('Password is required for new users');
-      return;
-    }
-
+    setBusy(true);
     try {
-      setLoading(true);
-      setError('');
-      
-      const url = mode === 'add' 
-        ? '/api/admin/users' 
-        : `/api/admin/users/${user?.id}`;
-      
-      const method = mode === 'add' ? 'POST' : 'PATCH';
-      
-      const body: any = {
-        email: formData.email,
-        firstName: formData.firstName,
-        lastName: formData.lastName,
-        phone: formData.phone || null,
-        role: formData.role,
-        isActive: formData.isActive,
-        assignedPropertyIds: formData.assignedPropertyIds,
-      };
-
-      if (formData.password) {
-        body.password = formData.password;
-      }
-
-      const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+      await api('/api/admin/users', {
+        method: 'POST',
+        json: { ...form, email: form.email.trim(), firstName: form.firstName.trim(), lastName: form.lastName.trim(), assignedPropertyIds: props },
       });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to save user');
-      }
-
-      onSuccess();
-    } catch (err: any) {
-      setError(err.message);
+      setCreated({ email: form.email.trim().toLowerCase(), password: form.password, name: form.firstName.trim() });
+      onDone();
+    } catch (err) {
+      toast.error((err as Error).message);
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
-  };
+  }
 
-  const toggleProperty = (propertyId: string) => {
-    setFormData(prev => ({
-      ...prev,
-      assignedPropertyIds: prev.assignedPropertyIds.includes(propertyId)
-        ? prev.assignedPropertyIds.filter(id => id !== propertyId)
-        : [...prev.assignedPropertyIds, propertyId]
-    }));
-  };
-
-  const showPropertyAssignment = ['MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'].includes(formData.role);
+  const credentials = created ? `Sign in at ${typeof window !== 'undefined' ? window.location.origin : ''}/login\nEmail: ${created.email}\nTemporary password: ${created.password}` : '';
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">
-            {mode === 'add' ? 'Add Staff User' : 'Edit User'}
-          </h3>
-          <button onClick={onClose}>
-            <X className="h-5 w-5" />
-          </button>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        {created ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>{created.name} is on the team</DialogTitle>
+              <DialogDescription>Share these sign-in details privately. They can change the password from their profile.</DialogDescription>
+            </DialogHeader>
+            <pre className="whitespace-pre-wrap break-all rounded-xl border bg-surface-sunken p-4 font-mono text-xs leading-relaxed">{credentials}</pre>
+            <DialogFooter>
+              <CopyButton value={credentials} label="Copy details" copiedLabel="Details copied" size="default" />
+              <Button onClick={() => onOpenChange(false)}>Done</Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <form onSubmit={submit} className="grid gap-5">
+            <DialogHeader>
+              <DialogTitle>Add a teammate</DialogTitle>
+              <DialogDescription>They’ll see only what their role needs.</DialogDescription>
+            </DialogHeader>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="First name" required>
+                <Input required autoComplete="off" value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} />
+              </Field>
+              <Field label="Last name" required>
+                <Input required autoComplete="off" value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} />
+              </Field>
+            </div>
+            <Field label="Work email" required hint="They sign in with this address.">
+              <Input type="email" required autoComplete="off" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            </Field>
+            <RoleChooser name="invite-role" value={form.role} onChange={(role) => setForm({ ...form, role })} allowOwner={myRole === 'ADMIN' || myRole === 'OWNER'} />
+            <PropertyChecks value={props} onChange={setProps} />
+            <Field label="Temporary password" required hint="At least 8 characters. Share it privately; they can change it later.">
+              <div className="flex gap-2">
+                <Input value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="font-mono" minLength={8} required autoComplete="off" />
+                <IconButton label="Make up another password" variant="outline" onClick={() => setForm({ ...form, password: tempPassword() })}>
+                  <KeyRound />
+                </IconButton>
+              </div>
+            </Field>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" loading={busy} loadingText="Adding…" disabled={!props.length}>
+                Add teammate
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditDialog({ user, onClose, onDone }: { user: UserRow | null; onClose: () => void; onDone: () => void }) {
+  const { role: myRole } = useConsole();
+  const [role, setRole] = React.useState('');
+  const [props, setProps] = React.useState<string[]>([]);
+  const [phone, setPhone] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
+    if (!user) return;
+    setRole(user.role);
+    setProps(user.assignedProperties.map((a) => a.property.id));
+    setPhone(user.phone ?? '');
+  }, [user]);
+
+  async function save() {
+    if (!user) return;
+    setBusy(true);
+    try {
+      await api(`/api/admin/users/${user.id}`, {
+        method: 'PATCH',
+        json: { ...(role !== user.role ? { role } : {}), assignedPropertyIds: props, phone: phone.trim() || null },
+      });
+      toast.success(`${user.firstName} updated`);
+      onDone();
+      onClose();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={!!user} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            {user?.firstName} {user?.lastName}
+          </DialogTitle>
+          <DialogDescription>{user?.email}</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-5">
+          <RoleChooser name="edit-role" value={role} onChange={setRole} allowOwner={myRole === 'ADMIN' || myRole === 'OWNER'} />
+          <PropertyChecks value={props} onChange={setProps} />
+          <Field label="Phone" optional hint="Include the country code, like +1 831 555 0100.">
+            <Input type="tel" inputMode="tel" autoComplete="off" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </Field>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={save} loading={busy} loadingText="Saving…">
+            Save changes
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export default function TeamPage() {
+  const { ctx, can } = useConsole();
+  const { data, isLoading, mutate } = useSWR<UserRow[]>('/api/admin/users', fetcher);
+  const [tab, setTab] = React.useState<'team' | 'guests'>('team');
+  const [q, setQ] = React.useState('');
+  const [invite, setInvite] = React.useState(false);
+  const [edit, setEdit] = React.useState<UserRow | null>(null);
+  const [confirm, setConfirm] = React.useState<{ user: UserRow; action: 'deactivate' | 'reactivate' | 'reset' } | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [newPassword, setNewPassword] = React.useState('');
+  const editable = can('users.write');
+  const multiProperty = (ctx?.properties.length ?? 0) > 1;
+
+  const list = (data ?? [])
+    .filter((u) => (tab === 'team' ? u.role !== 'CUSTOMER' : u.role === 'CUSTOMER'))
+    .filter((u) => {
+      const t = q.trim().toLowerCase();
+      return !t || `${u.firstName} ${u.lastName} ${u.email}`.toLowerCase().includes(t);
+    });
+  const teamCount = (data ?? []).filter((u) => u.role !== 'CUSTOMER').length;
+  const guestCount = (data ?? []).length - teamCount;
+
+  async function runConfirm() {
+    if (!confirm) return;
+    setBusy(true);
+    try {
+      const { user, action } = confirm;
+      if (action === 'reset') {
+        await api(`/api/admin/users/${user.id}`, { method: 'PATCH', json: { password: newPassword } });
+        toast.success(`New password set for ${user.firstName}: ${newPassword}`, { duration: 15000 });
+      } else {
+        await api(`/api/admin/users/${user.id}`, { method: 'PATCH', json: { isActive: action === 'reactivate' } });
+        toast.success(action === 'reactivate' ? `${user.firstName} can sign in again` : `${user.firstName} can no longer sign in`);
+      }
+      await mutate();
+      setConfirm(null);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className={FRAME}>
+      <div className="space-y-5">
+        <PageHeader
+          title="Team"
+          description="Who can sign in to the console, and what each role can do."
+          actions={
+            editable ? (
+              <Button onClick={() => setInvite(true)}>
+                <UserPlus aria-hidden /> Add teammate
+              </Button>
+            ) : undefined
+          }
+        />
+
+        <div role="search" aria-label="Find people" className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <SegmentedControl
+            layoutId="team-tab"
+            aria-label="People"
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: 'team', label: `Team${data ? ` · ${formatNumber(teamCount)}` : ''}` },
+              { value: 'guests', label: `Guests${data ? ` · ${formatNumber(guestCount)}` : ''}` },
+            ]}
+            className="self-start"
+          />
+          <div className="relative flex-1 sm:max-w-sm">
+            <label htmlFor="team-search" className="sr-only">
+              Search people
+            </label>
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Input id="team-search" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or email" className="pl-9" autoComplete="off" />
+          </div>
         </div>
 
-        {error && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded text-sm">
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit}>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">First Name *</label>
-                <Input
-                  value={formData.firstName}
-                  onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Last Name *</label>
-                <Input
-                  value={formData.lastName}
-                  onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Email *</label>
-              <Input
-                type="email"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">
-                Password {mode === 'add' ? '*' : '(leave blank to keep current)'}
-              </label>
-              <Input
-                type="password"
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                placeholder={mode === 'edit' ? 'Leave blank to keep current password' : ''}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Phone</label>
-              <Input
-                type="tel"
-                value={formData.phone}
-                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Role *</label>
-              <select
-                value={formData.role}
-                onChange={(e) => setFormData({ ...formData, role: e.target.value })}
-                className="w-full border rounded-md px-3 py-2 text-sm"
-              >
-                {ROLES.filter(r => r.value !== 'CUSTOMER').map(role => (
-                  <option key={role.value} value={role.value}>
-                    {role.label} - {role.description}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {showPropertyAssignment && (
-              <div>
-                <label className="block text-sm font-medium mb-2">Assigned Properties</label>
-                <div className="border rounded-md p-3 space-y-2 max-h-40 overflow-y-auto">
-                  {properties.length === 0 ? (
-                    <p className="text-sm text-gray-500">No properties available</p>
-                  ) : (
-                    properties.map(property => (
-                      <label key={property.id} className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={formData.assignedPropertyIds.includes(property.id)}
-                          onChange={() => toggleProperty(property.id)}
-                          className="rounded"
-                        />
-                        <span className="text-sm">{property.name}</span>
-                      </label>
-                    ))
-                  )}
+        <Card className="overflow-hidden p-0 shadow-xs">
+          {isLoading ? (
+            <div aria-busy>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex h-[68px] items-center gap-3 border-b px-4 last:border-b-0">
+                  <Skeleton className="size-9 rounded-full" />
+                  <div className="flex-1 space-y-1.5">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-3 w-56" />
+                  </div>
+                  <Skeleton className="hidden h-5 w-24 rounded-full sm:block" />
                 </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  Select which properties this user can access
-                </p>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="isActive"
-                checked={formData.isActive}
-                onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
-                className="rounded"
-              />
-              <label htmlFor="isActive" className="text-sm">Active account</label>
+              ))}
             </div>
-          </div>
-
-          <div className="flex gap-2 mt-6">
-            <Button type="button" onClick={onClose} variant="outline" className="flex-1">
-              Cancel
-            </Button>
-            <Button type="submit" disabled={loading} className="flex-1">
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : (mode === 'add' ? 'Add User' : 'Save Changes')}
-            </Button>
-          </div>
-        </form>
+          ) : list.length === 0 ? (
+            <EmptyState
+              icon={Users}
+              title={q ? 'Nobody matches that search' : tab === 'team' ? 'Just you so far' : 'No guests yet'}
+              description={
+                q
+                  ? 'Try part of a first name, last name or email address.'
+                  : tab === 'team'
+                    ? 'Add your front desk and housekeeping team so they can use the console.'
+                    : 'Guests appear here after their first booking on your booking page.'
+              }
+              action={
+                q ? (
+                  <Button variant="outline" onClick={() => setQ('')}>
+                    Clear search
+                  </Button>
+                ) : tab === 'team' && editable ? (
+                  <Button onClick={() => setInvite(true)}>
+                    <UserPlus aria-hidden /> Add teammate
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : (
+            <ul className="divide-y" aria-label={tab === 'team' ? 'Team members' : 'Guests'}>
+              {list.map((u) => {
+                const me = u.id === ctx?.user.id;
+                const showMenu = editable && tab === 'team' && !me && u.role !== 'ADMIN';
+                return (
+                  <li key={u.id} className={cn('flex items-center gap-3 px-4 py-3', !u.isActive && 'bg-surface-sunken/50')}>
+                    <Avatar name={`${u.firstName} ${u.lastName}`} className={cn(!u.isActive && 'opacity-60')} />
+                    <div className="min-w-0 flex-1">
+                      <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm font-medium">
+                        <span className={cn('truncate', !u.isActive && 'text-muted-foreground')}>
+                          {u.firstName} {u.lastName}
+                        </span>
+                        {me && <span className="text-xs font-normal text-muted-foreground">(you)</span>}
+                        {!u.isActive && (
+                          <Badge variant="outline" size="sm" className="text-muted-foreground">
+                            Can’t sign in
+                          </Badge>
+                        )}
+                      </p>
+                      {/* Email and phone share a line on wider screens and stack on phones, so neither gets cut off. */}
+                      <p className="flex min-w-0 flex-col text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:gap-x-1.5">
+                        <span className="truncate">{u.email}</span>
+                        {u.phone && (
+                          <span className="tabular">
+                            <span className="hidden sm:inline" aria-hidden>
+                              ·{' '}
+                            </span>
+                            {formatPhone(u.phone)}
+                          </span>
+                        )}
+                        {tab === 'guests' && (
+                          <span>
+                            <span className="hidden sm:inline" aria-hidden>
+                              ·{' '}
+                            </span>
+                            {formatNumber(u._count.bookings)} booking{u._count.bookings === 1 ? '' : 's'}
+                          </span>
+                        )}
+                      </p>
+                      {tab === 'team' && (
+                        <div className="mt-1.5 sm:hidden">
+                          <RoleBadge role={u.role} />
+                        </div>
+                      )}
+                    </div>
+                    {tab === 'team' && (
+                      <div className="hidden w-56 min-w-0 shrink-0 text-right sm:block">
+                        <RoleBadge role={u.role} />
+                        {multiProperty && <p className="mt-1 truncate text-xs text-muted-foreground">{u.assignedProperties.map((a) => a.property.name).join(', ') || 'All properties'}</p>}
+                      </div>
+                    )}
+                    {tab === 'team' && editable && (
+                      // Reserve the column so every badge lines up, menu or not.
+                      <div className="flex w-10 shrink-0 justify-end">
+                        {showMenu && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <IconButton label={`Actions for ${u.firstName} ${u.lastName}`}>
+                                <MoreHorizontal />
+                              </IconButton>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onSelect={() => setEdit(u)}>Change role and access</DropdownMenuItem>
+                              <DropdownMenuItem
+                                onSelect={() => {
+                                  setNewPassword(tempPassword());
+                                  setConfirm({ user: u, action: 'reset' });
+                                }}
+                              >
+                                Reset password…
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              {u.isActive ? (
+                                <DropdownMenuItem destructive onSelect={() => setConfirm({ user: u, action: 'deactivate' })}>
+                                  Deactivate…
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem onSelect={() => setConfirm({ user: u, action: 'reactivate' })}>Reactivate…</DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Card>
       </div>
+
+      <InviteDialog open={invite} onOpenChange={setInvite} onDone={() => void mutate()} />
+      <EditDialog user={edit} onClose={() => setEdit(null)} onDone={() => void mutate()} />
+      <ConfirmDialog
+        open={!!confirm}
+        onOpenChange={(o) => !o && setConfirm(null)}
+        cancelLabel={confirm?.action === 'deactivate' ? 'Keep access' : 'Cancel'}
+        title={
+          confirm?.action === 'reset'
+            ? `Reset ${confirm.user.firstName}’s password?`
+            : confirm?.action === 'reactivate'
+              ? `Reactivate ${confirm?.user.firstName}?`
+              : `Deactivate ${confirm?.user.firstName}?`
+        }
+        description={
+          confirm?.action === 'reset'
+            ? 'Their current password stops working right away. Share the new one privately.'
+            : confirm?.action === 'reactivate'
+              ? 'They’ll be able to sign in again with their existing password.'
+              : 'They’re signed out on their next request. Their history stays in the activity log.'
+        }
+        confirmLabel={confirm?.action === 'reset' ? 'Set new password' : confirm?.action === 'reactivate' ? 'Reactivate' : 'Deactivate'}
+        destructive={confirm?.action === 'deactivate'}
+        loading={busy}
+        onConfirm={runConfirm}
+      >
+        {confirm?.action === 'reset' && (
+          <Field label="New password" hint="At least 8 characters.">
+            <div className="flex gap-2">
+              <Input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="font-mono" autoComplete="off" />
+              <IconButton label="Make up another password" variant="outline" onClick={() => setNewPassword(tempPassword())}>
+                <KeyRound />
+              </IconButton>
+            </div>
+          </Field>
+        )}
+      </ConfirmDialog>
     </div>
   );
 }

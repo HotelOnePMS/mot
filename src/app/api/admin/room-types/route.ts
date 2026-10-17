@@ -1,191 +1,62 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { NextRequest } from 'next/server';
+import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
+import { assertPropertyAccess, requireStaff, scopeByProperty } from '@/server/authz';
+import { notFound } from '@/server/errors';
+import { handleRoute, json, parseJson, parseQuery } from '@/server/http';
+import { recordAudit } from '@/server/services/audit';
+import { scheduleConfigSkillSync } from '@/server/skills';
 
-// Temporary non-auth route for testing
-export async function HEAD() {
-  try {
-    // Fixed query without availableRooms
-    const roomTypes = await prisma.$queryRaw`
-      SELECT id, name, "propertyId", description, capacity, "basePrice", "totalRooms", "isActive"
-      FROM room_types
-      LIMIT 1
-    `;
-    
-    const results = Array.isArray(roomTypes) ? roomTypes : [];
-    return NextResponse.json({ success: true, count: results.length });
-  } catch (error) {
-    console.error('Test HEAD: Error:', error);
-    return NextResponse.json({ error: 'Test failed' }, { status: 500 });
-  }
-}
+/** GET — room types across the caller's properties (optionally one property). */
+export const GET = handleRoute(async (request: NextRequest) => {
+  const actor = await requireStaff();
+  const q = parseQuery(request, z.object({ propertyId: z.string().optional() }));
+  if (q.propertyId) assertPropertyAccess(actor, q.propertyId);
+  const roomTypes = await prisma.roomType.findMany({
+    where: q.propertyId ? { propertyId: q.propertyId } : scopeByProperty(actor),
+    include: {
+      property: { select: { id: true, name: true } },
+      photos: { orderBy: { isMain: 'desc' }, take: 1, select: { url: true } },
+      _count: { select: { bookings: true, rooms: true } },
+    },
+    orderBy: [{ property: { name: 'asc' } }, { basePrice: 'asc' }],
+  });
+  return json(roomTypes);
+});
 
-// GET all room types
-export async function GET() {
-  try {
-    const session = await auth();
-    
-    console.log('Room Types API: Auth session received:', session ? {
-      id: session.user?.id,
-      email: session.user?.email,
-      role: session.user?.role
-    } : 'No session');
-    
-    if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized - No session' },
-        { status: 401 }
-      );
-    }
-    
-    if (session.user?.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: `Unauthorized - Role ${session.user?.role} is not ADMIN` },
-        { status: 401 }
-      );
-    }
+const createSchema = z.object({
+  propertyId: z.string().min(1),
+  name: z.string().trim().min(2).max(80),
+  description: z.string().trim().max(2000).optional().nullable(),
+  capacity: z.coerce.number().int().min(1).max(20),
+  basePrice: z.coerce.number().min(0).max(100000),
+  totalRooms: z.coerce.number().int().min(0).max(2000).default(0),
+  amenities: z.array(z.string().trim().min(1).max(60)).max(60).optional(),
+});
 
-    // Use raw query to avoid the availableRooms column issue
-    const roomTypesRaw = await prisma.$queryRaw`
-      SELECT 
-        rt.id, 
-        rt.name, 
-        rt."propertyId", 
-        rt.description, 
-        rt.capacity, 
-        rt."basePrice", 
-        rt."totalRooms",
-        rt.amenities,
-        rt."isActive",
-        rt."createdAt",
-        rt."updatedAt",
-        p.id as "property.id", 
-        p.name as "property.name",
-        (SELECT COUNT(*) FROM bookings b WHERE b."roomTypeId" = rt.id) as "bookingCount"
-      FROM room_types rt
-      JOIN properties p ON rt."propertyId" = p.id
-      ORDER BY rt."createdAt" DESC
-    `;
-    
-    // Transform raw results to match expected format
-    const roomTypes = Array.isArray(roomTypesRaw) ? roomTypesRaw.map(rt => ({
-      id: rt.id,
-      name: rt.name,
-      propertyId: rt.propertyId,
-      description: rt.description,
-      capacity: rt.capacity,
-      basePrice: rt.basePrice,
-      totalRooms: rt.totalRooms,
-      amenities: rt.amenities,
-      isActive: rt.isActive,
-      createdAt: rt.createdAt,
-      updatedAt: rt.updatedAt,
-      property: {
-        id: rt['property.id'],
-        name: rt['property.name']
-      },
-      _count: {
-        bookings: Number(rt.bookingCount)
-      }
-    })) : [];
-
-    return NextResponse.json(roomTypes);
-  } catch (error) {
-    console.error('Error fetching room types:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
-
-// POST create new room type
-export async function POST(req: NextRequest) {
-  try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-
-    const body = await req.json();
-    const {
-      propertyId,
-      name,
-      description,
-      capacity,
-      basePrice,
-      amenities,
-      totalRooms = 0
-    } = body;
-
-    // Validate required fields
-    if (!propertyId || !name || !capacity || !basePrice) {
-      return NextResponse.json(
-        { error: 'Missing required fields' },
-        { status: 400 }
-      );
-    }
-
-    // Verify property exists
-    const property = await prisma.property.findUnique({
-      where: { id: propertyId }
-    });
-
-    if (!property) {
-      return NextResponse.json(
-        { error: 'Property not found' },
-        { status: 404 }
-      );
-    }
-
-    const roomType = await prisma.roomType.create({
-      data: {
-        propertyId,
-        name,
-        description,
-        capacity: parseInt(capacity),
-        basePrice: parseFloat(basePrice),
-        totalRooms: parseInt(totalRooms.toString() || '0'),
-        amenities: amenities || [],
-      },
-      include: {
-        property: {
-          select: {
-            id: true,
-            name: true,
-          }
-        }
-      }
-    });
-
-    // Initialize room rates for the next 2 years using the base price
-    try {
-      // Use internal call pattern to avoid API call overhead
-      await fetch(`${req.nextUrl.origin}/api/admin/initialize-rates`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          // Pass the auth cookie through
-          'Cookie': req.headers.get('cookie') || '',
-        },
-        body: JSON.stringify({ roomTypeId: roomType.id }),
-      });
-      console.log(`Initialized rates for new room type: ${roomType.name} (${roomType.id})`);
-    } catch (rateError) {
-      // Log error but don't fail the room type creation
-      console.error('Error initializing rates for new room type:', rateError);
-    }
-
-    return NextResponse.json(roomType, { status: 201 });
-  } catch (error) {
-    console.error('Error creating room type:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
+/**
+ * POST — create a room type. Nightly prices default to the base price;
+ * the rate calendar only stores exceptions, so nothing is pre-generated.
+ */
+export const POST = handleRoute(async (request: NextRequest) => {
+  const actor = await requireStaff('inventory.write');
+  const body = await parseJson(request, createSchema);
+  assertPropertyAccess(actor, body.propertyId);
+  const property = await prisma.property.findUnique({ where: { id: body.propertyId }, select: { id: true } });
+  if (!property) throw notFound('Property');
+  const roomType = await prisma.roomType.create({
+    data: {
+      propertyId: body.propertyId,
+      name: body.name,
+      description: body.description || null,
+      capacity: body.capacity,
+      basePrice: body.basePrice,
+      totalRooms: body.totalRooms,
+      amenities: body.amenities ?? [],
+    },
+    include: { property: { select: { id: true, name: true } } },
+  });
+  await recordAudit({ actor, source: 'classic' }, body.propertyId, 'ROOM_TYPE_CREATE', `Created room type ${roomType.name}`, { roomTypeId: roomType.id });
+  scheduleConfigSkillSync(body.propertyId);
+  return json(roomType, { status: 201 });
+});

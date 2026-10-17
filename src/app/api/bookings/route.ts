@@ -1,386 +1,157 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { parseBookingDate, toDateString, getDateRange } from '@/lib/date-utils';
-import { encrypt } from '@/lib/encryption';
+import { toDateString } from '@/lib/date-utils';
+import { isStripeConfigured, getStripe } from '@/lib/stripe';
+import { sendBookingConfirmation } from '@/server/email';
+import { handleRoute, parseJson } from '@/server/http';
+import { badRequest, unauthorized } from '@/server/errors';
+import { confirmationEmailAllowed, confirmPayAtProperty, createBooking } from '@/server/services/bookings';
 
-export async function POST(request: NextRequest) {
-  try {
-    // Get the authenticated user
-    const session = await auth();
-    
-    if (!session || !session.user) {
-      return NextResponse.json(
-        { error: 'You must be logged in to make a booking' },
-        { status: 401 }
-      );
-    }
+const createBookingSchema = z.object({
+  propertyId: z.string().min(1),
+  roomTypeId: z.string().min(1),
+  checkIn: z.string().transform((v) => toDateString(v)),
+  checkOut: z.string().transform((v) => toDateString(v)),
+  guests: z.coerce.number().int().min(1).max(40),
+  rooms: z.coerce.number().int().min(1).max(9).default(1),
+  notes: z.string().max(1000).optional().nullable(),
+  // 'pay_at_property' (default) or 'stripe'. Any client-sent price is ignored:
+  // the total is always computed on the server from the rate calendar.
+  paymentMethod: z.enum(['pay_at_property', 'stripe']).default('pay_at_property'),
+});
 
-    // Make sure we have a valid user ID
-    if (!session.user.id) {
-      return NextResponse.json(
-        { error: 'User identification error. Please try logging in again.' },
-        { status: 400 }
-      );
-    }
+export const POST = handleRoute(async (request: NextRequest) => {
+  const session = await auth();
+  if (!session?.user?.id) throw unauthorized('Please sign in to complete your booking.');
 
-    const userId = session.user.id;
-    const body = await request.json();
-    
-    // Verify that the user actually exists in the database
-    const userExists = await prisma.user.findUnique({
-      where: { id: userId }
-    });
-    
-    if (!userExists) {
-      return NextResponse.json(
-        { error: 'User not found. Please try logging in again.' },
-        { status: 404 }
-      );
-    }
-    
-    const { 
-      propertyId, 
-      roomTypeId, 
-      checkIn, 
-      checkOut, 
-      guests,
-      rooms = 1,
-      totalPrice,
-      // Payment details
-      cardNumber,
-      cardExpMonth,
-      cardExpYear,
-      cardCvv,
-      billingName,
-      billingZip
-    } = body;
+  const user = await prisma.user.findUnique({ where: { id: session.user.id } });
+  if (!user || !user.isActive) throw unauthorized('Your session has expired. Please sign in again.');
 
-    // Validate required fields
-    if (!propertyId || !roomTypeId || !checkIn || !checkOut || !guests) {
-      return NextResponse.json(
-        { error: 'Missing required booking details' },
-        { status: 400 }
-      );
-    }
-    
-    // Validate payment details
-    if (!cardNumber || !cardExpMonth || !cardExpYear || !cardCvv || !billingName) {
-      return NextResponse.json(
-        { error: 'Missing required payment details' },
-        { status: 400 }
-      );
-    }
-    
-    // Basic card number validation (should be 13-19 digits)
-    const cleanCardNumber = cardNumber.replace(/\s/g, '');
-    if (!/^\d{13,19}$/.test(cleanCardNumber)) {
-      return NextResponse.json(
-        { error: 'Invalid card number' },
-        { status: 400 }
-      );
-    }
-    
-    // Detect card brand
-    let cardBrand = 'Unknown';
-    if (/^4/.test(cleanCardNumber)) cardBrand = 'Visa';
-    else if (/^5[1-5]/.test(cleanCardNumber) || /^2[2-7]/.test(cleanCardNumber)) cardBrand = 'Mastercard';
-    else if (/^3[47]/.test(cleanCardNumber)) cardBrand = 'Amex';
-    else if (/^6(?:011|5)/.test(cleanCardNumber)) cardBrand = 'Discover';
-    
-    // Get last 4 digits
-    const cardLast4 = cleanCardNumber.slice(-4);
+  const input = await parseJson(request, createBookingSchema);
 
-    // First ensure dates are in valid YYYY-MM-DD format
-    const cleanCheckIn = checkIn.trim().match(/^\d{4}-\d{2}-\d{2}$/) 
-      ? checkIn.trim()
-      : toDateString(checkIn);
-      
-    const cleanCheckOut = checkOut.trim().match(/^\d{4}-\d{2}-\d{2}$/)
-      ? checkOut.trim()
-      : toDateString(checkOut);
-      
-    // Validate date format first
-    if (!cleanCheckIn || !cleanCheckOut) {
-      return NextResponse.json(
-        { error: 'Invalid date format. Please use YYYY-MM-DD format.' },
-        { status: 400 }
-      );
-    }
-    
-    // Convert string dates to Date objects using timezone-safe parsing
-    const checkInDate = parseBookingDate(cleanCheckIn);
-    const checkOutDate = parseBookingDate(cleanCheckOut);
-    
-    // Log the dates for debugging
-    console.log('Booking request dates:', {
-      rawCheckIn: checkIn,
-      rawCheckOut: checkOut,
-      cleanCheckIn,
-      cleanCheckOut,
-      parsedCheckIn: checkInDate.toISOString(),
-      parsedCheckOut: checkOutDate.toISOString()
-    });
-    
-    // Double-check date validity after parsing
-    if (isNaN(checkInDate.getTime()) || isNaN(checkOutDate.getTime())) {
-      return NextResponse.json(
-        { error: 'Invalid date values. Please provide valid dates.' },
-        { status: 400 }
-      );
-    }
-    
-    // Validate date logic
-    if (checkInDate >= checkOutDate) {
-      return NextResponse.json(
-        { error: 'Check-out date must be after check-in date' },
-        { status: 400 }
-      );
-    }
-
-    // Get today's date at the start of day UTC for fair comparison
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-    
-    if (checkInDate < today) {
-      return NextResponse.json(
-        { error: 'Check-in date cannot be in the past' },
-        { status: 400 }
-      );
-    }
-    
-    // Ensure booking period is reasonable (e.g., not more than 30 days)
-    const daysDiff = (checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60 * 24);
-    if (daysDiff > 30) {
-      return NextResponse.json(
-        { error: 'Bookings cannot exceed 30 days' },
-        { status: 400 }
-      );
-    }
-
-    // Check if the room type exists and has enough available rooms
-    const roomType = await prisma.roomType.findUnique({
-      where: {
-        id: roomTypeId,
-        isActive: true,
-      }
-    });
-
-    if (!roomType) {
-      return NextResponse.json(
-        { error: 'Selected room type not found or not available' },
-        { status: 404 }
-      );
-    }
-    
-    // Get all bookings that overlap with our date range
-    const existingBookings = await prisma.booking.findMany({
-      where: {
-        roomTypeId,
-        status: { notIn: ['CANCELLED', 'NO_SHOW'] },
-        // Booking overlaps if it starts before our checkout and ends after our checkin
-        AND: [
-          { checkIn: { lt: checkOutDate } },
-          { checkOut: { gt: checkInDate } }
-        ]
-      },
-      select: {
-        rooms: true,
-        checkIn: true,
-        checkOut: true
-      }
-    });
-    
-    console.log(`Found ${existingBookings.length} potentially overlapping bookings`);
-    
-    // Get all dates in our booking range using the timezone-safe utility
-    const bookingDates = getDateRange(checkInDate, checkOutDate);
-    
-    // Calculate max rooms booked on any single day in our date range
-    let maxBookedRooms = 0;
-    
-    for (const dateStr of bookingDates) {
-      const currentDate = parseBookingDate(dateStr);
-      let bookedOnThisDate = 0;
-      
-      for (const booking of existingBookings) {
-        const bookingStart = parseBookingDate(booking.checkIn);
-        const bookingEnd = parseBookingDate(booking.checkOut);
-        
-        // If this booking covers the current date, add its rooms
-        if (currentDate >= bookingStart && currentDate < bookingEnd) {
-          bookedOnThisDate += booking.rooms || 1;
-        }
-      }
-      
-      maxBookedRooms = Math.max(maxBookedRooms, bookedOnThisDate);
-    }
-    
-    // Calculate available rooms based on the day with most bookings
-    const availableRooms = Math.max(0, roomType.totalRooms - maxBookedRooms);
-    
-    console.log(`Room type ${roomType.name}: total=${roomType.totalRooms}, maxBooked=${maxBookedRooms}, available=${availableRooms}, requested=${rooms}`);
-
-    // Check if there are enough available rooms
-    if (availableRooms < rooms) {
-      return NextResponse.json(
-        { error: `Not enough rooms available. Only ${availableRooms} rooms available.` },
-        { status: 400 }
-      );
-    }
-    
-    // Import the room availability update function
-    const { updateRoomAvailability } = await import('@/lib/room-availability');
-
-    // Use a transaction to create booking and update room availability
-    const booking = await prisma.$transaction(async (prisma) => {
-      // Create the booking
-      const newBooking = await prisma.booking.create({
-        data: {
-          userId,
-          propertyId,
-          roomTypeId,
-          checkIn: checkInDate,
-          checkOut: checkOutDate,
-          guests,
-          rooms,
-          totalPrice: totalPrice || parseFloat(roomType.basePrice.toString()) * rooms,
-          status: 'PENDING',
-          // Store payment details (encrypted for no-show charges)
-          cardNumber: encrypt(cleanCardNumber), // Encrypted full card number
-          cardLast4,
-          cardBrand,
-          cardExpMonth: parseInt(cardExpMonth),
-          cardExpYear: parseInt(cardExpYear),
-          cardCvv: encrypt(cardCvv), // Encrypted CVV
-          billingName,
-          billingZip: billingZip || null,
-          statusHistory: {
-            create: {
-              status: 'PENDING',
-              notes: 'Booking created'
-            }
-          }
-        }
-      });
-      
-      return newBooking;
-    });
-    
-    // Update room availability records after transaction is complete
-    await updateRoomAvailability(
-      roomTypeId, 
-      checkInDate, 
-      checkOutDate, 
-      rooms,
-      false // Not a cancellation
-    );
-
-    return NextResponse.json({ 
-      success: true, 
-      booking: {
-        id: booking.id,
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-        status: booking.status
-      }
-    });
-
-  } catch (error) {
-    console.error('Error creating booking:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+  // NOTE: raw card numbers / CVVs are never accepted or stored (PCI compliance).
+  // Online card payment goes through Stripe Checkout; otherwise pay at property.
+  if (input.paymentMethod === 'stripe' && !isStripeConfigured()) {
+    throw badRequest('Online card payment is not enabled. Please choose "Pay at property".');
   }
-}
 
-export async function GET(request: NextRequest) {
-  try {
-    // Get the authenticated user
-    const session = await auth();
-    
-    if (!session || !session.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+  const isStripe = input.paymentMethod === 'stripe';
+  const booking = await createBooking({
+    userId: user.id,
+    propertyId: input.propertyId,
+    roomTypeId: input.roomTypeId,
+    checkIn: input.checkIn,
+    checkOut: input.checkOut,
+    guests: input.guests,
+    rooms: input.rooms,
+    notes: input.notes,
+    paymentStatus: isStripe ? 'AWAITING_PAYMENT' : 'PAY_AT_PROPERTY',
+    createdVia: isStripe ? 'Booked online — awaiting card payment' : 'Booked online — pay at property',
+  });
 
-    const userId = session.user.id;
-    const isAdmin = session.user.role === 'ADMIN';
-    
-    // Parse query parameters
-    const url = new URL(request.url);
-    const status = url.searchParams.get('status');
-    
-    // Build the query
-    // Define a type that includes the possible booking properties
-    type BookingWhereClause = {
-      userId?: string;
-      status?: "PENDING" | "CONFIRMED" | "CANCELLED" | "COMPLETED";
-    };
-    
-    const whereClause: BookingWhereClause = {};
-    
-    // If not admin, only show the user's bookings
-    if (!isAdmin) {
-      whereClause.userId = userId;
-    }
-    
-    // Filter by status if provided
-    if (status) {
-      const upperStatus = status.toUpperCase();
-      // Type guard to check if status is valid
-      if (['PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED'].includes(upperStatus)) {
-        whereClause.status = upperStatus as "PENDING" | "CONFIRMED" | "CANCELLED" | "COMPLETED";
-      }
-    }
-
-    // Use type assertion to convert to the Prisma where clause type
-    // The Prisma type definition is complex, but our whereClause is compatible at runtime
-    // Using a more specific type instead of any
-    const bookings = await prisma.booking.findMany({
-      where: whereClause as Record<string, unknown>,
-      include: {
-        property: {
-          select: {
-            name: true,
-            city: true,
-            state: true,
-            photos: {
-              where: { isMain: true },
-              take: 1
-            }
-          }
+  if (isStripe) {
+    const stripe = getStripe();
+    // Return to the host the guest booked on (also right for preview deployments).
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || request.nextUrl.origin;
+    const checkoutSession = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      payment_method_types: ['card'],
+      customer_email: user.email,
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: `${booking.property.name} — ${booking.roomType.name}`,
+              description: `${input.checkIn} → ${input.checkOut}, ${input.rooms} room(s), ${input.guests} guest(s)`,
+            },
+            unit_amount: Math.round(Number(booking.totalPrice) * 100),
+          },
+          quantity: 1,
         },
-        roomType: {
-          select: {
-            name: true,
-            capacity: true,
-            photos: {
-              orderBy: { isMain: 'desc' },
-              take: 3
-            }
-          }
-        },
-        statusHistory: {
-          orderBy: { createdAt: 'desc' },
-          take: 1
-        }
-      },
-      orderBy: {
-        createdAt: 'desc'
-      }
+      ],
+      metadata: { bookingId: booking.id },
+      success_url: `${siteUrl}/bookings/${booking.id}?payment=success`,
+      cancel_url: `${siteUrl}/bookings/${booking.id}?payment=cancelled`,
     });
-
-    return NextResponse.json(bookings);
-
-  } catch (error) {
-    console.error('Error fetching bookings:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    await prisma.booking.update({ where: { id: booking.id }, data: { stripeCheckoutSessionId: checkoutSession.id } });
+    return NextResponse.json({
+      success: true,
+      requiresPayment: true,
+      checkoutUrl: checkoutSession.url,
+      booking: { id: booking.id, code: booking.code, status: booking.status },
+    });
   }
-}
+
+  // Pay-at-property bookings are confirmed instantly — the guest is told so.
+  const confirmed = await confirmPayAtProperty(booking.id);
+
+  // Accounts aren't email-verified: a handful of confirmations per hour is plenty for a real guest.
+  if (await confirmationEmailAllowed(user.id)) await sendBookingConfirmation({
+    to: user.email,
+    guestName: `${user.firstName} ${user.lastName}`.trim() || user.email,
+    propertyName: booking.property.name,
+    roomTypeName: booking.roomType.name,
+    checkIn: input.checkIn,
+    checkOut: input.checkOut,
+    guests: input.guests,
+    rooms: input.rooms,
+    totalPrice: Number(booking.totalPrice).toFixed(2),
+    bookingId: booking.code ?? booking.id,
+    paymentStatus: 'PAY_AT_PROPERTY',
+  });
+
+  return NextResponse.json({
+    success: true,
+    requiresPayment: false,
+    booking: {
+      id: booking.id,
+      code: booking.code,
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      status: confirmed.status,
+      totalPrice: Number(booking.totalPrice),
+      paymentStatus: 'PAY_AT_PROPERTY',
+    },
+  });
+});
+
+/** The signed-in guest's own trips (staff use /api/admin/bookings). */
+export const GET = handleRoute(async () => {
+  const session = await auth();
+  if (!session?.user?.id) throw unauthorized();
+
+  const bookings = await prisma.booking.findMany({
+    where: { userId: session.user.id },
+    include: {
+      property: {
+        select: {
+          id: true,
+          name: true,
+          city: true,
+          state: true,
+          address: true,
+          phone: true,
+          primaryColor: true,
+          photos: { where: { isMain: true }, take: 1 },
+        },
+      },
+      roomType: {
+        select: { name: true, capacity: true, photos: { orderBy: { isMain: 'desc' }, take: 1 } },
+      },
+      room: { select: { roomNumber: true } },
+    },
+    orderBy: { checkIn: 'desc' },
+  });
+
+  return NextResponse.json(
+    bookings.map(({ stripeCheckoutSessionId: _s, stripePaymentIntentId: _p, ...b }) => ({
+      ...b,
+      checkIn: toDateString(b.checkIn),
+      checkOut: toDateString(b.checkOut),
+      totalPrice: Number(b.totalPrice),
+    }))
+  );
+});

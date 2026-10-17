@@ -1,230 +1,196 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import * as React from 'react';
+import Link from 'next/link';
+import useSWR from 'swr';
 import { useRouter } from 'next/navigation';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { ArrowLeftRight, BedDouble, Building2, CalendarCheck2, Check, EyeOff, MapPin, Pencil, Plus, SquareArrowOutUpRight } from 'lucide-react';
+import { fetcher } from '@/lib/fetcher';
+import { formatNumber } from '@/lib/status';
+import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { Building2, MapPin, Star, Edit, Trash2, Plus, Search } from 'lucide-react';
+import { Button, IconButton } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { EmptyState, PageHeader, Skeleton } from '@/components/ui/primitives';
+import { SmartImage } from '@/components/ui/smart-image';
+import { useConsole } from '@/components/console/ConsoleProvider';
 
-export default function AdminPropertiesPage() {
-  const [searchTerm, setSearchTerm] = useState('');
-  const router = useRouter();
-  type Property = {
-    id: string;
-    name: string;
-    description?: string;
-    address: string;
-    city: string;
-    state: string;
-    zipCode: string;
-    phone: string;
-    email?: string;
-    isActive: boolean;
-    roomTypes: Array<{
-      id: string;
-      name: string;
-      capacity: number;
-    }>;
-    _count: {
-      bookings: number;
-    };
-  };
+interface PropertyRow {
+  id: string;
+  name: string;
+  city: string;
+  state: string;
+  type: string | null;
+  tagline: string | null;
+  isActive: boolean;
+  isDemo: boolean;
+  primaryColor: string | null;
+  photos: { url: string }[];
+  roomTypes: { id: string; totalRooms: number; isActive: boolean }[];
+  _count: { bookings: number; rooms: number };
+}
 
-  const [properties, setProperties] = useState<Property[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [deleteError, setDeleteError] = useState('');
+const FRAME = 'mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8';
 
-  useEffect(() => {
-    const fetchProperties = async () => {
-      try {
-        setLoading(true);
-        const response = await fetch('/api/admin/properties');
-        if (!response.ok) {
-          throw new Error('Failed to fetch properties');
-        }
-        const data = await response.json();
-        setProperties(data);
-      } catch (err) {
-        setError('Error loading properties. Please try again.');
-        console.error('Error fetching properties:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchProperties();
-  }, []);
-
-  const filteredProperties = properties.filter((property) =>
-    property.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    property.address.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    property.city.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    property.state.toLowerCase().includes(searchTerm.toLowerCase())
+function Marks({ p, current }: { p: PropertyRow; current: boolean }) {
+  return (
+    <>
+      {current && (
+        <Badge variant="default" size="sm" icon={Check}>
+          Current
+        </Badge>
+      )}
+      {!p.isActive && (
+        <Badge variant="neutral" size="sm" icon={EyeOff}>
+          Hidden from guests
+        </Badge>
+      )}
+      {p.isDemo && (
+        <Badge variant="outline" size="sm" className="bg-surface/90">
+          Demo
+        </Badge>
+      )}
+    </>
   );
-  
-  const [isDeleting, setIsDeleting] = useState('');
-  
-  const handleDeleteProperty = async (propertyId: string) => {
-    if (!confirm('Are you sure you want to delete this property? This action cannot be undone.')) {
-      return;
-    }
-    
-    try {
-      setIsDeleting(propertyId);
-      setDeleteError('');
-      
-      const response = await fetch(`/api/admin/properties/${propertyId}`, {
-        method: 'DELETE',
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        
-        if (response.status === 400 && errorData.error === 'Cannot delete property with active bookings') {
-          throw new Error('Cannot delete property with active bookings. Please cancel or complete all bookings first.');
-        } else {
-          throw new Error(`Failed to delete property: ${errorData.error || response.statusText}`);
-        }
-      }
-      
-      // Remove the deleted property from the state
-      setProperties(properties.filter(property => property.id !== propertyId));
-      
-    } catch (err: any) {
-      console.error('Error deleting property:', err);
-      setDeleteError(err.message || 'Failed to delete property. Please try again.');
-    } finally {
-      setIsDeleting('');
-    }
-  };
+}
+
+export default function PropertiesPage() {
+  const router = useRouter();
+  const { can, propertyId, setPropertyId } = useConsole();
+  const { data, isLoading, error } = useSWR<PropertyRow[]>('/api/admin/properties', fetcher);
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Properties</h1>
-          <p className="text-gray-600">Manage your motel properties</p>
-        </div>
-        <Button className="flex items-center space-x-2" onClick={() => router.push('/admin/properties/add')}>
-          <Plus className="h-4 w-4" />
-          <span>Add Property</span>
-        </Button>
-      </div>
+    <div className={FRAME}>
+      <div className="space-y-6">
+        <PageHeader
+          title="Properties"
+          description={data ? `${formatNumber(data.length)} propert${data.length === 1 ? 'y' : 'ies'} you manage` : 'Loading your properties…'}
+          actions={
+            can('property.create') ? (
+              <Button asChild>
+                <Link href="/admin/properties/add">
+                  <Plus aria-hidden /> Add property
+                </Link>
+              </Button>
+            ) : undefined
+          }
+        />
 
-      {/* Error Message */}
-      {deleteError && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative" role="alert">
-          <span className="block sm:inline">{deleteError}</span>
-          <span className="absolute top-0 bottom-0 right-0 px-4 py-3">
-            <button onClick={() => setDeleteError('')} className="text-red-500">
-              <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-              </svg>
-            </button>
-          </span>
-        </div>
-      )}
-      
-      {/* Search */}
-      <div className="flex items-center space-x-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <Input
-            placeholder="Search properties..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
-          />
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center items-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-        </div>
-      ) : error ? (
-        <div className="text-center py-12">
-          <p className="text-red-500">{error}</p>
-        </div>
-      ) : (
-        <>
-          {/* Properties Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-            {filteredProperties.map((property) => (
-              <Card key={property.id} className="hover:shadow-lg transition-shadow">
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center space-x-2">
-                      <Building2 className="h-5 w-5 text-blue-600" />
-                      <CardTitle className="text-lg">{property.name}</CardTitle>
-                    </div>
-                    <Badge variant={property.isActive ? 'default' : 'secondary'}>
-                      {property.isActive ? 'Active' : 'Inactive'}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center space-x-2 text-sm text-gray-600">
-                    <MapPin className="h-4 w-4" />
-                    <span>{property.address}, {property.city}, {property.state}</span>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {property.description && (
-                    <p className="text-sm text-gray-600 line-clamp-2">{property.description}</p>
-                  )}
-                  
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-600">Room Types:</span>
-                      <div className="font-semibold">{property.roomTypes.length}</div>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Bookings:</span>
-                      <div className="font-semibold text-green-600">{property._count.bookings}</div>
-                    </div>
-                  </div>
-
-                  <div className="flex space-x-2 pt-4">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      className="flex-1"
-                      onClick={() => router.push(`/admin/properties/${property.id}`)}
-                    >
-                      <Edit className="h-4 w-4 mr-2" />
-                      Edit
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      className="text-red-600 hover:text-red-700"
-                      onClick={() => handleDeleteProperty(property.id)}
-                      disabled={isDeleting === property.id}
-                    >
-                      {isDeleting === property.id ? (
-                        <div className="animate-spin h-4 w-4 border-2 border-red-600 rounded-full border-t-transparent" />
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+        {isLoading ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-[340px] rounded-2xl" />
             ))}
           </div>
-          
-          {filteredProperties.length === 0 && (
-            <div className="text-center py-12">
-              <Building2 className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No properties found</h3>
-              <p className="text-gray-600">Try adjusting your search terms</p>
-            </div>
-          )}
-        </>
-      )}
+        ) : error ? (
+          <Card>
+            <EmptyState icon={Building2} title="Couldn’t load your properties" description="Check your connection and refresh the page." />
+          </Card>
+        ) : !data?.length ? (
+          <Card>
+            <EmptyState
+              icon={Building2}
+              title="No properties yet"
+              description="Add your first property — its name, address and brand color — to start taking bookings."
+              action={
+                can('property.create') ? (
+                  <Button asChild>
+                    <Link href="/admin/properties/add">
+                      <Plus aria-hidden /> Add property
+                    </Link>
+                  </Button>
+                ) : undefined
+              }
+            />
+          </Card>
+        ) : (
+          <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {data.map((p) => {
+              const rooms = p.roomTypes.filter((t) => t.isActive).reduce((s, t) => s + t.totalRooms, 0);
+              const current = p.id === propertyId;
+              const photo = p.photos[0]?.url;
+              const accent = p.primaryColor ?? 'hsl(var(--primary))';
+              return (
+                <li key={p.id}>
+                  <Card className={cn('flex h-full flex-col overflow-hidden p-0 transition-shadow hover:shadow-lifted', current && 'ring-2 ring-primary/30')}>
+                    {photo ? (
+                      <div className="relative">
+                        <SmartImage src={photo} alt="" icon={Building2} aspectRatio="16 / 9" sizes="(min-width: 1024px) 400px, (min-width: 640px) 50vw, 100vw" className="w-full" />
+                        <span className="absolute inset-x-0 bottom-0 h-1" style={{ backgroundColor: accent }} aria-hidden />
+                        <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
+                          <Marks p={p} current={current} />
+                        </div>
+                      </div>
+                    ) : (
+                      // No photo yet: a slim brand stripe instead of an empty placeholder block.
+                      <span className="h-1.5 w-full" style={{ backgroundColor: accent }} aria-hidden />
+                    )}
+                    <div className="flex flex-1 flex-col p-5">
+                      {!photo && (
+                        <div className="mb-2 flex flex-wrap gap-1.5 empty:hidden">
+                          <Marks p={p} current={current} />
+                        </div>
+                      )}
+                      <h2 className="text-base font-semibold tracking-tight">{p.name}</h2>
+                      <p className="mt-0.5 flex items-center gap-1 text-sm text-muted-foreground">
+                        <MapPin className="size-3.5 shrink-0" aria-hidden />
+                        <span className="truncate">
+                          {p.city}, {p.state}
+                          {p.type && ` · ${p.type}`}
+                        </span>
+                      </p>
+                      {p.tagline && <p className="mt-2 line-clamp-2 text-sm text-foreground/85">{p.tagline}</p>}
+                      <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                        <div className="flex items-center gap-1.5">
+                          <BedDouble className="size-4" aria-hidden />
+                          <dt className="sr-only">Rooms</dt>
+                          <dd>
+                            {formatNumber(rooms)} room{rooms === 1 ? '' : 's'}
+                          </dd>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <CalendarCheck2 className="size-4" aria-hidden />
+                          <dt className="sr-only">Bookings</dt>
+                          <dd>
+                            {formatNumber(p._count.bookings)} booking{p._count.bookings === 1 ? '' : 's'}
+                          </dd>
+                        </div>
+                      </dl>
+                      <div className="mt-auto flex items-center gap-2 pt-5">
+                        {!current && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1"
+                            onClick={() => {
+                              setPropertyId(p.id);
+                              router.push('/admin');
+                            }}
+                          >
+                            <ArrowLeftRight aria-hidden /> Switch to
+                          </Button>
+                        )}
+                        {can('property.write') && (
+                          <Button asChild size="sm" variant={current ? 'default' : 'outline'} className="flex-1">
+                            <Link href={`/admin/properties/${p.id}`}>
+                              <Pencil aria-hidden /> Edit details
+                            </Link>
+                          </Button>
+                        )}
+                        <IconButton asChild label={`Open ${p.name}’s booking page (new tab)`} variant="ghost" size="icon-sm">
+                          <Link href={`/properties/${p.id}`} target="_blank" rel="noopener">
+                            <SquareArrowOutUpRight />
+                          </Link>
+                        </IconButton>
+                      </div>
+                    </div>
+                  </Card>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }

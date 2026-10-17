@@ -1,24 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { staffGuard } from '@/server/guard';
 
 // Get room inventory for a specific room type
 export async function GET(
   request: NextRequest,
-  { params }: { params: { roomTypeId: string } }
+  { params }: { params: Promise<{ roomTypeId: string }> }
 ) {
   try {
     // Check authentication
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await staffGuard('inventory.write', { roomTypeId: (await params).roomTypeId });
+    if ('error' in guard) return guard.error;
 
-    const roomTypeId = params.roomTypeId;
+    const roomTypeId = (await params).roomTypeId;
     
     // Check if the room type exists
     const roomType = await prisma.roomType.findUnique({
@@ -34,7 +28,7 @@ export async function GET(
     }
 
     // Just get the basic inventory data for now
-    const inventory = await prisma.roomInventory.findMany({
+    const inventory = await prisma.room.findMany({
       where: { roomTypeId },
       orderBy: { roomNumber: 'asc' }
     });
@@ -53,20 +47,14 @@ export async function GET(
 // Add new room to inventory
 export async function POST(
   request: NextRequest,
-  { params }: { params: { roomTypeId: string } }
+  { params }: { params: Promise<{ roomTypeId: string }> }
 ) {
   try {
     // Check authentication
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await staffGuard('inventory.write', { roomTypeId: (await params).roomTypeId });
+    if ('error' in guard) return guard.error;
 
-    const roomTypeId = params.roomTypeId;
+    const roomTypeId = (await params).roomTypeId;
     const body = await request.json();
     const { roomNumber } = body;
     
@@ -90,7 +78,7 @@ export async function POST(
     }
     
     // Check if room number already exists for this room type
-    const existingRoom = await prisma.roomInventory.findFirst({
+    const existingRoom = await prisma.room.findFirst({
       where: {
         roomTypeId,
         roomNumber
@@ -105,11 +93,11 @@ export async function POST(
     }
     
     // Create the new room
-    const newRoom = await prisma.roomInventory.create({
+    const newRoom = await prisma.room.create({
       data: {
+        propertyId: roomType.propertyId,
         roomTypeId,
-        roomNumber,
-        isActive: true
+        roomNumber
       }
     });
     

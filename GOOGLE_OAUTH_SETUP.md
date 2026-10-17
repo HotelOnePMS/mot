@@ -8,7 +8,7 @@ Visit: https://console.cloud.google.com/
 ### 2. Create a New Project (or select existing)
 - Click "Select a project" at the top
 - Click "New Project"
-- Enter project name (e.g., "Motel Booking")
+- Enter project name (e.g., "HotelOne")
 - Click "Create"
 
 ### 3. Enable Google+ API

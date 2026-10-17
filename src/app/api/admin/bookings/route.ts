@@ -1,61 +1,36 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
+import { NextRequest } from 'next/server';
+import { z } from 'zod';
+import type { BookingStatus } from '@/lib/dto';
+import { requireStaff } from '@/server/authz';
+import { isISODate } from '@/server/dates';
+import { handleRoute, json, parseQuery } from '@/server/http';
+import { searchBookings } from '@/server/services/bookings';
 
-// GET all bookings for admin
-export async function GET() {
-  try {
-    // Check authentication
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+const STATUSES = ['PENDING', 'CONFIRMED', 'CANCELLED', 'CHECKED_IN', 'CHECKED_OUT', 'NO_SHOW'] as const;
 
-    // Fetch all bookings with related data
-    const bookings = await prisma.booking.findMany({
-      include: {
-        user: {
-          select: {
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-          }
-        },
-        property: {
-          select: {
-            id: true,
-            name: true,
-          }
-        },
-        roomType: {
-          select: {
-            id: true,
-            name: true,
-          }
-        },
-        statusHistory: {
-          orderBy: {
-            createdAt: 'desc'
-          },
-          take: 1
-        }
-      },
-      orderBy: {
-        createdAt: 'desc'
-      }
-    });
+const query = z.object({
+  propertyId: z.string().optional(),
+  q: z.string().max(100).optional(),
+  status: z
+    .string()
+    .optional()
+    .transform((s) => (s ? s.split(',').filter((x): x is BookingStatus => (STATUSES as readonly string[]).includes(x)) : undefined)),
+  from: z.string().refine(isISODate).optional(),
+  to: z.string().refine(isISODate).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
 
-    return NextResponse.json(bookings);
-  } catch (error) {
-    console.error('Error fetching bookings:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
+/** GET /api/admin/bookings — reservations across the caller's properties. */
+export const GET = handleRoute(async (request: NextRequest) => {
+  const actor = await requireStaff('booking.view');
+  const q = parseQuery(request, query);
+  const bookings = await searchBookings(actor, {
+    propertyId: q.propertyId,
+    query: q.q,
+    status: q.status,
+    from: q.from,
+    to: q.to,
+    limit: q.limit ?? 100,
+  });
+  return json(bookings);
+});

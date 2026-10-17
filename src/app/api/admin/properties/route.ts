@@ -1,102 +1,55 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requirePermission, requireStaff, scopeProperties } from '@/server/authz';
+import { handleRoute, json, parseJson } from '@/server/http';
+import { recordAudit } from '@/server/services/audit';
+import { propertySchema } from '@/server/schemas';
+import { scheduleConfigSkillSync } from '@/server/skills';
 
-// GET all properties
-export async function GET() {
-  try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+/** GET — properties the caller can manage, with room types and booking counts. */
+export const GET = handleRoute(async () => {
+  const actor = await requireStaff();
+  const properties = await prisma.property.findMany({
+    where: scopeProperties(actor),
+    include: {
+      roomTypes: { select: { id: true, name: true, capacity: true, totalRooms: true, basePrice: true, isActive: true } },
+      photos: { where: { isMain: true }, take: 1, select: { url: true } },
+      _count: { select: { bookings: true, rooms: true } },
+    },
+    orderBy: [{ isDemo: 'asc' }, { createdAt: 'desc' }],
+  });
+  return json(properties);
+});
 
-    const properties = await prisma.property.findMany({
-      include: {
-        roomTypes: {
-          select: {
-            id: true,
-            name: true,
-            capacity: true,
-          }
-        },
-        _count: {
-          select: {
-            bookings: true,
-          }
-        }
-      },
-      orderBy: {
-        createdAt: 'desc'
-      }
-    });
-
-    return NextResponse.json(properties);
-  } catch (error) {
-    console.error('Error fetching properties:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
-
-// POST create new property
-export async function POST(req: NextRequest) {
-  try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-
-    const body = await req.json();
-    const {
-      name,
-      description,
-      address,
-      city,
-      state,
-      zipCode,
-      phone,
-      email,
-      amenities
-    } = body;
-
-    // Validate required fields
-    if (!name || !address || !city || !state || !zipCode) {
-      return NextResponse.json(
-        { error: 'Missing required fields' },
-        { status: 400 }
-      );
-    }
-
-    const property = await prisma.property.create({
+/** POST — create a property. Owners are assigned to what they create. */
+export const POST = handleRoute(async (request: NextRequest) => {
+  const actor = await requireStaff();
+  requirePermission(actor, 'property.create');
+  const body = await parseJson(request, propertySchema);
+  const property = await prisma.$transaction(async (tx) => {
+    const p = await tx.property.create({
       data: {
-        name,
-        description,
-        address,
-        city,
-        state,
-        zipCode,
-        phone,
-        email,
-        amenities: amenities || [],
+        name: body.name,
+        description: body.description || null,
+        address: body.address,
+        city: body.city,
+        state: body.state,
+        zipCode: body.zipCode,
+        phone: body.phone,
+        email: body.email || null,
+        amenities: body.amenities ?? [],
+        tagline: body.tagline || null,
+        primaryColor: body.primaryColor || null,
+        type: body.type ?? 'Hotel',
+        isActive: body.isActive ?? true,
       },
     });
-
-    return NextResponse.json(property, { status: 201 });
-  } catch (error) {
-    console.error('Error creating property:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
+    if (actor.role !== 'ADMIN') {
+      await tx.userPropertyAssignment.create({ data: { userId: actor.userId, propertyId: p.id } });
+    }
+    return p;
+  });
+  await recordAudit({ actor, source: 'classic' }, property.id, 'PROPERTY_CREATE', `Created property ${property.name}`);
+  scheduleConfigSkillSync(property.id);
+  return json(property, { status: 201 });
+});

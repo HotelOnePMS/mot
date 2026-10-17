@@ -1,121 +1,60 @@
-import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { NextRequest } from 'next/server';
+import { z } from 'zod';
+import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
+import { requireActor } from '@/server/authz';
+import { badRequest } from '@/server/errors';
+import { handleRoute, json, parseJson } from '@/server/http';
+import { assertDemoLoginUnchanged } from '@/server/services/users';
 
-// GET user profile
-export async function GET() {
-  try {
-    const session = await auth();
-    
-    if (!session || !session.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+const select = {
+  firstName: true,
+  lastName: true,
+  email: true,
+  phone: true,
+  address: true,
+  city: true,
+  state: true,
+  zipCode: true,
+  country: true,
+  role: true,
+  createdAt: true,
+} as const;
+
+/** GET — the signed-in person's profile. */
+export const GET = handleRoute(async () => {
+  const actor = await requireActor();
+  return json(await prisma.user.findUnique({ where: { id: actor.userId }, select }));
+});
+
+const opt = (max: number) => z.string().trim().max(max).nullable().optional();
+const schema = z.object({
+  firstName: z.string().trim().min(1, 'is required').max(60).optional(),
+  lastName: z.string().trim().min(1, 'is required').max(60).optional(),
+  phone: opt(40),
+  address: opt(200),
+  city: opt(100),
+  state: opt(100),
+  zipCode: opt(20),
+  country: opt(100),
+  currentPassword: z.string().optional(),
+  newPassword: z.string().min(8, 'must be at least 8 characters').max(200).optional(),
+});
+
+/** PUT — update your details, and optionally your password (needs the current one). */
+export const PUT = handleRoute(async (request: NextRequest) => {
+  const actor = await requireActor();
+  const { currentPassword, newPassword, ...details } = await parseJson(request, schema);
+  let password: string | undefined;
+  if (newPassword) {
+    const user = await prisma.user.findUnique({ where: { id: actor.userId }, select: { password: true, email: true, role: true, isActive: true } });
+    if (!user?.password || !currentPassword || !(await bcrypt.compare(currentPassword, user.password))) {
+      throw badRequest('Your current password isn’t right.');
     }
-
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: {
-        firstName: true,
-        lastName: true,
-        email: true,
-        phone: true,
-        address: true,
-        city: true,
-        state: true,
-        zipCode: true,
-        country: true,
-      }
-    });
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json(user);
-  } catch (error) {
-    console.error('Error fetching profile:', error);
-    console.error('Error details:', error instanceof Error ? error.message : String(error));
-    return NextResponse.json(
-      { 
-        error: 'Internal server error',
-        details: error instanceof Error ? error.message : String(error)
-      },
-      { status: 500 }
-    );
+    assertDemoLoginUnchanged(user, { password: newPassword });
+    password = await bcrypt.hash(newPassword, 12);
   }
-}
-
-// PUT update user profile
-export async function PUT(request: Request) {
-  try {
-    const session = await auth();
-    
-    console.log('Profile update - Session:', session);
-    
-    if (!session || !session.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-
-    console.log('Profile update - User ID:', session.user.id);
-
-    const body = await request.json();
-    console.log('Profile update - Body:', body);
-    
-    const { firstName, lastName, phone, address, city, state, zipCode, country } = body;
-
-    // Validate required fields
-    if (!firstName || !lastName) {
-      return NextResponse.json(
-        { error: 'First name and last name are required' },
-        { status: 400 }
-      );
-    }
-
-    // Update user profile
-    const updatedUser = await prisma.user.update({
-      where: { id: session.user.id },
-      data: {
-        firstName,
-        lastName,
-        phone: phone || null,
-        address: address || null,
-        city: city || null,
-        state: state || null,
-        zipCode: zipCode || null,
-        country: country || null,
-      },
-      select: {
-        firstName: true,
-        lastName: true,
-        email: true,
-        phone: true,
-        address: true,
-        city: true,
-        state: true,
-        zipCode: true,
-        country: true,
-      }
-    });
-
-    return NextResponse.json(updatedUser);
-  } catch (error) {
-    console.error('Error updating profile:', error);
-    console.error('Error details:', error instanceof Error ? error.message : String(error));
-    console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
-    return NextResponse.json(
-      { 
-        error: 'Internal server error',
-        details: error instanceof Error ? error.message : String(error)
-      },
-      { status: 500 }
-    );
-  }
-}
+  const clean = Object.fromEntries(Object.entries(details).map(([k, v]) => [k, typeof v === 'string' && v === '' && k !== 'firstName' && k !== 'lastName' ? null : v]));
+  const updated = await prisma.user.update({ where: { id: actor.userId }, data: { ...clean, ...(password ? { password } : {}) }, select });
+  return json(updated);
+});

@@ -1,197 +1,81 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
+import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
-import { getAvailableRooms } from '@/lib/room-availability';
+import { diffDays, isISODate } from '@/server/dates';
+import { handleRoute, json, parseQuery } from '@/server/http';
+import { propertyAvailability } from '@/server/services/inventory';
+import { LISTED_PROPERTY } from '@/server/concierge/facts';
 
-// Fixed database schema error - force rebuild for Render deployment
-export async function GET(
-  request: NextRequest
-) {
-  try {
-    const searchParams = request.nextUrl.searchParams;
-    const propertyId = searchParams.get('propertyId');
-    const checkInParam = searchParams.get('checkIn');
-    const checkOutParam = searchParams.get('checkOut');
-    const guestsParam = searchParams.get('guests');
-    
-    // Parse search parameters with proper date handling
-    let checkIn: Date | null = null;
-    let checkOut: Date | null = null;
-    
-    if (checkInParam) {
-      // Remove any cache-busting query params that might have been added
-      const cleanCheckInParam = checkInParam.split('?')[0].trim();
-      
-      // Ensure the date is in YYYY-MM-DD format and set to noon UTC to avoid timezone issues
-      checkIn = new Date(`${cleanCheckInParam}T12:00:00Z`);
-      
-      // Validate date is valid
-      if (isNaN(checkIn.getTime())) {
-        console.error(`Invalid check-in date format: ${cleanCheckInParam}`);
-        checkIn = null;
-      } else {
-        console.log(`Using check-in date: ${cleanCheckInParam} (${checkIn.toISOString()})`);
-      }
-    }
-    
-    if (checkOutParam) {
-      // Ensure the date is in YYYY-MM-DD format and set to noon UTC to avoid timezone issues
-      const checkOutStr = checkOutParam.trim();
-      checkOut = new Date(`${checkOutStr}T12:00:00Z`);
-      
-      // Validate date is valid
-      if (isNaN(checkOut.getTime())) {
-        console.error(`Invalid check-out date format: ${checkOutParam}`);
-        checkOut = null;
-      }
-    }
-    
-    // If dates are valid, log them
-    if (checkIn && checkOut) {
-      if (checkIn >= checkOut) {
-        console.warn('Check-in date must be before check-out date. Ignoring date filters.');
-        checkIn = null;
-        checkOut = null;
-      }
-    }
-    
-    const guests = guestsParam ? parseInt(guestsParam, 10) : null;
-    
-    console.log('Search parameters:', { 
-      propertyId, 
-      checkIn: checkIn?.toISOString(), 
-      checkOut: checkOut?.toISOString(), 
-      guests 
-    });
-    
-    // Build the base query
-    const whereClause: any = {
-      isActive: true,
-    };
-    
-    // Filter by specific property if provided
-    if (propertyId) {
-      whereClause.id = propertyId;
-    }
-    
-    // Get properties with their room types - FIXED VERSION WITHOUT availableRooms
-    const properties = await prisma.property.findMany({
-      where: whereClause,
-      include: {
-        photos: {
-          where: { isMain: true },
-          take: 1,
-        },
-        roomTypes: {
-          where: { 
-            isActive: true,
-            // If guests filter is provided, only include room types that can accommodate
-            ...(guests ? { capacity: { gte: guests } } : {}),
-          },
-          include: {
-            photos: {
-              where: { isMain: true },
-              take: 1,
-            },
-          },
-        },
-      },
-    });
+const query = z.object({
+  q: z.string().trim().max(100).optional(),
+  checkIn: z.string().refine(isISODate).optional(),
+  checkOut: z.string().refine(isISODate).optional(),
+  guests: z.coerce.number().int().min(1).max(40).optional(),
+});
 
-    // Transform the response to include real-time availability information
-    const propertiesWithAvailability = await Promise.all(properties.map(async (property) => {
-      // Track overall availability and pricing
-      let totalRooms = 0;
-      let totalAvailableRooms = 0;
-      let lowestPrice: number | null = null;
-      
-      // If we have valid dates, calculate date-specific availability for each room type
-      if (checkIn && checkOut) {
-        console.log(`Calculating date-specific availability for property ${property.name}`);
-        
-        // Calculate availability for each room type using the same utility function
-        // that the property details page uses
-        for (const roomType of property.roomTypes) {
-          try {
-            // Calculate available rooms for this room type - using min rooms across the entire stay
-            // This matches the logic in the property details page
-            const { availableRooms, availabilityByDate } = await getAvailableRooms(roomType.id, checkIn, checkOut);
-            console.log(`Room type ${roomType.name}: Total=${roomType.totalRooms}, Available=${availableRooms}`);
-            
-            // Add calculated availability to the room type
-            (roomType as any).calculatedAvailableRooms = availableRooms;
-            (roomType as any).availableRooms = availableRooms;
-            (roomType as any).availabilityByDate = availabilityByDate;
-            
-            // Sum overall availability
-            totalRooms += roomType.totalRooms;
-            totalAvailableRooms += availableRooms;
-            
-            // Track lowest price
-            const basePrice = Number(roomType.basePrice);
-            if (lowestPrice === null || basePrice < lowestPrice) {
-              lowestPrice = basePrice;
-            }
-          } catch (error) {
-            console.error(`Error calculating availability for room type ${roomType.name}:`, error);
-            (roomType as any).calculatedAvailableRooms = 0;
-            (roomType as any).availableRooms = 0;
+/**
+ * GET /api/properties — the public directory. With dates, each property
+ * carries its lowest live nightly price for that stay and whether any room
+ * type can host the party; without dates, its lowest base price.
+ */
+export const GET = handleRoute(async (request: NextRequest) => {
+  const q = parseQuery(request, query);
+  const hasDates = !!q.checkIn && !!q.checkOut && q.checkOut > q.checkIn && diffDays(q.checkIn, q.checkOut) <= 30;
+  const text = q.q?.trim();
+
+  const properties = await prisma.property.findMany({
+    where: {
+      ...LISTED_PROPERTY,
+      ...(text
+        ? {
+            OR: [
+              { name: { contains: text, mode: 'insensitive' } },
+              { city: { contains: text, mode: 'insensitive' } },
+              { state: { contains: text, mode: 'insensitive' } },
+            ],
           }
-        }
+        : {}),
+    },
+    include: {
+      photos: { orderBy: [{ isMain: 'desc' }, { createdAt: 'asc' }], take: 1, select: { url: true } },
+      roomTypes: { where: { isActive: true }, select: { id: true, basePrice: true, capacity: true } },
+    },
+    orderBy: [{ isDemo: 'desc' }, { createdAt: 'asc' }],
+  });
+
+  const rows = await Promise.all(
+    properties.map(async (p) => {
+      const guests = q.guests ?? 1;
+      let fromPrice: number | null = null;
+      let available: boolean | null = null;
+      if (hasDates) {
+        const types = await propertyAvailability({ propertyId: p.id, checkIn: q.checkIn!, checkOut: q.checkOut!, guests });
+        const fitting = types.filter((t) => t.capacity >= guests && t.available > 0 && t.quote);
+        available = fitting.length > 0;
+        fromPrice = fitting.length ? Math.min(...fitting.map((t) => t.quote!.averageNightly)) : null;
       } else {
-        // Use static total rooms when no dates provided for consistency
-        for (const roomType of property.roomTypes) {
-          const total = roomType.totalRooms;
-          (roomType as any).availableRooms = total;
-          totalRooms += total;
-          totalAvailableRooms += total;
-          
-          const basePrice = Number(roomType.basePrice);
-          if (lowestPrice === null || basePrice < lowestPrice) {
-            lowestPrice = basePrice;
-          }
-        }
+        const fitting = p.roomTypes.filter((t) => t.capacity >= guests);
+        fromPrice = fitting.length ? Math.min(...fitting.map((t) => Number(t.basePrice))) : null;
       }
-      
-      // Return aggregated availability
       return {
-        id: property.id,
-        name: property.name,
-        description: property.description,
-        address: property.address,
-        city: property.city,
-        state: property.state,
-        zipCode: property.zipCode,
-        mainPhoto: property.photos[0]?.url || null,
-        photos: property.photos.map(p => ({ id: p.id, url: p.url, isMain: p.isMain })),
-        totalRooms,
-        availableRooms: totalAvailableRooms,
-        lowestPrice,
-        roomTypeCount: property.roomTypes.filter(rt => (rt as any).availableRooms > 0).length,
-        hasAvailability: totalAvailableRooms > 0
+        id: p.id,
+        name: p.name,
+        tagline: p.tagline,
+        type: p.type,
+        description: p.description,
+        city: p.city,
+        state: p.state,
+        primaryColor: p.primaryColor,
+        amenities: p.amenities,
+        mainPhoto: p.photos[0]?.url ?? null,
+        roomTypeCount: p.roomTypes.length,
+        maxCapacity: p.roomTypes.reduce((m, t) => Math.max(m, t.capacity), 0),
+        fromPrice,
+        available,
+        isDemo: p.isDemo,
       };
-    }));
+    })
+  );
 
-    console.log(`Returning ${propertiesWithAvailability.length} properties with availability`);
-    propertiesWithAvailability.forEach(p => {
-      console.log(`Property ${p.name}: ${p.availableRooms}/${p.totalRooms} total rooms available (across ${p.roomTypeCount} room types)`);
-    });
-    
-    return NextResponse.json(propertiesWithAvailability, {
-      status: 200,
-      headers: {
-        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching properties:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      {
-        status: 500,
-        headers: {
-          'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
-        }
-      }
-    );
-  }
-}
+  return json(rows, { headers: { 'Cache-Control': 'no-store' } });
+});

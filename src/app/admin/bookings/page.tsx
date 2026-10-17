@@ -1,339 +1,241 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import * as React from 'react';
+import Link from 'next/link';
+import useSWR from 'swr';
+import { BedDouble, CalendarDays, CalendarX2, ExternalLink, Search, X } from 'lucide-react';
+import type { BookingSummary } from '@/lib/dto';
+import { fetcher } from '@/lib/fetcher';
+import { formatMoney } from '@/lib/format';
+import { formatNumber } from '@/lib/status';
+import { Button, IconButton } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Calendar, User, Building2, DollarSign, Search, Filter, Eye, Loader2 } from 'lucide-react';
+import { EmptyState, PageHeader } from '@/components/ui/primitives';
+import { SegmentedControl } from '@/components/ui/segmented';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useConsole, usePropertyUrl } from '@/components/console/ConsoleProvider';
+import { ReservationList, ReservationListSkeleton, sortBookings, type Sort, type SortKey } from './_components/ReservationList';
 
-type Property = {
-  id: string;
-  name: string;
+type View = 'upcoming' | 'inhouse' | 'past' | 'cancelled' | 'all';
+
+const VIEWS: Record<View, { label: string; status?: string; future?: boolean; sort: Sort }> = {
+  upcoming: { label: 'Upcoming', status: 'PENDING,CONFIRMED', future: true, sort: { key: 'checkIn', dir: 'asc' } },
+  inhouse: { label: 'In house', status: 'CHECKED_IN', sort: { key: 'checkIn', dir: 'asc' } },
+  past: { label: 'Past', status: 'CHECKED_OUT', sort: { key: 'checkIn', dir: 'desc' } },
+  cancelled: { label: 'Cancelled', status: 'CANCELLED,NO_SHOW', sort: { key: 'checkIn', dir: 'desc' } },
+  all: { label: 'All', sort: { key: 'checkIn', dir: 'desc' } },
 };
 
-type BookingType = {
-  id: string;
-  userId: string;
-  propertyId: string;
-  roomTypeId: string;
-  checkIn: string;
-  checkOut: string;
-  guests: number;
-  rooms: number;
-  totalPrice: number;
-  status: string;
-  createdAt: string;
-  user: {
-    firstName: string;
-    lastName: string;
-    email: string;
-  };
-  property: {
-    name: string;
-  };
-  roomType: {
-    name: string;
-  };
-};
+const PAGE = 50;
+const API_LIMIT = 200;
 
-export default function AdminBookingsPage() {
-  const router = useRouter();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [propertyFilter, setPropertyFilter] = useState('');
-  const [bookings, setBookings] = useState<BookingType[]>([]);
-  const [properties, setProperties] = useState<Property[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+function useDebounced<T>(value: T, ms = 250): T {
+  const [v, setV] = React.useState(value);
+  React.useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
 
-  // Fetch properties and bookings
-  useEffect(() => {
-    const fetchProperties = async () => {
-      try {
-        const response = await fetch('/api/admin/properties');
-        if (!response.ok) {
-          throw new Error('Failed to fetch properties');
-        }
-        const data = await response.json();
-        setProperties(data);
-      } catch (err) {
-        console.error('Error fetching properties:', err);
-        setError('Failed to load properties');
-      }
-    };
+export default function BookingsPage() {
+  const { ctx, propertyId } = useConsole();
+  const today = ctx?.today ?? '';
+  const [view, setView] = React.useState<View>('upcoming');
+  const [text, setText] = React.useState('');
+  const [roomType, setRoomType] = React.useState('all');
+  const [sortOverride, setSortOverride] = React.useState<Sort | null>(null);
+  const [limit, setLimit] = React.useState(PAGE);
+  const searchRef = React.useRef<HTMLInputElement>(null);
+  const q = useDebounced(text.trim());
+  const searching = q.length > 0;
+  const cfg = VIEWS[view];
+  const sort = sortOverride ?? (searching ? VIEWS.all.sort : cfg.sort);
 
-    const fetchBookings = async () => {
-      try {
-        setLoading(true);
-        const response = await fetch('/api/admin/bookings');
-        if (!response.ok) {
-          throw new Error('Failed to fetch bookings');
-        }
-        const data = await response.json();
-        setBookings(data);
-      } catch (err) {
-        console.error('Error fetching bookings:', err);
-        setError('Failed to load bookings');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchProperties();
-    fetchBookings();
-  }, []);
-
-  // Calculate nights from check-in and check-out dates
-  const calculateNights = (checkIn: string, checkOut: string) => {
-    const start = new Date(checkIn);
-    const end = new Date(checkOut);
-    const diffTime = Math.abs(end.getTime() - start.getTime());
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  };
-
-  const filteredBookings = bookings.filter(booking => {
-    const fullName = `${booking.user.firstName} ${booking.user.lastName}`.toLowerCase();
-    const matchesSearch = 
-      fullName.includes(searchTerm.toLowerCase()) ||
-      booking.user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      booking.id.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesStatus = statusFilter === 'all' || booking.status.toLowerCase() === statusFilter.toLowerCase();
-    const matchesProperty = propertyFilter === '' || booking.propertyId === propertyFilter;
-    
-    return matchesSearch && matchesStatus && matchesProperty;
+  const url = usePropertyUrl('/api/admin/bookings', {
+    q: q || undefined,
+    // A search looks everywhere; the tabs only narrow an unfiltered list.
+    status: searching ? undefined : cfg.status,
+    from: !searching && cfg.future && today ? today : undefined,
+    limit: API_LIMIT,
   });
+  const { data, isLoading, error } = useSWR<BookingSummary[]>(url, fetcher, { keepPreviousData: true });
+  const { data: roomTypes } = useSWR<{ id: string; name: string }[]>(usePropertyUrl('/api/admin/room-types'), fetcher);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'confirmed': return 'bg-blue-100 text-blue-800';
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'completed': return 'bg-green-100 text-green-800';
-      case 'cancelled': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
+  // Each new question starts at the top of the list.
+  React.useEffect(() => setLimit(PAGE), [view, q, roomType, sortOverride]);
 
-  const getPaymentColor = (status: string) => {
-    switch (status) {
-      case 'paid': return 'bg-green-100 text-green-800';
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'refunded': return 'bg-blue-100 text-blue-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
+  const rows = React.useMemo(() => {
+    const list = (data ?? []).filter((b) => roomType === 'all' || b.roomType.id === roomType);
+    return sortBookings(list, sort);
+  }, [data, roomType, sort]);
+  const shown = rows.slice(0, limit);
+  const booked = rows.reduce((s, b) => s + (b.status === 'CANCELLED' || b.status === 'NO_SHOW' ? 0 : b.totalPrice), 0);
+  const typeName = roomTypes?.find((t) => t.id === roomType)?.name;
+
+  function onSort(key: SortKey) {
+    setSortOverride((cur) => {
+      const base = cur ?? sort;
+      if (base.key === key) return { key, dir: base.dir === 'asc' ? 'desc' : 'asc' };
+      // Money and dates read best newest/biggest first; names A→Z.
+      return { key, dir: key === 'total' ? 'desc' : 'asc' };
+    });
+  }
+
+  const summary = !data
+    ? 'Loading reservations…'
+    : `${formatNumber(rows.length)}${data.length >= API_LIMIT ? '+' : ''} reservation${rows.length === 1 ? '' : 's'}${booked ? ` · ${formatMoney(booked, 'USD', { cents: false })} booked` : ''}`;
+
+  const empty = searching
+    ? {
+        icon: Search,
+        title: `No reservations match “${q}”`,
+        description: 'Try a last name, the 8-character confirmation code, an email address or a phone number.',
+        action: (
+          <Button variant="outline" onClick={() => setText('')}>
+            Clear search
+          </Button>
+        ),
+      }
+    : roomType !== 'all'
+      ? {
+          icon: BedDouble,
+          title: `No ${typeName ?? 'matching'} reservations here`,
+          description: `Nothing in “${cfg.label}” for this room type.`,
+          action: (
+            <Button variant="outline" onClick={() => setRoomType('all')}>
+              Show all room types
+            </Button>
+          ),
+        }
+      : view === 'upcoming'
+        ? {
+            icon: CalendarDays,
+            title: 'No upcoming reservations',
+            description: 'New bookings from your booking page land here the moment a guest confirms.',
+            action: propertyId ? (
+              <Button asChild variant="outline">
+                <Link href={`/properties/${propertyId}`} target="_blank" rel="noopener">
+                  Open your booking page <ExternalLink aria-hidden />
+                </Link>
+              </Button>
+            ) : undefined,
+          }
+        : view === 'inhouse'
+          ? {
+              icon: BedDouble,
+              title: 'Nobody is staying right now',
+              description: 'Guests show up here once they’re checked in at the front desk.',
+              action: (
+                <Button asChild variant="outline">
+                  <Link href="/admin/front-desk">Go to the front desk</Link>
+                </Button>
+              ),
+            }
+          : view === 'cancelled'
+            ? { icon: CalendarX2, title: 'No cancellations or no-shows', description: 'Cancelled stays and no-shows are listed here for your records.', action: undefined }
+            : { icon: CalendarDays, title: view === 'past' ? 'No past stays yet' : 'No reservations yet', description: 'Checked-out stays are kept here, with their history and payments.', action: undefined };
 
   return (
-    <div className="p-4 lg:p-6 space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Bookings</h1>
-          <p className="text-gray-600 mt-1">Manage guest reservations and bookings</p>
-        </div>
-        <div className="flex space-x-2">
-          <Button variant="outline" className="flex items-center gap-2">
-            <Filter className="h-4 w-4" />
-            <span>Export</span>
-          </Button>
-        </div>
-      </div>
+    <div className="mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8">
+      <div className="space-y-5">
+        <PageHeader
+          title="Reservations"
+          description={<span aria-live="polite">{summary}</span>}
+        />
 
-      {/* Error display */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-md mb-6">
-          {error}
-        </div>
-      )}
-      
-      {/* Filters */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-6">
-        <div className="relative md:col-span-6 lg:col-span-5">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <Input
-            placeholder="Search bookings..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 w-full"
+        {/* Filters */}
+        <div role="search" aria-label="Filter reservations" className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <SegmentedControl
+            layoutId="bookings-view"
+            aria-label="Which reservations"
+            value={view}
+            onChange={(v) => {
+              setView(v);
+              setSortOverride(null);
+            }}
+            options={(Object.keys(VIEWS) as View[]).map((v) => ({ value: v, label: VIEWS[v].label, disabled: searching }))}
+            className="max-w-full self-start"
           />
-        </div>
-        
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:col-span-6 lg:col-span-7">
-          <select
-            value={propertyFilter}
-            onChange={(e) => setPropertyFilter(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All Properties</option>
-            {properties.map(property => (
-              <option key={property.id} value={property.id}>
-                {property.name}
-              </option>
-            ))}
-          </select>
-          
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All Status</option>
-            <option value="PENDING">Pending</option>
-            <option value="CONFIRMED">Confirmed</option>
-            <option value="CHECKED_IN">Checked In</option>
-            <option value="CHECKED_OUT">Checked Out</option>
-            <option value="CANCELLED">Cancelled</option>
-            <option value="NO_SHOW">No Show</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Loading State */}
-      {loading ? (
-        <div className="flex justify-center items-center h-64">
-          <div className="text-center">
-            <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-600 mb-4" />
-            <p className="text-gray-600">Loading bookings...</p>
+          <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row lg:justify-end">
+            <div className="relative min-w-0 flex-1 lg:max-w-sm">
+              <label htmlFor="res-search" className="sr-only">
+                Search reservations
+              </label>
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+              <Input
+                ref={searchRef}
+                id="res-search"
+                type="search"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => e.key === 'Escape' && setText('')}
+                placeholder="Guest, email, phone or code"
+                className="pl-9 pr-10 [&::-webkit-search-cancel-button]:hidden"
+                autoComplete="off"
+              />
+              {text && (
+                <IconButton
+                  label="Clear search"
+                  size="icon-sm"
+                  className="absolute right-0.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  onClick={() => {
+                    setText('');
+                    searchRef.current?.focus();
+                  }}
+                >
+                  <X />
+                </IconButton>
+              )}
+            </div>
+            <Select value={roomType} onValueChange={setRoomType}>
+              <SelectTrigger aria-label="Room type" className="w-full shrink-0 sm:w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="all">All room types</SelectItem>
+                {(roomTypes ?? []).map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
-      ) : (
-        /* Bookings Table */
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Booking Details
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Guest
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Property & Room
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Dates
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Amount
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredBookings.map((booking) => {
-                  const nights = calculateNights(booking.checkIn, booking.checkOut);
-                  const checkInDate = new Date(booking.checkIn).toLocaleDateString();
-                  const checkOutDate = new Date(booking.checkOut).toLocaleDateString();
-                  const fullName = `${booking.user.firstName} ${booking.user.lastName}`;
-                  
-                  return (
-                    <tr key={booking.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">{booking.id}</div>
-                        <div className="text-sm text-gray-500">{nights} nights</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <User className="h-4 w-4 text-gray-400 mr-2" />
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">{fullName}</div>
-                            <div className="text-sm text-gray-500">{booking.user.email}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <Building2 className="h-4 w-4 text-gray-400 mr-2" />
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">{booking.property.name}</div>
-                            <div className="text-sm text-gray-500">{booking.roomType.name}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <Calendar className="h-4 w-4 text-gray-400 mr-2" />
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">{checkInDate}</div>
-                            <div className="text-sm text-gray-500">to {checkOutDate}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <DollarSign className="h-4 w-4 text-gray-400 mr-1" />
-                          <span className="text-sm font-medium text-gray-900">${Number(booking.totalPrice).toFixed(2)}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="space-y-1">
-                          <Badge className={`${getStatusColor(booking.status.toLowerCase())} text-xs`}>
-                            {booking.status.replace('_', ' ')}
-                          </Badge>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <div className="flex gap-2">
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            onClick={() => router.push(`/admin/bookings/${booking.id}`)}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          
-                          {booking.status === 'CONFIRMED' && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="bg-blue-50 hover:bg-blue-100 text-blue-700"
-                              onClick={() => router.push(`/admin/bookings/${booking.id}?action=checkin`)}
-                            >
-                              Check In
-                            </Button>
-                          )}
-                          
-                          {(booking.status === 'PENDING' || booking.status === 'CONFIRMED') && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="bg-red-50 hover:bg-red-100 text-red-700"
-                              onClick={() => router.push(`/admin/bookings/${booking.id}?action=cancel`)}
-                            >
-                              Cancel
-                            </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {!loading && filteredBookings.length === 0 && (
-        <div className="text-center py-16 bg-white rounded-lg shadow-sm">
-          <Calendar className="h-14 w-14 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-xl font-medium text-gray-900 mb-2">No bookings found</h3>
-          <p className="text-gray-600 max-w-md mx-auto">
-            {propertyFilter 
-              ? "No bookings for the selected property. Try selecting a different property or adjusting your filters."
-              : "Try adjusting your search terms or filters"}
+        {searching && (
+          <p className="-mt-2 text-sm text-muted-foreground" role="status">
+            Searching every reservation for “{q}”. Clear the search to use the tabs again.
           </p>
-        </div>
-      )}
+        )}
+
+        {/* overflow-clip (not hidden) keeps the sticky header pinned to the window. */}
+        <Card className="overflow-clip p-0 shadow-xs" aria-busy={isLoading && !data}>
+          {error && !data ? (
+            <EmptyState icon={CalendarX2} title="Couldn’t load reservations" description={(error as Error).message || 'Check your connection and try again.'} />
+          ) : isLoading && !data ? (
+            <ReservationListSkeleton />
+          ) : rows.length === 0 ? (
+            <EmptyState icon={empty.icon} title={empty.title} description={empty.description} action={empty.action} />
+          ) : (
+            <>
+              <ReservationList rows={shown} today={today} sort={sort} onSort={onSort} />
+              <div className="flex flex-col items-center gap-2 border-t bg-surface-sunken/50 px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:justify-between">
+                <p role="status">
+                  Showing {formatNumber(shown.length)} of {formatNumber(rows.length)}
+                  {data && data.length >= API_LIMIT && !searching ? ' — search to find older or later stays' : ''}
+                </p>
+                {shown.length < rows.length && (
+                  <Button variant="outline" size="sm" onClick={() => setLimit((l) => l + PAGE)}>
+                    Show {Math.min(PAGE, rows.length - shown.length)} more
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
+        </Card>
+      </div>
     </div>
   );
 }

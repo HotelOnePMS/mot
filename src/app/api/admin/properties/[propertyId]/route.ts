@@ -1,194 +1,72 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { assertPropertyAccess, requireStaff } from '@/server/authz';
+import { badRequest, notFound } from '@/server/errors';
+import { handleRoute, json, parseJson } from '@/server/http';
+import { recordAudit } from '@/server/services/audit';
+import { propertySchema } from '@/server/schemas';
+import { assertDemoHotelUnchanged } from '@/server/demo';
+import { scheduleConfigSkillSync } from '@/server/skills';
 
-// GET specific property details
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { propertyId: string } }
-) {
+type Params = { params: Promise<{ propertyId: string }> };
+
+export const GET = handleRoute(async (_req: NextRequest, { params }: Params) => {
+  const { propertyId } = await params;
+  const actor = await requireStaff();
+  assertPropertyAccess(actor, propertyId);
+  const property = await prisma.property.findUnique({
+    where: { id: propertyId },
+    include: { photos: true, roomTypes: { include: { photos: true } }, _count: { select: { rooms: true, bookings: true } } },
+  });
+  if (!property) throw notFound('Property');
+  return json(property);
+});
+
+export const PUT = handleRoute(async (request: NextRequest, { params }: Params) => {
+  const { propertyId } = await params;
+  const actor = await requireStaff('property.write');
+  assertPropertyAccess(actor, propertyId);
+  const body = await parseJson(request, propertySchema);
+  const current = await prisma.property.findUniqueOrThrow({ where: { id: propertyId }, select: { isDemo: true, name: true, tagline: true, description: true, isActive: true } });
+  assertDemoHotelUnchanged(actor, current, body, ['name', 'tagline', 'description', 'isActive']);
+  const updated = await prisma.property.update({
+    where: { id: propertyId },
+    data: {
+      name: body.name,
+      description: body.description || null,
+      address: body.address,
+      city: body.city,
+      state: body.state,
+      zipCode: body.zipCode,
+      phone: body.phone,
+      email: body.email || null,
+      amenities: body.amenities ?? [],
+      ...(body.tagline !== undefined ? { tagline: body.tagline || null } : {}),
+      ...(body.primaryColor !== undefined ? { primaryColor: body.primaryColor || null } : {}),
+      ...(body.type !== undefined ? { type: body.type } : {}),
+      ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+    },
+  });
+  await recordAudit({ actor, source: 'classic' }, propertyId, 'PROPERTY_UPDATE', `Updated property details for ${updated.name}`);
+  // Amenities, address and contact details are agent skills.
+  scheduleConfigSkillSync(propertyId);
+  return json(updated);
+});
+
+export const DELETE = handleRoute(async (_req: NextRequest, { params }: Params) => {
+  const { propertyId } = await params;
+  const actor = await requireStaff('property.delete');
+  assertPropertyAccess(actor, propertyId);
+  const active = await prisma.booking.count({ where: { propertyId, status: { in: ['PENDING', 'CONFIRMED', 'CHECKED_IN'] } } });
+  if (active > 0) throw badRequest(`This property has ${active} active booking${active > 1 ? 's' : ''}. Cancel or complete them first.`);
   try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+    await prisma.property.delete({ where: { id: propertyId } });
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003') {
+      throw badRequest('This property still has booking history. Deactivate it instead of deleting.');
     }
-
-    const property = await prisma.property.findUnique({
-      where: {
-        id: params.propertyId,
-      },
-      include: {
-        photos: true,
-        roomTypes: {
-          include: {
-            photos: true,
-          },
-        },
-      },
-    });
-
-    if (!property) {
-      return NextResponse.json(
-        { error: 'Property not found' },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json(property);
-  } catch (error) {
-    console.error('Error fetching property:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    throw e;
   }
-}
-
-// PUT update property
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: { propertyId: string } }
-) {
-  try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-
-    const body = await request.json();
-    const {
-      name,
-      description,
-      address,
-      city,
-      state,
-      zipCode,
-      phone,
-      email,
-      amenities,
-      isActive
-    } = body;
-
-    // Validate required fields
-    if (!name || !address || !city || !state || !zipCode || !phone) {
-      return NextResponse.json(
-        { error: 'Missing required fields' },
-        { status: 400 }
-      );
-    }
-
-    const updatedProperty = await prisma.property.update({
-      where: {
-        id: params.propertyId,
-      },
-      data: {
-        name,
-        description,
-        address,
-        city,
-        state,
-        zipCode,
-        phone,
-        email,
-        amenities: amenities || [],
-        isActive: isActive !== undefined ? isActive : true,
-      }
-    });
-
-    return NextResponse.json(updatedProperty);
-  } catch (error) {
-    console.error('Error updating property:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
-
-// DELETE property
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: { propertyId: string } }
-) {
-  try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-
-    // Check if property exists
-    const property = await prisma.property.findUnique({
-      where: {
-        id: params.propertyId,
-      },
-      include: {
-        bookings: {
-          where: {
-            status: {
-              in: ['PENDING', 'CONFIRMED', 'CHECKED_IN']
-            }
-          }
-        }
-      }
-    });
-
-    if (!property) {
-      return NextResponse.json(
-        { error: 'Property not found' },
-        { status: 404 }
-      );
-    }
-
-    // Check for active bookings
-    if (property.bookings.length > 0) {
-      return NextResponse.json(
-        { 
-          error: 'Cannot delete property with active bookings',
-          bookingsCount: property.bookings.length
-        },
-        { status: 400 }
-      );
-    }
-
-    try {
-      // Delete property (cascade will handle photos, room types, etc.)
-      await prisma.property.delete({
-        where: {
-          id: params.propertyId,
-        },
-      });
-
-      return NextResponse.json({ success: true });
-    } catch (deleteError: any) {
-      console.error('Database error deleting property:', deleteError);
-      
-      // Check for foreign key constraint errors
-      if (deleteError.code === 'P2003') {
-        return NextResponse.json(
-          { error: 'Cannot delete property because it has related records' },
-          { status: 400 }
-        );
-      }
-      
-      throw deleteError; // Re-throw for general error handling
-    }
-  } catch (error) {
-    console.error('Error deleting property:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
+  return json({ success: true });
+});

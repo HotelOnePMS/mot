@@ -1,411 +1,88 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import * as React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useSWRConfig } from 'swr';
+import { toast } from 'sonner';
+import { ArrowLeft } from 'lucide-react';
+import { api } from '@/lib/fetcher';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { ArrowLeft, Save, Upload, X, Image as ImageIcon, Loader2 } from 'lucide-react';
+import { Card } from '@/components/ui/card';
+import { Callout, PageHeader } from '@/components/ui/primitives';
+import { EMPTY_PROPERTY, PropertyFields, errorSummary, propertyErrors, toPropertyPayload, type PropertyDraft } from '@/components/setup/PropertyFields';
+import { useConsole } from '@/components/console/ConsoleProvider';
 
-type PreviewImage = {
-  file: File;
-  preview: string;
-};
+const FRAME = 'mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8';
 
 export default function AddPropertyPage() {
   const router = useRouter();
-  const [isLoading, setIsLoading] = useState(false);
-  const [selectedImages, setSelectedImages] = useState<PreviewImage[]>([]);
-  const [error, setError] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [formData, setFormData] = useState({
-    name: '',
-    description: '',
-    address: '',
-    city: '',
-    state: '',
-    zipCode: '',
-    phone: '',
-    email: '',
-    amenities: ''
-  });
+  const { mutate } = useSWRConfig();
+  const { setPropertyId } = useConsole();
+  const [draft, setDraft] = React.useState<PropertyDraft>(EMPTY_PROPERTY);
+  // Field errors show once someone has tried to save, then update as they type.
+  const [tried, setTried] = React.useState(false);
+  const [serverError, setServerError] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  const formRef = React.useRef<HTMLFormElement>(null);
+  const errors = tried ? propertyErrors(draft) : {};
+  const summary = errorSummary(errors);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-
-    const newImages: PreviewImage[] = [];
-    
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      
-      // Validate file type
-      if (!file.type.startsWith('image/')) {
-        setError(`File "${file.name}" is not an image`);
-        continue;
-      }
-      
-      // Validate file size (max 5MB)
-      if (file.size > 5 * 1024 * 1024) {
-        setError(`File "${file.name}" is too large. Maximum size is 5MB`);
-        continue;
-      }
-      
-      newImages.push({
-        file,
-        preview: URL.createObjectURL(file)
-      });
-    }
-    
-    setSelectedImages([...selectedImages, ...newImages]);
-    
-    // Clear input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
-  const removeImage = (index: number) => {
-    const newImages = [...selectedImages];
-    URL.revokeObjectURL(newImages[index].preview);
-    newImages.splice(index, 1);
-    setSelectedImages(newImages);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function save(e: React.FormEvent) {
     e.preventDefault();
-    setIsLoading(true);
-    setError('');
-
-    try {
-      const amenitiesArray = formData.amenities.split(',').map(item => item.trim()).filter(item => item);
-      
-      // First, create the property
-      const response = await fetch('/api/admin/properties', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...formData,
-          amenities: amenitiesArray
-        }),
+    setTried(true);
+    setServerError(null);
+    if (Object.keys(propertyErrors(draft)).length) {
+      // Take people to the first field that needs fixing.
+      requestAnimationFrame(() => {
+        const first = formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
+        first?.focus();
+        first?.scrollIntoView({ block: 'center' });
       });
-
-      if (!response.ok) {
-        throw new Error('Error creating property');
-      }
-
-      const property = await response.json();
-
-      // If we have images, upload them
-      if (selectedImages.length > 0) {
-        const base64Images: string[] = [];
-        
-        for (const img of selectedImages) {
-          const base64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(img.file);
-          });
-          base64Images.push(base64);
-        }
-
-        // Upload photos
-        const photoResponse = await fetch(`/api/admin/properties/${property.id}/photos`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ images: base64Images }),
-        });
-
-        if (!photoResponse.ok) {
-          console.error('Failed to upload photos, but property was created');
-        }
-      }
-
-      router.push('/admin/properties');
-    } catch (error) {
-      setError('Error creating property. Please try again.');
-    } finally {
-      setIsLoading(false);
+      return;
     }
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
-  };
+    setSaving(true);
+    try {
+      const created = await api<{ id: string; name: string }>('/api/admin/properties', { method: 'POST', json: toPropertyPayload(draft) });
+      await mutate('/api/admin/context');
+      setPropertyId(created.id);
+      toast.success(`${created.name} created — now add its rooms`);
+      router.push('/admin/room-types/add');
+    } catch (err) {
+      setServerError((err as Error).message);
+      setSaving(false);
+    }
+  }
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center space-x-4">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => router.back()}
-          className="flex items-center space-x-2"
+    <div className={FRAME}>
+      <div className="max-w-4xl space-y-6">
+        <Link
+          href="/admin/properties"
+          className="-ml-2 inline-flex h-10 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <ArrowLeft className="h-4 w-4" />
-          <span>Back</span>
-        </Button>
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Add New Property</h1>
-          <p className="text-gray-600">Create a new motel property</p>
-        </div>
+          <ArrowLeft className="size-4" aria-hidden /> Properties
+        </Link>
+        <PageHeader title="Add a property" description="The basics guests need. Rooms, photos and rates come next." />
+        <form ref={formRef} onSubmit={save} className="space-y-6" noValidate>
+          <Card className="p-5 sm:p-8">
+            <PropertyFields value={draft} onChange={setDraft} errors={errors} />
+          </Card>
+          {(serverError || summary) && (
+            <Callout tone="danger" title={serverError ? 'We couldn’t create the property' : 'Please check the form'} role="alert">
+              {serverError ?? summary}
+            </Callout>
+          )}
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="ghost" onClick={() => router.back()}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={saving} loadingText="Creating your property…">
+              Create property
+            </Button>
+          </div>
+        </form>
       </div>
-
-      {/* Form */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Property Information</CardTitle>
-          <CardDescription>
-            Enter the details for the new property
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
-                  Property Name *
-                </label>
-                <Input
-                  id="name"
-                  name="name"
-                  type="text"
-                  required
-                  value={formData.name}
-                  onChange={handleChange}
-                  placeholder="e.g., Sunset Motel"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
-                  Phone Number *
-                </label>
-                <Input
-                  id="phone"
-                  name="phone"
-                  type="tel"
-                  required
-                  value={formData.phone}
-                  onChange={handleChange}
-                  placeholder="(555) 123-4567"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
-                  Description
-                </label>
-                <Textarea
-                  id="description"
-                  name="description"
-                  rows={3}
-                  value={formData.description}
-                  onChange={handleChange}
-                  placeholder="Brief description of the property..."
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-2">
-                  Street Address *
-                </label>
-                <Input
-                  id="address"
-                  name="address"
-                  type="text"
-                  required
-                  value={formData.address}
-                  onChange={handleChange}
-                  placeholder="123 Main Street"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="city" className="block text-sm font-medium text-gray-700 mb-2">
-                  City *
-                </label>
-                <Input
-                  id="city"
-                  name="city"
-                  type="text"
-                  required
-                  value={formData.city}
-                  onChange={handleChange}
-                  placeholder="City name"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="state" className="block text-sm font-medium text-gray-700 mb-2">
-                  State *
-                </label>
-                <Input
-                  id="state"
-                  name="state"
-                  type="text"
-                  required
-                  value={formData.state}
-                  onChange={handleChange}
-                  placeholder="State"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="zipCode" className="block text-sm font-medium text-gray-700 mb-2">
-                  ZIP Code *
-                </label>
-                <Input
-                  id="zipCode"
-                  name="zipCode"
-                  type="text"
-                  required
-                  value={formData.zipCode}
-                  onChange={handleChange}
-                  placeholder="12345"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                  Email
-                </label>
-                <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={handleChange}
-                  placeholder="contact@property.com"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <label htmlFor="amenities" className="block text-sm font-medium text-gray-700 mb-2">
-                  Amenities
-                </label>
-                <Input
-                  id="amenities"
-                  name="amenities"
-                  type="text"
-                  value={formData.amenities}
-                  onChange={handleChange}
-                  placeholder="Free WiFi, Parking, Pool, Breakfast (separate with commas)"
-                />
-                <p className="text-sm text-gray-500 mt-1">
-                  Separate multiple amenities with commas
-                </p>
-              </div>
-
-              {/* Photo Upload Section */}
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Property Photos
-                </label>
-                <div className="space-y-4">
-                  {/* Upload Button */}
-                  <div className="flex items-center gap-4">
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      onChange={handleFileSelect}
-                      multiple
-                      accept="image/*"
-                      className="hidden"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <Upload className="h-4 w-4 mr-2" />
-                      Select Photos
-                    </Button>
-                    <span className="text-sm text-gray-500">
-                      Max 5MB per image. JPG, PNG, GIF supported.
-                    </span>
-                  </div>
-
-                  {/* Selected Images Preview */}
-                  {selectedImages.length > 0 ? (
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      {selectedImages.map((img, index) => (
-                        <div
-                          key={index}
-                          className="relative group rounded-lg overflow-hidden border border-gray-200"
-                        >
-                          <img
-                            src={img.preview}
-                            alt={`Preview ${index + 1}`}
-                            className="w-full h-24 object-cover"
-                          />
-                          {index === 0 && (
-                            <div className="absolute top-1 left-1 bg-blue-500 text-white text-xs px-2 py-0.5 rounded-full">
-                              Main
-                            </div>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => removeImage(index)}
-                            className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-6 text-gray-500 border-2 border-dashed rounded-lg">
-                      <ImageIcon className="h-8 w-8 mx-auto mb-2 text-gray-400" />
-                      <p className="text-sm">No photos selected</p>
-                      <p className="text-xs">The first photo will be set as the main image</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-md text-sm">
-                {error}
-              </div>
-            )}
-
-            <div className="flex justify-end space-x-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => router.back()}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isLoading}>
-                {isLoading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  <>
-                    <Save className="h-4 w-4 mr-2" />
-                    Create Property
-                  </>
-                )}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
     </div>
   );
 }

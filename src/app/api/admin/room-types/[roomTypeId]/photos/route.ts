@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { staffGuard } from '@/server/guard';
 import { uploadImage, deleteImage } from '@/lib/cloudinary';
 
 // POST - Upload photos to a room type
@@ -9,14 +9,8 @@ export async function POST(
   { params }: { params: Promise<{ roomTypeId: string }> }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await staffGuard('inventory.write', { roomTypeId: (await params).roomTypeId });
+    if ('error' in guard) return guard.error;
 
     const { roomTypeId } = await params;
 
@@ -88,14 +82,8 @@ export async function GET(
   { params }: { params: Promise<{ roomTypeId: string }> }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await staffGuard(null, { roomTypeId: (await params).roomTypeId });
+    if ('error' in guard) return guard.error;
 
     const { roomTypeId } = await params;
 
@@ -123,14 +111,8 @@ export async function DELETE(
   { params }: { params: Promise<{ roomTypeId: string }> }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await staffGuard('inventory.write', { roomTypeId: (await params).roomTypeId });
+    if ('error' in guard) return guard.error;
 
     const { roomTypeId } = await params;
     const { searchParams } = new URL(request.url);
@@ -201,14 +183,8 @@ export async function PATCH(
   { params }: { params: Promise<{ roomTypeId: string }> }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await staffGuard('inventory.write', { roomTypeId: (await params).roomTypeId });
+    if ('error' in guard) return guard.error;
 
     const { roomTypeId } = await params;
     const body = await request.json();

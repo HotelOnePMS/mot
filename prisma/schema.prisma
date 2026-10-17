@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -28,6 +29,8 @@ model User {
   assignedProperties UserPropertyAssignment[]
   // Housekeeping tasks assigned to this user
   housekeepingTasks  RoomHousekeeping[]
+  // Agentic-mode audit trail entries created by this user
+  agentAuditLogs     AgentAuditLog[]
 
   @@map("users")
 }
@@ -44,6 +47,16 @@ model Property {
   email       String?
   amenities   String[]
   isActive    Boolean         @default(true)
+  // SaaS branding / onboarding fields
+  tagline      String?
+  primaryColor String?
+  logoUrl      String?
+  type         String? // Hotel | Motel | Inn | B&B | Boutique | Other
+  isDemo       Boolean         @default(false)
+  // Classic (traditional UI) vs Agentic (natural-language beta interface)
+  interfaceMode InterfaceMode  @default(CLASSIC)
+  // How the hotel adopted StayOS: everything on StayOS, keeping their PMS, or voice only
+  setupPath     SetupPath      @default(FULL)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
   bookings    Booking[]
@@ -52,6 +65,16 @@ model Property {
   rooms       Room[]
   // Users assigned to this property
   assignedUsers UserPropertyAssignment[]
+  // Agentic-mode audit trail
+  agentAuditLogs AgentAuditLog[]
+  voiceAgent     VoiceAgentConfig?
+  phoneLine      VoicePhoneLine?
+  voiceSessions  VoiceSession[]
+  guestRequests  GuestRequest[]
+  pmsConnection  PmsConnection?
+  bridgeTasks    BridgeTask[]
+  agentSkills    AgentSkill[]
+  agentApiKeys   AgentApiKey[]
 
   @@map("properties")
 }
@@ -128,23 +151,35 @@ model Booking {
   rooms         Int                    @default(1)
   totalPrice    Decimal                @db.Decimal(10, 2)
   status        BookingStatus          @default(PENDING)
+  // Short human-friendly confirmation code staff and guests can say out loud.
+  code          String?                @unique
   notes         String?
-  // Payment details (encrypted for security, stored for no-show charges)
-  cardNumber    String?                // Encrypted full card number
+  // Physical room assigned at (or before) check-in.
+  roomId        String?
+  // Payment metadata (no raw card data is ever stored — PCI compliance).
+  // Card payments go through Stripe Checkout; otherwise pay at property.
+  paymentStatus          String?               @default("UNPAID")
+  stripeCheckoutSessionId String?
+  stripePaymentIntentId   String?
   cardLast4     String?
   cardBrand     String?                // Visa, Mastercard, Amex, etc.
-  cardExpMonth  Int?
-  cardExpYear   Int?
-  cardCvv       String?                // Encrypted CVV
   billingName   String?
   billingZip    String?
+  /// Direct bookings by an integration's API key: the contact email it sent. Those bookings belong to a
+  /// guest record made for that booking alone, never to an existing account (see src/server/concierge).
+  guestEmail    String?
   createdAt     DateTime               @default(now())
   updatedAt     DateTime               @updatedAt
   statusHistory BookingStatusHistory[]
   property      Property               @relation(fields: [propertyId], references: [id])
   roomType      RoomType               @relation(fields: [roomTypeId], references: [id])
   user          User                   @relation(fields: [userId], references: [id])
+  room          Room?                  @relation(fields: [roomId], references: [id], onDelete: SetNull)
 
+  @@index([propertyId, checkIn])
+  @@index([propertyId, checkOut])
+  @@index([roomTypeId, checkIn, checkOut])
+  @@index([roomId])
   @@map("bookings")
 }
 
@@ -182,6 +217,50 @@ enum UserRole {
   CUSTOMER
 }
 
+// Per-property UI mode: CLASSIC (traditional dashboards/tables/forms, default)
+// vs AGENTIC (natural-language beta command interface).
+enum InterfaceMode {
+  CLASSIC
+  AGENTIC
+}
+
+// Audit trail for agentic-mode usage: every agent command and every
+// interface-mode switch is logged here (who, which property, what, when).
+/// Agents StayOS created at a voice provider (e.g. ElevenLabs), one per audience.
+/// configHash lets the server update the agent when its tools or settings change.
+model VoiceProviderAgent {
+  key        String   @id // "elevenlabs:<account>:<env>:GUEST" | ":STAFF" | ":PHONE:<propertyId>" | ":tool:…"
+  externalId String
+  configHash String
+  updatedAt  DateTime @updatedAt
+
+  @@map("voice_provider_agents")
+}
+
+/// Single-use signed agent plans: claimed (by nonce) before any step runs.
+model ExecutedPlan {
+  nonce      String   @id
+  propertyId String
+  userId     String
+  createdAt  DateTime @default(now())
+
+  @@map("executed_plans")
+}
+
+model AgentAuditLog {
+  id         String   @id @default(cuid())
+  propertyId String
+  userId     String
+  action     String // MODE_SWITCH | COMMAND
+  detail     String?
+  createdAt  DateTime @default(now())
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, createdAt])
+  @@map("agent_audit_logs")
+}
+
 enum BookingStatus {
   PENDING
   CONFIRMED
@@ -202,11 +281,14 @@ model Room {
   isOutOfOrder Boolean            @default(false)
   outOfOrderReason String?
   notes        String?
+  // Free-form features used for guest preferences: quiet, accessible, corner, view...
+  tags         String[]           @default([])
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
   property     Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   roomType     RoomType           @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
   housekeeping RoomHousekeeping[]
+  bookings     Booking[]
 
   @@unique([propertyId, roomNumber])
   @@map("rooms")
@@ -254,4 +336,214 @@ model UserPropertyAssignment {
 
   @@unique([userId, propertyId])
   @@map("user_property_assignments")
+}
+
+enum SetupPath {
+  FULL
+  BRIDGE
+  VOICE
+}
+
+/// Voice front desk settings (GPT-Live). One per property.
+model VoiceAgentConfig {
+  id           String   @id @default(cuid())
+  propertyId   String   @unique
+  enabled      Boolean  @default(true)
+  voice        String   @default("marin")
+  greeting     String?
+  /// House style and rules for the voice ("we never quote parking prices", "always offer breakfast").
+  instructions String?
+  /// Frequently asked questions: [{ "q": string, "a": string }]
+  faqs         Json     @default("[]")
+  /// Where callers are sent when a person is needed.
+  handoffPhone String?
+  /// Show "Talk to us" on the public booking page.
+  guestWidget  Boolean  @default(true)
+  /// Hotels that keep their own system (voice only, keep your PMS): their own times ("15:00") and policy.
+  /// Hotels running fully on HotelOne always quote the booking engine's policy.
+  checkInTime        String?
+  checkOutTime       String?
+  cancellationPolicy String?
+  /// Where new messages and booking requests from callers are emailed (comma-separated).
+  notifyEmail        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@map("voice_agent_configs")
+}
+
+/// One voice conversation (usage + outcome), guest or staff.
+model VoiceSession {
+  id              String    @id @default(cuid())
+  /// Null only for GLOBAL sessions (the cross-hotel concierge) and concierge rate-limit hits.
+  propertyId      String?
+  userId          String?
+  audience        String // GUEST | STAFF (SYSTEM for concierge rate-limit hits)
+  /// HOTEL (one hotel's agent, propertyId set) | GLOBAL (the concierge across all hotels)
+  scope           String    @default("HOTEL")
+  channel         String    @default("WEB") // WEB | PHONE | WHATSAPP | RATE_LIMIT (src/server/concierge/rateLimit.ts)
+  clientKey       String? // hashed caller (IP or caller ID + property) for guest rate limits
+  /// Phone calls: the caller's number as the carrier passed it (callback default).
+  callerNumber    String?
+  liveSessionId   String?
+  toolCalls       Int       @default(0)
+  summary         String?
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+  property        Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, startedAt])
+  @@index([clientKey, startedAt])
+  @@index([channel, startedAt])
+  @@map("voice_sessions")
+}
+
+/// A hotel's phone line. StayOS keeps one phone agent per hotel at the voice
+/// provider; whoever runs the provider account points numbers at it there.
+model VoicePhoneLine {
+  propertyId     String   @id
+  enabled        Boolean  @default(true)
+  /// Where callers who ask for a person are put through (E.164). Must not forward back to the line.
+  transferNumber String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  property       Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@map("voice_phone_lines")
+}
+
+/// Callback / message requests captured by the voice agent for the team.
+model GuestRequest {
+  id          String   @id @default(cuid())
+  propertyId  String
+  name        String
+  phone       String?
+  email       String?
+  message     String
+  source      String   @default("VOICE")
+  status      String   @default("NEW") // NEW | DONE
+  handledById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, status, createdAt])
+  @@map("guest_requests")
+}
+
+enum PmsConnectionMode {
+  DESKTOP
+  CLOUD
+  /// The PMS vendor's own MCP server (src/server/pms): loginUrl is the MCP endpoint, credentialsCipher its sealed auth.
+  MCP
+}
+
+enum PmsConnectionStatus {
+  PENDING
+  CONNECTED
+  ERROR
+  PAUSED
+}
+
+/// A hotel's existing PMS that StayOS operates for them instead of migrating.
+model PmsConnection {
+  id                String              @id @default(cuid())
+  propertyId        String              @unique
+  system            String
+  mode              PmsConnectionMode
+  status            PmsConnectionStatus @default(PENDING)
+  loginUrl          String?
+  /// AES-256-GCM sealed JSON — CLOUD: { username, password, totpSecret? }; MCP: { type, token?, headerName? }. Never returned to clients.
+  credentialsCipher String?
+  /// Desktop pairing: short code shown in the console, exchanged once for a device token.
+  pairingCode       String?             @unique
+  pairingExpiresAt  DateTime?
+  /// SHA-256 of the connector's device token.
+  deviceTokenHash   String?             @unique
+  deviceName        String?
+  lastSeenAt        DateTime?
+  lastError         String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  property          Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  tasks             BridgeTask[]
+
+  @@map("pms_connections")
+}
+
+/// Work the agent sends to the hotel's own PMS through the bridge.
+model BridgeTask {
+  id            String        @id @default(cuid())
+  propertyId    String
+  connectionId  String
+  kind          String // LOOKUP | CHECK_IN | CHECK_OUT | NOTE | RATES | FREEFORM
+  instruction   String
+  payload       Json          @default("{}")
+  status        String        @default("QUEUED") // QUEUED | RUNNING | DONE | FAILED | NEEDS_HELP | CANCELLED
+  result        Json?
+  error         String?
+  requestedById String
+  attempts      Int           @default(0)
+  createdAt     DateTime      @default(now())
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  property      Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  connection    PmsConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, status, createdAt])
+  @@index([propertyId, createdAt])
+  @@map("bridge_tasks")
+}
+
+/// A reusable tool for agents. CONFIG skills are generated from a hotel's
+/// settings (src/server/skills); LEARNED ones are recorded by agents; MANUAL
+/// ones are written by people. propertyId null = platform-wide.
+model AgentSkill {
+  id          String    @id @default(cuid())
+  propertyId  String?
+  /// Stable slug, unique per property ("faq-is-parking-free", "rooms").
+  key         String
+  audience    String    @default("ALL") // GUEST | STAFF | ALL
+  kind        String // ANSWER | MACRO | RECIPE
+  title       String
+  /// When to use it — shown to models.
+  description String
+  /// JSON Schema for the inputs (MACRO / RECIPE).
+  parameters  Json?
+  /// ANSWER: { answer } · MACRO: { steps: [{ command }] } · RECIPE: { system, intent, steps, successes?, failures? }
+  body        Json
+  source      String // CONFIG | LEARNED | MANUAL
+  status      String    @default("ACTIVE") // ACTIVE | SUGGESTED | DISABLED
+  uses        Int       @default(0)
+  lastUsedAt  DateTime?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  property    Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, key])
+  @@index([propertyId, status])
+  @@map("agent_skills")
+}
+
+/// API keys for trusted integrations (e.g. a partner's AI assistant) that may
+/// book directly. Only the SHA-256 of the key is stored. propertyId null = all
+/// hotels (platform admins only).
+model AgentApiKey {
+  id          String    @id @default(cuid())
+  propertyId  String?
+  name        String
+  /// First ~12 characters of the key, safe to display.
+  prefix      String
+  /// SHA-256 hex of the full key — the key itself is never stored.
+  keyHash     String    @unique
+  scopes      String[] // e.g. ["book"]
+  createdById String?
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  property    Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@map("agent_api_keys")
 }

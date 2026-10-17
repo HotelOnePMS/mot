@@ -1,198 +1,85 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { NextRequest } from 'next/server';
+import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
+import { assertPropertyAccess, requireStaff, type Permission } from '@/server/authz';
+import { badRequest, notFound } from '@/server/errors';
+import { handleRoute, json, parseJson } from '@/server/http';
+import { recordAudit } from '@/server/services/audit';
+import { scheduleConfigSkillSync } from '@/server/skills';
 
-// GET a single room type
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ roomTypeId: string }> }
-) {
-  try {
-    // Check authentication
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+type Params = { params: Promise<{ roomTypeId: string }> };
 
-    // Await params before accessing properties
-    const { roomTypeId } = await params;
-
-    // Get room type with details
-    const roomType = await prisma.roomType.findUnique({
-      where: { id: roomTypeId },
-      include: {
-        property: {
-          select: {
-            id: true,
-            name: true,
-            city: true,
-            state: true
-          }
-        },
-        photos: true
-      }
-    });
-
-    if (!roomType) {
-      return NextResponse.json(
-        { error: 'Room type not found' },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json(roomType);
-  } catch (error) {
-    console.error('Error fetching room type:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
+async function loadScoped(roomTypeId: string, perm?: Permission) {
+  const actor = await requireStaff(perm);
+  const roomType = await prisma.roomType.findUnique({ where: { id: roomTypeId }, select: { id: true, propertyId: true, name: true } });
+  if (!roomType) throw notFound('Room type');
+  assertPropertyAccess(actor, roomType.propertyId);
+  return { actor, roomType };
 }
 
-// PUT update a room type
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ roomTypeId: string }> }
-) {
-  try {
-    // Check authentication
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+/** GET — a room type with its photos, physical rooms and booking count. */
+export const GET = handleRoute(async (_req: NextRequest, { params }: Params) => {
+  const { roomTypeId } = await params;
+  await loadScoped(roomTypeId);
+  const roomType = await prisma.roomType.findUnique({
+    where: { id: roomTypeId },
+    include: {
+      property: { select: { id: true, name: true, city: true, state: true } },
+      photos: { orderBy: [{ isMain: 'desc' }, { createdAt: 'asc' }] },
+      rooms: { orderBy: [{ floor: 'asc' }, { roomNumber: 'asc' }], select: { id: true, roomNumber: true, floor: true, tags: true, notes: true, status: true, isOutOfOrder: true } },
+      _count: { select: { bookings: true } },
+    },
+  });
+  return json(roomType ? { ...roomType, basePrice: Number(roomType.basePrice) } : null);
+});
 
-    // Await params before accessing properties
-    const { roomTypeId } = await params;
-    const body = await request.json();
-    
-    const { 
-      name, 
-      description, 
-      capacity, 
-      basePrice, 
-      amenities, 
-      isActive,
-      totalRooms
-    } = body;
+const updateSchema = z
+  .object({
+    name: z.string().trim().min(2).max(80),
+    description: z.string().trim().max(2000).nullable(),
+    capacity: z.coerce.number().int().min(1).max(20),
+    basePrice: z.coerce.number().min(0).max(100000),
+    totalRooms: z.coerce.number().int().min(0).max(2000),
+    amenities: z.array(z.string().trim().min(1).max(60)).max(60),
+    isActive: z.boolean(),
+  })
+  .partial();
 
-    // Validate required fields
-    if (!name || capacity === undefined || basePrice === undefined) {
-      return NextResponse.json(
-        { error: 'Missing required fields' },
-        { status: 400 }
-      );
-    }
-
-    // Check if the room type exists
-    const existingRoomType = await prisma.roomType.findUnique({
-      where: { id: roomTypeId }
-    });
-
-    if (!existingRoomType) {
-      return NextResponse.json(
-        { error: 'Room type not found' },
-        { status: 404 }
-      );
-    }
-
-    // Update the room type
-    const updatedRoomType = await prisma.$transaction(async (prisma) => {
-      // Update the room type basic info
-      const roomType = await prisma.roomType.update({
-        where: { id: roomTypeId },
-        data: {
-          name,
-          description,
-          capacity: Number(capacity),
-          basePrice: Number(basePrice),
-          totalRooms: totalRooms !== undefined ? Number(totalRooms) : undefined,
-          amenities: amenities || [],
-          isActive: isActive !== false
-        }
-      });
-
-      // Return the updated room type
-      return prisma.roomType.findUnique({
-        where: { id: roomTypeId },
-        include: {
-          property: {
-            select: {
-              id: true,
-              name: true
-            }
-          }
-        }
-      });
-    });
-
-    return NextResponse.json(updatedRoomType);
-  } catch (error) {
-    console.error('Error updating room type:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+async function update(request: NextRequest, { params }: Params) {
+  const { roomTypeId } = await params;
+  const { actor, roomType } = await loadScoped(roomTypeId, 'inventory.write');
+  const body = await parseJson(request, updateSchema);
+  if (body.totalRooms !== undefined) {
+    const physical = await prisma.room.count({ where: { roomTypeId } });
+    if (body.totalRooms < physical) throw badRequest(`There are ${physical} room numbers set up for this type — remove some before lowering the count.`);
   }
+  const updated = await prisma.roomType.update({
+    where: { id: roomTypeId },
+    data: { ...body, description: body.description === undefined ? undefined : body.description || null },
+    include: { property: { select: { id: true, name: true } } },
+  });
+  await recordAudit({ actor, source: 'classic' }, roomType.propertyId, 'ROOM_TYPE_UPDATE', `Updated room type ${updated.name}`, { roomTypeId });
+  scheduleConfigSkillSync(roomType.propertyId);
+  return json({ ...updated, basePrice: Number(updated.basePrice) });
 }
 
-// DELETE a room type
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ roomTypeId: string }> }
-) {
-  try {
-    // Check authentication
-    const session = await auth();
-    
-    if (!session?.user || session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+/** PATCH (and legacy PUT) — update any subset of the room type's fields. */
+export const PATCH = handleRoute(update);
+export const PUT = handleRoute(update);
 
-    // Await params before accessing properties
-    const { roomTypeId } = await params;
-
-    // Check if the room type has any bookings
-    const bookingsCount = await prisma.booking.count({
-      where: { roomTypeId }
-    });
-
-    if (bookingsCount > 0) {
-      // If it has bookings, don't delete - just mark as inactive
-      await prisma.roomType.update({
-        where: { id: roomTypeId },
-        data: { isActive: false }
-      });
-      
-      return NextResponse.json({ 
-        message: 'Room type has existing bookings and cannot be deleted. It has been marked as inactive.' 
-      });
-    }
-
-    // If no bookings, delete the room type
-    await prisma.roomType.delete({
-      where: { id: roomTypeId }
-    });
-
-    return NextResponse.json({ 
-      message: 'Room type deleted successfully' 
-    });
-  } catch (error) {
-    console.error('Error deleting room type:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+/** DELETE — remove a room type, or retire it if it has booking history. */
+export const DELETE = handleRoute(async (_req: NextRequest, { params }: Params) => {
+  const { roomTypeId } = await params;
+  const { actor, roomType } = await loadScoped(roomTypeId, 'inventory.write');
+  const bookings = await prisma.booking.count({ where: { roomTypeId } });
+  if (bookings > 0) {
+    await prisma.roomType.update({ where: { id: roomTypeId }, data: { isActive: false } });
+    await recordAudit({ actor, source: 'classic' }, roomType.propertyId, 'ROOM_TYPE_UPDATE', `Retired room type ${roomType.name}`, { roomTypeId });
+    scheduleConfigSkillSync(roomType.propertyId);
+    return json({ retired: true, message: `${roomType.name} has booking history, so it was hidden from sale instead of deleted.` });
   }
-}
+  await prisma.roomType.delete({ where: { id: roomTypeId } });
+  await recordAudit({ actor, source: 'classic' }, roomType.propertyId, 'ROOM_TYPE_DELETE', `Deleted room type ${roomType.name}`, { roomTypeId });
+  scheduleConfigSkillSync(roomType.propertyId);
+  return json({ retired: false, message: `${roomType.name} deleted.` });
+});

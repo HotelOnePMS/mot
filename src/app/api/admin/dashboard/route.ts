@@ -1,149 +1,78 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { NextRequest } from 'next/server';
+import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
+import { requireStaff, resolvePropertyId } from '@/server/authz';
+import { addDaysISO, atNoonUTC, hotelToday } from '@/server/dates';
+import { handleRoute, json, parseQuery } from '@/server/http';
+import { frontDeskSummary, occupancySeries } from '@/server/services/frontdesk';
+import { bookingInclude, toBookingSummary } from '@/server/services/mappers';
 
-// GET dashboard statistics
-export async function GET() {
-  try {
-    const session = await auth();
-    
-    console.log('Dashboard API: Auth session received:', session ? {
-      id: session.user?.id,
-      email: session.user?.email,
-      role: session.user?.role
-    } : 'No session');
-    
-    if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized - No session' },
-        { status: 401 }
-      );
-    }
-    
-    if (session.user?.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: `Unauthorized - Role ${session.user?.role} is not ADMIN` },
-        { status: 401 }
-      );
-    }
+/**
+ * GET /api/admin/dashboard?propertyId — the owner/manager overview:
+ * today, the next two weeks, revenue on the books and a setup checklist.
+ */
+export const GET = handleRoute(async (request: NextRequest) => {
+  const actor = await requireStaff('analytics.view');
+  const q = parseQuery(request, z.object({ propertyId: z.string().optional() }));
+  const propertyId = await resolvePropertyId(actor, q.propertyId);
+  const today = hotelToday();
+  const monthStart = `${today.slice(0, 8)}01`;
 
-    // Get current date and first day of the month
-    const now = new Date();
-    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    // Count total properties
-    const totalProperties = await prisma.property.count();
-
-    // Count total bookings this month
-    const totalBookingsThisMonth = await prisma.booking.count({
+  const [summary, forecast, property, monthRevenue, upcomingRevenue, recent, counts] = await Promise.all([
+    frontDeskSummary(actor, propertyId, today),
+    occupancySeries(propertyId, today, addDaysISO(today, 14)),
+    prisma.property.findUnique({
+      where: { id: propertyId },
+      select: { id: true, name: true, city: true, state: true, primaryColor: true, interfaceMode: true, isDemo: true, tagline: true },
+    }),
+    prisma.booking.aggregate({
+      where: { propertyId, status: { notIn: ['CANCELLED', 'NO_SHOW'] }, createdAt: { gte: new Date(`${monthStart}T00:00:00Z`) } },
+      _sum: { totalPrice: true },
+      _count: { _all: true },
+    }),
+    prisma.booking.aggregate({
       where: {
-        createdAt: {
-          gte: firstDayOfMonth
-        }
-      }
-    });
-
-    // Count total users
-    const totalUsers = await prisma.user.count({
-      where: {
-        role: 'CUSTOMER'
-      }
-    });
-
-    // Calculate total revenue this month
-    const bookingsThisMonth = await prisma.booking.findMany({
-      where: {
-        createdAt: {
-          gte: firstDayOfMonth
-        }
+        propertyId,
+        status: { in: ['PENDING', 'CONFIRMED', 'CHECKED_IN'] },
+        checkIn: { gte: atNoonUTC(today), lt: atNoonUTC(addDaysISO(today, 30)) },
       },
-      select: {
-        totalPrice: true
-      }
-    });
+      _sum: { totalPrice: true },
+      _count: { _all: true },
+    }),
+    prisma.booking.findMany({ where: { propertyId }, include: bookingInclude, orderBy: { createdAt: 'desc' }, take: 6 }),
+    Promise.all([
+      prisma.roomType.count({ where: { propertyId, isActive: true } }),
+      prisma.room.count({ where: { propertyId } }),
+      prisma.propertyPhoto.count({ where: { propertyId } }),
+      prisma.roomTypeRate.count({ where: { roomType: { propertyId } } }),
+      prisma.userPropertyAssignment.count({ where: { propertyId, user: { role: { in: ['MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'] } } } }),
+      prisma.booking.count({ where: { propertyId } }),
+      prisma.agentAuditLog.count({ where: { propertyId, action: 'COMMAND' } }),
+    ]),
+  ]);
 
-    const totalRevenue = bookingsThisMonth.reduce((sum, booking) => 
-      sum + Number(booking.totalPrice), 0);
-    
-    // Calculate occupancy rate
-    const currentDate = new Date();
-    const occupancyData = await prisma.booking.findMany({
-      where: {
-        checkIn: { lte: currentDate },
-        checkOut: { gte: currentDate },
-        status: {
-          in: ['CONFIRMED', 'CHECKED_IN']
-        }
-      },
-      include: {
-        roomType: true
-      }
-    });
+  const [roomTypes, rooms, photos, customRates, team, bookings, agentCommands] = counts;
+  const checklist = [
+    { id: 'room-types', label: 'Add your room types', done: roomTypes > 0, href: '/admin/room-types/add' },
+    { id: 'rooms', label: 'Add room numbers', done: rooms > 0, href: '/admin/room-types' },
+    { id: 'photos', label: 'Upload property photos', done: photos > 0, href: `/admin/properties/${propertyId}` },
+    { id: 'rates', label: 'Set seasonal or weekend rates', done: customRates > 0, href: '/admin/rate-calendar' },
+    { id: 'team', label: 'Invite your team', done: team > 0, href: '/admin/users' },
+    { id: 'agent', label: 'Try the agent: “who’s arriving today?”', done: agentCommands > 0, href: '/admin/agent' },
+    { id: 'booking', label: 'Take your first booking', done: bookings > 0, href: `/properties/${propertyId}` },
+  ];
 
-    // Get total rooms across all properties - use Prisma aggregation instead of raw query
-    const roomTypesAgg = await prisma.roomType.aggregate({
-      where: {
-        isActive: true
-      },
-      _sum: {
-        totalRooms: true
-      }
-    });
-    
-    const totalRooms = roomTypesAgg._sum.totalRooms || 0;
-    
-    const occupiedRooms = occupancyData.reduce((sum: number, booking) => sum + booking.rooms, 0);
-    const occupancyRate = totalRooms > 0 ? ((occupiedRooms / totalRooms) * 100).toFixed(1) : 0;
-
-    // Set a default average rating since there's no review model
-    const avgRating = 4.7;
-
-    // Get recent bookings
-    const recentBookings = await prisma.booking.findMany({
-      take: 5,
-      orderBy: {
-        createdAt: 'desc'
-      },
-      include: {
-        user: {
-          select: {
-            firstName: true,
-            lastName: true
-          }
-        },
-        property: {
-          select: {
-            name: true
-          }
-        }
-      }
-    });
-
-    return NextResponse.json({
-      totalProperties,
-      totalBookings: totalBookingsThisMonth,
-      totalUsers,
-      totalRevenue,
-      occupancyRate,
-      avgRating,
-      recentBookings: recentBookings.map(booking => ({
-        id: booking.id,
-        guest: `${booking.user.firstName} ${booking.user.lastName}`,
-        property: booking.property.name,
-        checkIn: booking.checkIn.toISOString().split('T')[0],
-        amount: Number(booking.totalPrice)
-      }))
-    });
-  } catch (error) {
-    console.error('Error fetching dashboard stats:', error);
-    console.error('Error details:', error instanceof Error ? error.message : String(error));
-    console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
-    return NextResponse.json(
-      { 
-        error: 'Internal server error',
-        details: error instanceof Error ? error.message : String(error)
-      },
-      { status: 500 }
-    );
-  }
-}
+  return json({
+    property,
+    today: summary,
+    forecast,
+    revenue: {
+      monthToDate: Number(monthRevenue._sum.totalPrice ?? 0),
+      monthBookings: monthRevenue._count._all,
+      next30Days: Number(upcomingRevenue._sum.totalPrice ?? 0),
+      next30Bookings: upcomingRevenue._count._all,
+    },
+    recent: recent.map(toBookingSummary),
+    checklist,
+  });
+});

@@ -1,291 +1,295 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import * as React from 'react';
+import Link from 'next/link';
+import useSWR from 'swr';
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
-import Navigation from '@/components/Navigation';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { motion, useReducedMotion } from 'framer-motion';
+import { ArrowRight, CalendarDays, LayoutDashboard, Luggage, MapPin, RefreshCw, Search } from 'lucide-react';
+import type { BookingStatus } from '@/lib/dto';
+import { fetcher } from '@/lib/fetcher';
+import { fmtDay, fmtRange, localToday, nightsBetween } from '@/lib/format';
+import { isStaffRole } from '@/lib/routes';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Calendar, MapPin, Star, Eye, User, Building2, DollarSign, AlertTriangle } from 'lucide-react';
+import { Callout, EmptyState, Skeleton } from '@/components/ui/primitives';
+import { SmartImage } from '@/components/ui/smart-image';
+import { BookingStatusBadge } from '@/components/hotel/badges';
+import { brandScope } from '@/components/guest/brand';
+import { useVoicePage } from '@/components/voice/page-context';
+import { GuestShell } from '@/app/properties/_components/guest-shell';
+import { plural, price } from '@/app/properties/_components/format';
 
-type Booking = {
+interface Trip {
   id: string;
-  propertyId: string;
-  roomTypeId: string;
+  code: string | null;
+  status: BookingStatus;
   checkIn: string;
   checkOut: string;
   guests: number;
   rooms: number;
   totalPrice: number;
-  status: string;
-  property: {
-    name: string;
-    city: string;
-    state: string;
-    photos: Array<{
-      url: string;
-    }>;
-  };
-  roomType: {
-    name: string;
-    capacity: number;
-    photos?: Array<{
-      id: string;
-      url: string;
-      isMain: boolean;
-    }>;
-  };
-};
+  paymentStatus: string;
+  property: { id: string; name: string; city: string; state: string; primaryColor: string | null; photos: { url: string }[] };
+  roomType: { name: string; photos: { url: string }[] };
+  room: { roomNumber: string } | null;
+}
 
-export default function UserDashboard() {
-  const { data: session, status } = useSession();
-  const router = useRouter();
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+const photoOf = (t: Trip) => t.property.photos[0]?.url ?? t.roomType.photos[0]?.url;
 
-  // Redirect if not authenticated
-  useEffect(() => {
-    console.log("Dashboard - Session status:", status);
-    console.log("Dashboard - Session data:", session);
-    
-    if (status === 'unauthenticated') {
-      console.log("Dashboard - Redirecting to login (unauthenticated)");
-      router.push('/login?redirected=true&from=dashboard');
-    }
-  }, [status, router, session]);
-
-  useEffect(() => {
-    const fetchBookings = async () => {
-      if (status !== 'authenticated') return;
-      
-      try {
-        setLoading(true);
-        const response = await fetch('/api/bookings');
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch bookings');
-        }
-        
-        const data = await response.json();
-        setBookings(data);
-      } catch (err) {
-        console.error('Error fetching bookings:', err);
-        setError('Failed to load bookings. Please try again.');
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    fetchBookings();
-  }, [status]);
-  
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
-  };
-  
-  const getStatusColor = (status: string) => {
-    switch (status.toUpperCase()) {
-      case 'CONFIRMED': return 'bg-green-100 text-green-800';
-      case 'PENDING': return 'bg-yellow-100 text-yellow-800';
-      case 'CANCELLED': return 'bg-red-100 text-red-800';
-      case 'CHECKED_IN': return 'bg-blue-100 text-blue-800';
-      case 'CHECKED_OUT': return 'bg-gray-100 text-gray-800';
-      case 'NO_SHOW': return 'bg-purple-100 text-purple-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  // Calculate nights between dates
-  const calculateNights = (checkIn: string, checkOut: string) => {
-    const start = new Date(checkIn);
-    const end = new Date(checkOut);
-    const diffTime = Math.abs(end.getTime() - start.getTime());
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  };
-
-  if (status === 'loading' || (status === 'authenticated' && loading)) {
-    return (
-      <div className="min-h-screen bg-gray-50">
-        <Navigation />
-        <div className="container mx-auto px-4 py-8">
-          <div className="flex justify-center items-center py-16">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+function NextTrip({ trip }: { trip: Trip }) {
+  const reduce = useReducedMotion();
+  const days = nightsBetween(localToday(), trip.checkIn);
+  const inHouse = trip.status === 'CHECKED_IN';
+  const scope = brandScope(trip.property.primaryColor);
+  return (
+    <motion.div initial={reduce ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={scope.style} className={scope.className}>
+      <Link
+        href={`/bookings/${trip.id}`}
+        className="group grid overflow-hidden rounded-2xl border bg-card shadow-soft transition-shadow hover:shadow-lifted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background md:grid-cols-[1.15fr_1fr]"
+      >
+        <SmartImage src={photoOf(trip)} alt="" priority sizes="(min-width: 768px) 55vw, 100vw" className="aspect-[16/10] md:aspect-auto md:h-full md:min-h-80" />
+        <div className="flex flex-col p-6 sm:p-8">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-soft px-2.5 py-1 text-xs font-semibold text-brand-soft-foreground">
+              <CalendarDays className="h-3.5 w-3.5" aria-hidden />
+              {inHouse ? 'You’re staying here now' : days <= 0 ? 'Check-in today' : days === 1 ? 'Tomorrow' : `In ${days} days`}
+            </span>
+            <BookingStatusBadge status={trip.status} />
           </div>
+          <h3 className="mt-4 font-display text-3xl leading-tight tracking-tight">{trip.property.name}</h3>
+          <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+            <MapPin className="h-3.5 w-3.5" aria-hidden /> {trip.property.city}, {trip.property.state}
+          </p>
+          <dl className="mt-6 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+            <div>
+              <dt className="text-xs text-muted-foreground">Check in</dt>
+              <dd className="font-semibold">{fmtDay(trip.checkIn, 'weekday')}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">Check out</dt>
+              <dd className="font-semibold">{fmtDay(trip.checkOut, 'weekday')}</dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-xs text-muted-foreground">Room</dt>
+              <dd className="truncate font-semibold">
+                {trip.roomType.name}
+                {trip.room ? ` · ${trip.room.roomNumber}` : ''}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">Confirmation</dt>
+              <dd className="font-mono font-semibold tracking-wider">{trip.code ?? '—'}</dd>
+            </div>
+          </dl>
+          <span className="mt-auto inline-flex items-center gap-1.5 pt-6 text-sm font-semibold text-brand">
+            Manage booking <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" aria-hidden />
+          </span>
         </div>
-      </div>
-    );
-  }
+      </Link>
+    </motion.div>
+  );
+}
 
-  if (status === 'authenticated' && error) {
-    return (
-      <div className="min-h-screen bg-gray-50">
-        <Navigation />
-        <div className="container mx-auto px-4 py-8">
-          <div className="bg-red-50 p-4 rounded-lg flex items-center text-red-800 mb-6">
-            <AlertTriangle className="h-5 w-5 mr-2" />
-            <span>{error}</span>
-          </div>
-          <Button onClick={() => window.location.reload()}>Try Again</Button>
+/** A trip as a card; the whole card opens the booking, and past stays get a "Book again" link. */
+function TripCard({ trip, bookAgain }: { trip: Trip; bookAgain?: boolean }) {
+  const nights = nightsBetween(trip.checkIn, trip.checkOut);
+  const cancelled = trip.status === 'CANCELLED' || trip.status === 'NO_SHOW';
+  return (
+    <li className="group relative flex flex-col overflow-hidden rounded-2xl border bg-card shadow-xs transition-shadow focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background hover:shadow-soft">
+      <SmartImage src={photoOf(trip)} alt="" aspectRatio="16 / 9" sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw" className={cn(cancelled && 'grayscale')} />
+      <div className="flex flex-1 flex-col p-4">
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="min-w-0 truncate font-semibold tracking-tight">
+            <Link href={`/bookings/${trip.id}`} className="after:absolute after:inset-0 after:content-[''] focus-visible:outline-none">
+              {trip.property.name}
+            </Link>
+          </h3>
+          <BookingStatusBadge status={trip.status} className="shrink-0" />
         </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {fmtRange(trip.checkIn, trip.checkOut)} · {plural(nights, 'night')}
+        </p>
+        <p className="truncate text-sm text-muted-foreground">
+          {trip.roomType.name} · <span className="tabular">{price(trip.totalPrice)}</span>
+        </p>
+        {bookAgain && (
+          <div className="mt-auto pt-4">
+            <Button asChild variant="outline" size="sm" className="relative z-10">
+              <Link href={`/properties/${trip.property.id}`}>
+                <RefreshCw aria-hidden /> Book again<span className="sr-only"> at {trip.property.name}</span>
+              </Link>
+            </Button>
+          </div>
+        )}
       </div>
-    );
-  }
+    </li>
+  );
+}
+
+function Group({ id, title, count, children }: { id: string; title: string; count?: number; children: React.ReactNode }) {
+  return (
+    <section className="mt-12" aria-labelledby={id}>
+      <h2 id={id} className="flex items-baseline gap-2 text-xl font-semibold tracking-tight">
+        {title}
+        {count ? <span className="text-sm font-normal text-muted-foreground">{count}</span> : null}
+      </h2>
+      <div className="mt-4">{children}</div>
+    </section>
+  );
+}
+
+const CARD_GRID = 'grid gap-4 sm:grid-cols-2 lg:grid-cols-3';
+
+export default function TripsPage() {
+  const { data: session } = useSession();
+  const { data, error, isLoading, mutate } = useSWR<Trip[]>('/api/bookings', fetcher);
+  const today = localToday();
+  const firstName = session?.user?.name?.split(' ')[0];
+
+  const upcoming = (data ?? [])
+    .filter((t) => (t.status === 'CONFIRMED' || t.status === 'PENDING' || t.status === 'CHECKED_IN') && t.checkOut >= today)
+    .sort((a, b) => a.checkIn.localeCompare(b.checkIn));
+  const past = (data ?? [])
+    .filter((t) => t.status === 'CHECKED_OUT' || ((t.status === 'CONFIRMED' || t.status === 'CHECKED_IN') && t.checkOut < today))
+    .sort((a, b) => b.checkIn.localeCompare(a.checkIn));
+  const cancelled = (data ?? []).filter((t) => t.status === 'CANCELLED' || t.status === 'NO_SHOW').sort((a, b) => b.checkIn.localeCompare(a.checkIn));
+  const [next, ...later] = upcoming;
+
+  // The voice concierge knows the guest is looking at their trips (and the next one).
+  useVoicePage({
+    kind: 'trips',
+    summary: data
+      ? `their trips: ${plural(upcoming.length, 'upcoming stay')}${next ? `, next at ${next.property.name} on ${fmtDay(next.checkIn, 'weekday')} (confirmation ${next.code ?? 'on screen'})` : ''}`
+      : 'their trips',
+  });
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navigation />
-      <div className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">My Dashboard</h1>
-          <p className="text-gray-600">Welcome back, {session?.user?.name || 'Guest'}</p>
+    <GuestShell>
+      <div className="mx-auto max-w-7xl px-4 pb-16 pt-8 sm:px-6 sm:pt-12">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            {firstName && <p className="text-sm font-medium text-muted-foreground">Welcome back, {firstName}</p>}
+            <h1 className="mt-1 font-display text-4xl tracking-tight sm:text-5xl">My trips</h1>
+            <p className="mt-2 text-muted-foreground" aria-live="polite">
+              {!data ? ' ' : upcoming.length ? `You have ${plural(upcoming.length, 'upcoming stay')}.` : 'No stays coming up — where to next?'}
+            </p>
+          </div>
+          <Button asChild variant="outline" className="self-start sm:self-auto">
+            <Link href="/properties">
+              <Search aria-hidden /> Find a stay
+            </Link>
+          </Button>
         </div>
-        
-        {/* Stats Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Total Bookings</CardDescription>
-              <CardTitle className="text-3xl">{bookings.length}</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <Building2 className="h-8 w-8 text-blue-500" />
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Upcoming Stays</CardDescription>
-              <CardTitle className="text-3xl">
-                {bookings.filter(booking => 
-                  ['PENDING', 'CONFIRMED'].includes(booking.status.toUpperCase())).length}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <Calendar className="h-8 w-8 text-green-500" />
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Total Spent</CardDescription>
-              <CardTitle className="text-3xl">
-                ${bookings.reduce((sum, booking) => sum + Number(booking.totalPrice), 0).toFixed(2)}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <DollarSign className="h-8 w-8 text-emerald-500" />
-            </CardContent>
-          </Card>
-        </div>
-        
-        {/* Bookings List */}
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold mb-4">My Bookings</h2>
-          
-          {bookings.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Building2 className="h-16 w-16 text-gray-300 mb-4" />
-                <p className="text-gray-500 text-lg mb-4">You don&apos;t have any bookings yet</p>
-                <Button onClick={() => router.push('/properties')}>
-                  Browse Properties
+
+        {isStaffRole(session?.user?.role) && (
+          <Callout
+            tone="neutral"
+            icon={LayoutDashboard}
+            className="mt-6 items-center"
+            action={
+              <Button asChild size="sm" variant="outline">
+                <Link href="/admin">Open console</Link>
+              </Button>
+            }
+          >
+            You also have access to a hotel console.
+          </Callout>
+        )}
+
+        {error && !data ? (
+          <div className="mt-10 rounded-2xl border bg-card">
+            <EmptyState
+              icon={RefreshCw}
+              title="We couldn’t load your trips"
+              description="Check your connection and try again."
+              action={
+                <Button variant="outline" onClick={() => void mutate()}>
+                  Try again
                 </Button>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-4">
-              {bookings.map((booking) => {
-                const nights = calculateNights(booking.checkIn, booking.checkOut);
-                
-                // Check if booking is within 24 hours of check-in
-                const checkInDate = new Date(booking.checkIn);
-                const now = new Date();
-                const timeDiff = checkInDate.getTime() - now.getTime();
-                const hoursDiff = timeDiff / (1000 * 60 * 60);
-                const canModify = hoursDiff >= 24 && ['PENDING', 'CONFIRMED'].includes(booking.status.toUpperCase());
-                
-                // Use room type photo first, then fall back to property photo
-                const roomTypePhoto = booking.roomType.photos?.[0]?.url;
-                const propertyPhoto = booking.property.photos?.[0]?.url;
-                const mainPhoto = roomTypePhoto || propertyPhoto || '/placeholder-motel.jpg';
-                
-                return (
-                  <Card key={booking.id} className="overflow-hidden">
-                    <div className="flex flex-col md:flex-row">
-                      <div className="w-full md:w-1/4 h-48 md:h-auto">
-                        <img 
-                          src={mainPhoto} 
-                          alt={booking.property.name} 
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                      
-                      <div className="flex-1 p-6">
-                        <div className="flex flex-col md:flex-row justify-between mb-4">
-                          <div>
-                            <h3 className="text-lg font-semibold mb-1">{booking.property.name}</h3>
-                            <div className="flex items-center text-sm text-gray-500 mb-2">
-                              <MapPin className="h-4 w-4 mr-1" />
-                              <span>{booking.property.city}, {booking.property.state}</span>
-                            </div>
-                          </div>
-                          
-                          <div className="mt-2 md:mt-0">
-                            <Badge className={getStatusColor(booking.status)}>
-                              {booking.status}
-                            </Badge>
-                          </div>
-                        </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4 text-sm">
-                          <div>
-                            <span className="text-gray-500">Room Type:</span>
-                            <div className="font-medium">{booking.roomType.name}</div>
-                          </div>
-                          
-                          <div>
-                            <span className="text-gray-500">Dates:</span>
-                            <div className="font-medium">
-                              {formatDate(booking.checkIn)} - {formatDate(booking.checkOut)}
-                            </div>
-                            <div className="text-gray-500 text-xs">{nights} night{nights !== 1 ? 's' : ''}</div>
-                          </div>
-                          
-                          <div>
-                            <span className="text-gray-500">Guests:</span>
-                            <div className="font-medium">{booking.guests} guest{booking.guests !== 1 ? 's' : ''}</div>
-                            <div className="text-gray-500 text-xs">{booking.rooms} room{booking.rooms !== 1 ? 's' : ''}</div>
-                          </div>
-                        </div>
-                        
-                        <div className="flex justify-between items-center pt-2 border-t border-gray-100">
-                          <div className="text-xl font-bold text-blue-600">
-                            ${Number(booking.totalPrice).toFixed(2)}
-                          </div>
-                          
-                          <div className="flex space-x-2">
-                            <Button variant="outline" size="sm" onClick={() => router.push(`/bookings/${booking.id}`)}>
-                              <Eye className="h-4 w-4 mr-1" />
-                              View & Modify
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </Card>
-                );
-              })}
+              }
+            />
+          </div>
+        ) : isLoading || !data ? (
+          <div className="mt-12" role="status" aria-label="Loading your trips">
+            <Skeleton className="h-6 w-32" />
+            <div className="mt-4 grid overflow-hidden rounded-2xl border md:grid-cols-[1.15fr_1fr]">
+              <Skeleton className="aspect-[16/10] h-auto rounded-none md:aspect-auto md:h-80" />
+              <div className="space-y-3 p-6 sm:p-8">
+                <Skeleton className="h-6 w-28 rounded-full" />
+                <Skeleton className="h-9 w-3/4" />
+                <Skeleton className="h-4 w-1/3" />
+                <Skeleton className="mt-6 h-24 w-full" />
+              </div>
             </div>
-          )}
-        </div>
+          </div>
+        ) : !data.length ? (
+          <div className="mt-10 rounded-2xl border bg-card">
+            <EmptyState
+              icon={Luggage}
+              title="No trips yet"
+              description="When you book a stay it shows up here — with your confirmation, directions and free changes until the day before."
+              action={
+                <Button asChild size="lg">
+                  <Link href="/properties">Find a stay</Link>
+                </Button>
+              }
+            />
+          </div>
+        ) : (
+          <>
+            <Group id="upcoming-title" title="Upcoming" count={upcoming.length}>
+              {next ? (
+                <>
+                  <NextTrip trip={next} />
+                  {later.length > 0 && (
+                    <ul className={cn(CARD_GRID, 'mt-4')}>
+                      {later.map((t) => (
+                        <TripCard key={t.id} trip={t} />
+                      ))}
+                    </ul>
+                  )}
+                </>
+              ) : (
+                <div className="rounded-2xl border border-dashed bg-card">
+                  <EmptyState
+                    icon={CalendarDays}
+                    title="Nothing planned yet"
+                    description="Find your next stay — book direct for the best rate and free changes until the day before."
+                    action={
+                      <Button asChild>
+                        <Link href="/properties">Find a stay</Link>
+                      </Button>
+                    }
+                  />
+                </div>
+              )}
+            </Group>
+
+            {past.length > 0 && (
+              <Group id="past-title" title="Past stays" count={past.length}>
+                <ul className={CARD_GRID}>
+                  {past.map((t) => (
+                    <TripCard key={t.id} trip={t} bookAgain />
+                  ))}
+                </ul>
+              </Group>
+            )}
+
+            {cancelled.length > 0 && (
+              <Group id="cancelled-title" title="Cancelled" count={cancelled.length}>
+                <ul className={CARD_GRID}>
+                  {cancelled.map((t) => (
+                    <TripCard key={t.id} trip={t} bookAgain />
+                  ))}
+                </ul>
+              </Group>
+            )}
+
+            <p className="mt-10 text-sm text-muted-foreground">Upcoming stays can be changed or cancelled free until 3 PM the day before arrival.</p>
+          </>
+        )}
       </div>
-    </div>
+    </GuestShell>
   );
 }

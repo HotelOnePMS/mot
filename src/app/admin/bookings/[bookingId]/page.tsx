@@ -1,565 +1,570 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import * as React from 'react';
+import Link from 'next/link';
+import useSWR from 'swr';
+import { useParams } from 'next/navigation';
+import {
+  ArrowLeft,
+  BedDouble,
+  CalendarClock,
+  Check,
+  Copy,
+  CreditCard,
+  DoorOpen,
+  LogIn,
+  LogOut,
+  Mail,
+  MessageSquarePlus,
+  MessageSquareText,
+  MoreHorizontal,
+  Phone,
+  Sparkles,
+  TriangleAlert,
+  Undo2,
+  UserX,
+  Users,
+  XCircle,
+} from 'lucide-react';
+import type { ActivityEntry, BookingStatus, BookingSummary } from '@/lib/dto';
+import { fetcher } from '@/lib/fetcher';
+import { fmtDay, formatMoney, formatNights, formatPhone, formatPhonesIn, nightsBetween, relativeDay, telHref, timeAgo } from '@/lib/format';
+import { BOOKING_STATUS } from '@/lib/status';
+import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Calendar, User, Building2, DollarSign, Clock, Loader2, CreditCard, Eye, EyeOff } from 'lucide-react';
+import { Card } from '@/components/ui/card';
+import { Avatar, EmptyState, Skeleton } from '@/components/ui/primitives';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { BookingStatusBadge, PaymentBadge, SourceBadge } from '@/components/hotel/badges';
+import { AssignRoomDialog, CheckInDialog, CheckOutDialog, ConfirmDialog, NoteDialog } from '@/components/frontdesk/dialogs';
+import { useBookingActions } from '@/components/frontdesk/useBookingActions';
+import { useConsole } from '@/components/console/ConsoleProvider';
+import { useCopy } from '@/components/setup/CopyButton';
 
-type PaymentDetails = {
-  cardNumber: string;
-  maskedCardNumber: string;
-  cardLast4: string;
-  cardBrand: string;
-  cardExpMonth: number;
-  cardExpYear: number;
-  cardCvv: string;
-  billingName: string;
-  billingZip: string;
-};
+interface Detail {
+  booking: BookingSummary;
+  history: { id: string; status: BookingStatus; notes: string | null; createdAt: string }[];
+  activity: ActivityEntry[];
+  actions: BookingStatus[];
+}
 
-type BookingDetailsType = {
-  id: string;
-  userId: string;
-  propertyId: string;
-  roomTypeId: string;
-  checkIn: string;
-  checkOut: string;
-  guests: number;
-  rooms: number;
-  totalPrice: number;
-  status: string;
-  notes?: string;
-  // Payment details
-  cardLast4?: string;
-  cardBrand?: string;
-  cardExpMonth?: number;
-  cardExpYear?: number;
-  billingName?: string;
-  billingZip?: string;
-  createdAt: string;
-  updatedAt: string;
-  user: {
-    firstName: string;
-    lastName: string;
-    email: string;
-    phone?: string;
-  };
-  property: {
-    name: string;
-    city: string;
-    state: string;
-  };
-  roomType: {
-    name: string;
-    capacity: number;
-  };
-  statusHistory: {
-    id: string;
-    status: string;
-    notes?: string;
-    createdAt: string;
-  }[];
-};
+interface Payment {
+  paymentStatus: string;
+  cardLast4: string | null;
+  cardBrand: string | null;
+  billingName: string | null;
+  stripeCheckoutSessionId: string | null;
+}
 
-export default function AdminBookingDetailsPage({ params }: { params: Promise<{ bookingId: string }> }) {
-  const router = useRouter();
-  const [bookingId, setBookingId] = useState<string>('');
-  
-  const [booking, setBooking] = useState<BookingDetailsType | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [updating, setUpdating] = useState(false);
-  const [error, setError] = useState('');
-  const [statusNotes, setStatusNotes] = useState('');
-  
-  // Payment details state
-  const [paymentDetails, setPaymentDetails] = useState<PaymentDetails | null>(null);
-  const [showFullCard, setShowFullCard] = useState(false);
-  const [showCvv, setShowCvv] = useState(false);
-  const [loadingPayment, setLoadingPayment] = useState(false);
+type DialogKind = 'checkin' | 'checkout' | 'note' | 'assign' | 'noshow' | 'cancel' | 'reinstate';
 
-  // Unwrap params Promise
-  useEffect(() => {
-    params.then((resolvedParams) => {
-      setBookingId(resolvedParams.bookingId);
-    });
-  }, [params]);
+const FRAME = 'mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8';
 
-  // Fetch booking details
-  useEffect(() => {
-    if (!bookingId) return;
-    
-    const fetchBookingDetails = async () => {
-      try {
-        setLoading(true);
-        const response = await fetch(`/api/admin/bookings/${bookingId}`);
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch booking details');
-        }
-        
-        const data = await response.json();
-        setBooking(data);
-      } catch (err) {
-        console.error('Error:', err);
-        setError('Failed to load booking details');
-      } finally {
-        setLoading(false);
-      }
-    };
+function parseNotes(notes: string | null) {
+  if (!notes) return [];
+  return notes
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const m = line.match(/^\[([^\]·]+)·\s*([^\]]+)\]\s*(.*)$/);
+      return m ? { day: m[1].trim(), by: m[2].trim(), text: m[3] } : { day: null, by: null, text: line };
+    })
+    .reverse();
+}
 
-    fetchBookingDetails();
-  }, [bookingId]);
+/** Where the reservation came from, read from its first history note ("Booked online — pay at property"). */
+function bookingSource(note: string | null | undefined): string | null {
+  const n = (note ?? '').toLowerCase();
+  if (!n) return null;
+  if (n.includes('whatsapp')) return 'On WhatsApp';
+  if (n.includes('phone') || n.includes('call')) return 'By phone';
+  if (n.includes('online')) return 'On your booking page';
+  if (n.includes('agent')) return 'Through the agent';
+  if (n.includes('walk')) return 'Walk-in';
+  return null;
+}
 
-  // Fetch payment details
-  const fetchPaymentDetails = async () => {
-    if (!bookingId || paymentDetails) return; // Don't fetch if already loaded
-    
-    try {
-      setLoadingPayment(true);
-      const response = await fetch(`/api/admin/bookings/${bookingId}/payment`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch payment details');
-      }
-      
-      const data = await response.json();
-      setPaymentDetails(data);
-    } catch (err) {
-      console.error('Error fetching payment details:', err);
-    } finally {
-      setLoadingPayment(false);
-    }
-  };
+/** "Today" / "Tomorrow" / "Yesterday", else "in 5 days" / "5 days ago" (never the date again). */
+function fromToday(day: string, today: string) {
+  if (!today) return '';
+  const ahead = nightsBetween(today, day);
+  const behind = nightsBetween(day, today);
+  if (ahead <= 1 && behind <= 1) return relativeDay(day, today);
+  return ahead > 0 ? `in ${ahead} days` : `${behind} days ago`;
+}
 
-  // Format dates
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      weekday: 'short',
-      month: 'short', 
-      day: 'numeric',
-      year: 'numeric'
-    });
-  };
+function Fact({ icon: Icon, label, children }: { icon: React.ElementType; label: string; children: React.ReactNode }) {
+  return (
+    // dt and dd must be direct children of the dl's group div, so the icon rides inside the dt.
+    <div className="relative min-h-9 min-w-0 pl-11">
+      <dt className="text-xs text-muted-foreground">
+        <span className="absolute left-0 top-0.5 flex size-8 items-center justify-center rounded-lg bg-muted text-muted-foreground" aria-hidden>
+          <Icon className="size-4" />
+        </span>
+        {label}
+      </dt>
+      <dd className="text-sm font-medium">{children}</dd>
+    </div>
+  );
+}
 
-  const calculateNights = (checkIn: string, checkOut: string) => {
-    const start = new Date(checkIn);
-    const end = new Date(checkOut);
-    const diffTime = Math.abs(end.getTime() - start.getTime());
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  };
+function SectionTitle({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div className="flex min-h-9 items-center justify-between gap-3">
+      <h2 className="text-base font-semibold tracking-tight">{children}</h2>
+      {action}
+    </div>
+  );
+}
 
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'confirmed':
-        return 'bg-green-100 text-green-800';
-      case 'cancelled':
-        return 'bg-red-100 text-red-800';
-      case 'checked_in':
-        return 'bg-blue-100 text-blue-800';
-      case 'checked_out':
-        return 'bg-purple-100 text-purple-800';
-      case 'no_show':
-        return 'bg-yellow-100 text-yellow-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
+function BackLink() {
+  return (
+    <Link
+      href="/admin/bookings"
+      className="-ml-2 inline-flex h-10 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <ArrowLeft className="size-4" aria-hidden /> Reservations
+    </Link>
+  );
+}
 
-  // Handle status update
-  const updateBookingStatus = async (newStatus: string) => {
-    try {
-      setUpdating(true);
-      const response = await fetch(`/api/admin/bookings/${bookingId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          status: newStatus,
-          notes: statusNotes,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to update booking status');
-      }
-
-      // Refresh booking data
-      const updatedBookingResponse = await fetch(`/api/admin/bookings/${bookingId}`);
-      if (updatedBookingResponse.ok) {
-        const updatedData = await updatedBookingResponse.json();
-        setBooking(updatedData);
-        setStatusNotes('');
-      }
-      
-    } catch (err) {
-      console.error('Error updating booking status:', err);
-      alert('Failed to update booking status');
-    } finally {
-      setUpdating(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-96">
-        <Loader2 className="h-10 w-10 text-gray-400 animate-spin" />
-      </div>
-    );
-  }
+export default function BookingDetailPage() {
+  const { bookingId } = useParams<{ bookingId: string }>();
+  const { ctx, can, askAgent } = useConsole();
+  const today = ctx?.today ?? '';
+  const { data, error, isLoading } = useSWR<Detail>(`/api/admin/bookings/${bookingId}`, fetcher);
+  const { data: payment } = useSWR<Payment>(can('booking.payment.view') ? `/api/admin/bookings/${bookingId}/payment` : null, fetcher);
+  const { transition, pending } = useBookingActions();
+  const [dialog, setDialog] = React.useState<DialogKind | null>(null);
+  const { copy, copied } = useCopy();
 
   if (error) {
     return (
-      <div className="p-6 max-w-6xl mx-auto">
-        <div className="mb-6">
-          <Button variant="outline" onClick={() => router.back()}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Button>
-        </div>
-        <div className="bg-red-50 p-6 rounded-lg text-center">
-          <h2 className="text-xl font-semibold text-red-700">Error</h2>
-          <p className="text-red-600">{error}</p>
-        </div>
+      <div className={FRAME}>
+        <BackLink />
+        <Card className="mt-4">
+          <EmptyState
+            icon={TriangleAlert}
+            title="We couldn’t find that reservation"
+            description="It may have been removed, or it belongs to a property you don’t have access to."
+            action={
+              <Button asChild variant="outline">
+                <Link href="/admin/bookings">Back to reservations</Link>
+              </Button>
+            }
+          />
+        </Card>
       </div>
     );
   }
 
-  if (!booking) return null;
+  if (isLoading || !data) {
+    return (
+      <div className={cn(FRAME, 'space-y-6')} aria-busy>
+        <Skeleton className="h-10 w-36" />
+        <div className="flex items-center gap-4">
+          <Skeleton className="size-12 rounded-full" />
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-56" />
+            <Skeleton className="h-5 w-40" />
+          </div>
+        </div>
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+          <Skeleton className="h-[420px] rounded-2xl" />
+          <Skeleton className="h-[420px] rounded-2xl" />
+        </div>
+        <span className="sr-only" role="status">
+          Loading reservation…
+        </span>
+      </div>
+    );
+  }
 
-  const checkInDate = formatDate(booking.checkIn);
-  const checkOutDate = formatDate(booking.checkOut);
-  const nights = calculateNights(booking.checkIn, booking.checkOut);
-  const isBookingActive = ['PENDING', 'CONFIRMED'].includes(booking.status);
+  const b = data.booking;
+  const has = (s: BookingStatus) => data.actions.includes(s);
+  const closed = b.status === 'CHECKED_OUT' || b.status === 'CANCELLED' || b.status === 'NO_SHOW';
+  const reinstatable = (b.status === 'CANCELLED' || b.status === 'NO_SHOW') && has('CONFIRMED') && can('booking.reinstate');
+  const notes = parseNotes(b.notes);
+  const nightly = b.nights ? b.totalPrice / b.nights / Math.max(1, b.rooms) : b.totalPrice;
+  const stayProgress =
+    b.status === 'CHECKED_IN' && today ? Math.min(1, Math.max(0, nightsBetween(b.checkIn, today) / Math.max(1, b.nights))) : b.status === 'CHECKED_OUT' ? 1 : 0;
+  const late = !!today && (b.status === 'CONFIRMED' || b.status === 'PENDING') && b.checkIn < today;
+  const overdue = !!today && b.status === 'CHECKED_IN' && b.checkOut < today;
+  const busy = !!pending?.startsWith(b.id);
+  const source = bookingSource([...data.history].sort((x, y) => x.createdAt.localeCompare(y.createdAt))[0]?.notes);
+
+  const timeline = [
+    ...data.history.map((h) => ({
+      id: `h-${h.id}`,
+      at: h.createdAt,
+      title: BOOKING_STATUS[h.status]?.label ?? h.status,
+      detail: h.notes,
+      agent: false,
+    })),
+    ...data.activity
+      .filter((a) => a.action !== 'BOOKING_STATUS')
+      .map((a) => ({ id: `a-${a.id}`, at: a.at, title: formatPhonesIn(a.summary), detail: a.user.name, agent: a.source === 'agent' })),
+  ].sort((x, y) => y.at.localeCompare(x.at));
+
+  const primary =
+    b.status === 'CONFIRMED' || b.status === 'PENDING'
+      ? has('CHECKED_IN') && can('booking.checkin') && b.checkIn <= today
+        ? { label: 'Check in', icon: LogIn, onClick: () => setDialog('checkin') }
+        : b.status === 'PENDING' && can('booking.confirm')
+          ? { label: 'Confirm', icon: Check, onClick: () => transition(b, 'CONFIRMED') }
+          : null
+      : b.status === 'CHECKED_IN' && can('booking.checkout')
+        ? { label: 'Check out', icon: LogOut, onClick: () => setDialog('checkout') }
+        : reinstatable
+          ? { label: 'Reinstate', icon: Undo2, onClick: () => setDialog('reinstate') }
+          : null;
+
+  const canAssign = !closed && can('booking.assignRoom');
+  const canNote = can('booking.note');
+  const canConfirm = b.status === 'PENDING' && has('CONFIRMED') && can('booking.confirm') && primary?.label !== 'Confirm';
+  const canNoShow = has('NO_SHOW') && b.checkIn <= today && can('booking.noShow');
+  const canCancel = has('CANCELLED') && can('booking.cancel');
+  const hasMenu = canAssign || canNote || canConfirm || canNoShow || canCancel;
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      {/* Header with back button */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center">
-          <Button variant="outline" onClick={() => router.back()} className="mr-4">
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Bookings
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Booking #{booking.id.slice(0, 8)}</h1>
-            <div className="flex items-center mt-1">
-              <Badge className={`${getStatusColor(booking.status)} mr-2`}>
-                {booking.status.replace('_', ' ')}
-              </Badge>
-              <span className="text-sm text-gray-500">
-                Created on {new Date(booking.createdAt).toLocaleDateString()}
+    <div className={cn(FRAME, 'space-y-6')}>
+      <BackLink />
+
+      {/* Header: who, the code, where it stands, and what to do next */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-4">
+          <Avatar name={b.guest.name} size="lg" />
+          <div className="min-w-0">
+            <h1 className="truncate text-2xl font-semibold tracking-tight sm:text-3xl">{b.guest.name}</h1>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void copy(b.code, 'Couldn’t copy — select the code instead.')}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border bg-surface-sunken px-2 font-mono text-xs tracking-wider transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label={`Confirmation code ${b.code}. Copy`}
+              >
+                {b.code}
+                {copied ? <Check className="size-3.5 text-success" aria-hidden /> : <Copy className="size-3.5 text-muted-foreground" aria-hidden />}
+              </button>
+              <span role="status" aria-live="polite" className="sr-only">
+                {copied ? 'Code copied' : ''}
               </span>
+              <BookingStatusBadge status={b.status} />
+              {late && <Badge variant="warning">Late arrival</Badge>}
+              {overdue && <Badge variant="danger">Past check-out</Badge>}
             </div>
           </div>
         </div>
+        {(primary || hasMenu) && (
+          <div className="flex items-center gap-2" role="group" aria-label="Reservation actions">
+            {primary && (
+              <Button onClick={primary.onClick} loading={busy} className="flex-1 sm:flex-none">
+                <primary.icon aria-hidden /> {primary.label}
+              </Button>
+            )}
+            {hasMenu && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon" aria-label="More actions" title="More actions">
+                    <MoreHorizontal aria-hidden />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  {(canAssign || canNote || canConfirm) && (
+                    <DropdownMenuGroup>
+                      {canConfirm && (
+                        <DropdownMenuItem onSelect={() => transition(b, 'CONFIRMED')}>
+                          <Check aria-hidden /> Confirm reservation
+                        </DropdownMenuItem>
+                      )}
+                      {canAssign && (
+                        <DropdownMenuItem onSelect={() => setDialog('assign')}>
+                          <DoorOpen aria-hidden /> {b.room ? 'Move to another room' : 'Choose a room'}
+                        </DropdownMenuItem>
+                      )}
+                      {canNote && (
+                        <DropdownMenuItem onSelect={() => setDialog('note')}>
+                          <MessageSquarePlus aria-hidden /> Add a note
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuGroup>
+                  )}
+                  {(canNoShow || canCancel) && (
+                    <>
+                      {(canAssign || canNote || canConfirm) && <DropdownMenuSeparator />}
+                      <DropdownMenuLabel>Asks you to confirm</DropdownMenuLabel>
+                      {canNoShow && (
+                        <DropdownMenuItem destructive onSelect={() => setDialog('noshow')}>
+                          <UserX aria-hidden /> Mark as no-show…
+                        </DropdownMenuItem>
+                      )}
+                      {canCancel && (
+                        <DropdownMenuItem destructive onSelect={() => setDialog('cancel')}>
+                          <XCircle aria-hidden /> Cancel reservation…
+                        </DropdownMenuItem>
+                      )}
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main booking details */}
-        <div className="lg:col-span-2 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Booking Details</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid md:grid-cols-2 gap-6">
-                <div className="space-y-4">
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Property</p>
-                    <div className="flex items-center mt-1">
-                      <Building2 className="h-4 w-4 text-gray-400 mr-2" />
-                      <p className="font-medium">{booking.property.name}</p>
-                    </div>
-                    <p className="text-sm text-gray-500 mt-1">
-                      {booking.property.city}, {booking.property.state}
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Room Type</p>
-                    <p className="font-medium">{booking.roomType.name}</p>
-                    <p className="text-sm text-gray-500 mt-1">
-                      {booking.rooms} room{booking.rooms > 1 ? 's' : ''}, {booking.guests} guest{booking.guests > 1 ? 's' : ''}
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Total Price</p>
-                    <div className="flex items-center mt-1">
-                      <DollarSign className="h-4 w-4 text-gray-400 mr-1" />
-                      <p className="font-medium">${Number(booking.totalPrice).toFixed(2)}</p>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="space-y-4">
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Check-in / Check-out</p>
-                    <div className="flex items-center mt-1">
-                      <Calendar className="h-4 w-4 text-gray-400 mr-2" />
-                      <div>
-                        <p className="font-medium">{checkInDate}</p>
-                        <p className="text-sm text-gray-500 mt-1">to {checkOutDate} ({nights} night{nights > 1 ? 's' : ''})</p>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Guest</p>
-                    <div className="flex items-center mt-1">
-                      <User className="h-4 w-4 text-gray-400 mr-2" />
-                      <div>
-                        <p className="font-medium">{booking.user.firstName} {booking.user.lastName}</p>
-                        <p className="text-sm text-gray-500 mt-1">{booking.user.email}</p>
-                        {booking.user.phone && (
-                          <p className="text-sm text-gray-500">{booking.user.phone}</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <div className="space-y-6">
+          {/* Stay */}
+          <Card className="p-5 sm:p-6">
+            <SectionTitle action={<span className="truncate text-xs text-muted-foreground">{b.propertyName}</span>}>Stay</SectionTitle>
+            <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-2 rounded-xl border bg-surface-sunken/60 p-3 sm:gap-3 sm:p-4">
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground">Check-in</p>
+                <p className="whitespace-nowrap text-base font-semibold tabular sm:text-lg">{fmtDay(b.checkIn, 'weekday')}</p>
+                {today && <p className="text-xs text-muted-foreground">{fromToday(b.checkIn, today)}</p>}
+              </div>
+              <div className="flex flex-col items-center px-1 text-xs text-muted-foreground sm:px-2">
+                <span className="tabular">{formatNights(b.nights)}</span>
+                <div
+                  className="mt-1.5 h-1.5 w-12 overflow-hidden rounded-full bg-muted sm:w-20"
+                  role="progressbar"
+                  aria-label="Stay progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(stayProgress * 100)}
+                >
+                  <div className="h-full rounded-full bg-primary" style={{ width: `${stayProgress * 100}%` }} />
                 </div>
               </div>
-              
-              {booking.notes && (
-                <div className="mt-6 p-4 bg-gray-50 rounded-md">
-                  <p className="text-sm font-medium text-gray-500">Notes</p>
-                  <p className="mt-1">{booking.notes}</p>
-                </div>
-              )}
-              
-              {/* Payment Information */}
-              {booking.cardLast4 && (
-                <div className="mt-6 p-4 bg-blue-50 rounded-md">
-                  <div className="flex items-center justify-between mb-3">
-                    <p className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                      <CreditCard className="h-4 w-4" />
-                      Payment Information
-                    </p>
-                    {!paymentDetails && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={fetchPaymentDetails}
-                        disabled={loadingPayment}
-                      >
-                        {loadingPayment ? (
-                          <Loader2 className="h-4 w-4 animate-spin mr-1" />
-                        ) : (
-                          <Eye className="h-4 w-4 mr-1" />
-                        )}
-                        View Full Details
+              <div className="min-w-0 text-right">
+                <p className="text-xs text-muted-foreground">Check-out</p>
+                <p className="whitespace-nowrap text-base font-semibold tabular sm:text-lg">{fmtDay(b.checkOut, 'weekday')}</p>
+                {today && <p className="text-xs text-muted-foreground">{fromToday(b.checkOut, today)}</p>}
+              </div>
+            </div>
+            <dl className="mt-5 grid gap-4 sm:grid-cols-3">
+              <Fact icon={BedDouble} label="Room">
+                {b.room ? (
+                  <>
+                    Room {b.room.number}
+                    <span className="block font-normal text-muted-foreground">{b.roomType.name}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="block font-normal text-muted-foreground">{b.roomType.name} · not assigned</span>
+                    {canAssign && (
+                      <Button variant="link" className="mt-0.5 text-xs" onClick={() => setDialog('assign')}>
+                        Choose a room
                       </Button>
                     )}
-                  </div>
-                  
-                  <div className="grid md:grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-500">Card:</span>{' '}
-                      {paymentDetails ? (
-                        <span className="font-medium font-mono">
-                          {showFullCard ? paymentDetails.cardNumber : paymentDetails.maskedCardNumber}
-                          <button
-                            onClick={() => setShowFullCard(!showFullCard)}
-                            className="ml-2 text-blue-600 hover:text-blue-800"
-                          >
-                            {showFullCard ? <EyeOff className="h-3 w-3 inline" /> : <Eye className="h-3 w-3 inline" />}
-                          </button>
-                        </span>
-                      ) : (
-                        <span className="font-medium">{booking.cardBrand} •••• {booking.cardLast4}</span>
+                  </>
+                )}
+              </Fact>
+              <Fact icon={Users} label="Party">
+                {b.guests} guest{b.guests === 1 ? '' : 's'}
+                {b.rooms > 1 && ` · ${b.rooms} rooms`}
+              </Fact>
+              <Fact icon={CalendarClock} label="Booked">
+                <time dateTime={b.createdAt} title={new Date(b.createdAt).toLocaleString()}>
+                  {timeAgo(b.createdAt)}
+                </time>
+                {source && <span className="block font-normal text-muted-foreground">{source}</span>}
+              </Fact>
+            </dl>
+          </Card>
+
+          {/* Notes */}
+          <Card className="p-5 sm:p-6">
+            <SectionTitle
+              action={
+                canNote ? (
+                  <Button variant="ghost" size="sm" onClick={() => setDialog('note')}>
+                    <MessageSquarePlus aria-hidden /> Add note
+                  </Button>
+                ) : undefined
+              }
+            >
+              Notes and requests
+            </SectionTitle>
+            {notes.length === 0 ? (
+              <p className="mt-2 text-sm text-muted-foreground">No notes yet. Add preferences, special occasions or anything the next shift should know.</p>
+            ) : (
+              <ul className="mt-3 space-y-2">
+                {notes.map((n, i) => (
+                  <li key={i} className="flex gap-3 rounded-xl bg-muted/60 px-3 py-2.5">
+                    <MessageSquareText className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <div className="min-w-0">
+                      <p className="text-sm">{n.text}</p>
+                      {n.by && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {n.by}
+                          {n.day ? ` · ${fmtDay(n.day)}` : ''}
+                        </p>
                       )}
                     </div>
-                    <div>
-                      <span className="text-gray-500">Expires:</span>{' '}
-                      <span className="font-medium">
-                        {paymentDetails 
-                          ? `${paymentDetails.cardExpMonth?.toString().padStart(2, '0')}/${paymentDetails.cardExpYear}`
-                          : `${booking.cardExpMonth?.toString().padStart(2, '0')}/${booking.cardExpYear}`
-                        }
-                      </span>
-                    </div>
-                    {paymentDetails && (
-                      <div>
-                        <span className="text-gray-500">CVV:</span>{' '}
-                        <span className="font-medium font-mono">
-                          {showCvv ? paymentDetails.cardCvv : '•••'}
-                          <button
-                            onClick={() => setShowCvv(!showCvv)}
-                            className="ml-2 text-blue-600 hover:text-blue-800"
-                          >
-                            {showCvv ? <EyeOff className="h-3 w-3 inline" /> : <Eye className="h-3 w-3 inline" />}
-                          </button>
-                        </span>
-                      </div>
-                    )}
-                    <div>
-                      <span className="text-gray-500">Name:</span>{' '}
-                      <span className="font-medium">{paymentDetails?.billingName || booking.billingName}</span>
-                    </div>
-                    {(paymentDetails?.billingZip || booking.billingZip) && (
-                      <div>
-                        <span className="text-gray-500">Billing Zip:</span>{' '}
-                        <span className="font-medium">{paymentDetails?.billingZip || booking.billingZip}</span>
-                      </div>
-                    )}
-                  </div>
-                  
-                  {paymentDetails && (
-                    <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
-                      <strong>⚠️ Security Notice:</strong> Full card details are displayed for no-show charge purposes only. 
-                      Do not share or store these details outside this system.
-                    </div>
-                  )}
-                  
-                  <p className="text-xs text-gray-500 mt-3">
-                    {paymentDetails 
-                      ? 'Use these details to process no-show charges if needed.'
-                      : 'Card not charged - payment details held for reservation guarantee. Click "View Full Details" to see complete card info for no-show charges.'
-                    }
-                  </p>
-                </div>
-              )}
-            </CardContent>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Card>
 
-          {/* Status History */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Status History</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="relative">
-                <div className="absolute top-0 bottom-0 left-4 w-0.5 bg-gray-200" />
-                <div className="space-y-6 relative">
-                  {booking.statusHistory.map((history, index) => (
-                    <div key={history.id} className="flex gap-4">
-                      <div className="flex-none mt-0.5">
-                        <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                          <Clock className="h-4 w-4 text-blue-700" />
-                        </div>
-                      </div>
-                      <div className="flex-1">
-                        <div className="bg-white rounded-lg border p-4">
-                          <p className="font-medium">
-                            Status changed to{' '}
-                            <Badge className={getStatusColor(history.status)}>
-                              {history.status.replace('_', ' ')}
-                            </Badge>
-                          </p>
-                          <div className="mt-1 text-sm text-gray-500">
-                            {new Date(history.createdAt).toLocaleString()}
-                          </div>
-                          {history.notes && (
-                            <p className="mt-2 text-sm">{history.notes}</p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </CardContent>
+          {/* Timeline */}
+          <Card className="p-5 sm:p-6">
+            <SectionTitle>History</SectionTitle>
+            {timeline.length === 0 ? (
+              <p className="mt-2 text-sm text-muted-foreground">Nothing has happened yet. Check-ins, room moves and notes will show up here.</p>
+            ) : (
+              <ol className="relative mt-4 space-y-4 border-l pl-5">
+                {timeline.map((t) => (
+                  <li key={t.id} className="relative">
+                    <span
+                      className={cn('absolute -left-[25px] top-1.5 size-2.5 rounded-full ring-4 ring-card', t.agent ? 'bg-agent' : 'bg-primary/70')}
+                      aria-hidden
+                    />
+                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                      {t.title}
+                      {t.agent && <SourceBadge source="agent" />}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      <time dateTime={t.at} title={new Date(t.at).toLocaleString()}>
+                        {timeAgo(t.at)}
+                      </time>
+                      {t.detail ? ` · ${t.detail}` : ''}
+                    </p>
+                  </li>
+                ))}
+              </ol>
+            )}
           </Card>
         </div>
 
-        {/* Actions sidebar */}
         <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Actions</CardTitle>
-              <CardDescription>Manage this booking</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Status update form */}
-              <div>
-                <label htmlFor="notes" className="block text-sm font-medium text-gray-700 mb-1">
-                  Notes (optional)
-                </label>
-                <textarea
-                  id="notes"
-                  rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Add notes about this status change"
-                  value={statusNotes}
-                  onChange={(e) => setStatusNotes(e.target.value)}
-                />
-              </div>
-              
-              {/* Status update buttons */}
-              <div className="space-y-2">
-                {booking.status !== 'CONFIRMED' && (
-                  <Button 
-                    className="w-full bg-green-600 hover:bg-green-700" 
-                    disabled={updating || booking.status === 'CANCELLED'}
-                    onClick={() => updateBookingStatus('CONFIRMED')}
+          {/* Guest */}
+          <Card className="p-5 sm:p-6">
+            <SectionTitle>Guest</SectionTitle>
+            <ul className="-mx-2 mt-2 space-y-0.5">
+              <li>
+                <a
+                  href={`mailto:${b.guest.email}`}
+                  className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Mail className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                  <span className="sr-only">Email </span>
+                  <span className="truncate">{b.guest.email}</span>
+                </a>
+              </li>
+              <li>
+                {b.guest.phone ? (
+                  <a
+                    href={telHref(b.guest.phone)}
+                    className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-sm tabular transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    {updating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                    Confirm Booking
-                  </Button>
+                    <Phone className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <span className="sr-only">Call </span>
+                    {formatPhone(b.guest.phone)}
+                  </a>
+                ) : (
+                  <p className="flex min-h-10 items-center gap-2.5 px-2 text-sm text-muted-foreground">
+                    <Phone className="size-4 shrink-0" aria-hidden /> No phone number on file
+                  </p>
                 )}
-                
-                {booking.status === 'CONFIRMED' && (
-                  <Button 
-                    className="w-full bg-blue-600 hover:bg-blue-700" 
-                    disabled={updating}
-                    onClick={() => updateBookingStatus('CHECKED_IN')}
-                  >
-                    {updating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                    Check-In Guest
-                  </Button>
-                )}
-                
-                {booking.status === 'CHECKED_IN' && (
-                  <Button 
-                    className="w-full bg-purple-600 hover:bg-purple-700" 
-                    disabled={updating}
-                    onClick={() => updateBookingStatus('CHECKED_OUT')}
-                  >
-                    {updating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                    Check-Out Guest
-                  </Button>
-                )}
-                
-                {isBookingActive && (
-                  <Button 
-                    className="w-full bg-red-600 hover:bg-red-700" 
-                    disabled={updating}
-                    onClick={() => updateBookingStatus('CANCELLED')}
-                  >
-                    {updating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                    Cancel Booking
-                  </Button>
-                )}
-                
-                {booking.status === 'CANCELLED' && isBookingActive && (
-                  <Button 
-                    className="w-full" 
-                    disabled={updating}
-                    onClick={() => updateBookingStatus('CONFIRMED')}
-                  >
-                    {updating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                    Restore Booking
-                  </Button>
-                )}
-                
-                {booking.status === 'CONFIRMED' && (
-                  <Button 
-                    className="w-full bg-yellow-600 hover:bg-yellow-700" 
-                    disabled={updating}
-                    onClick={() => updateBookingStatus('NO_SHOW')}
-                  >
-                    {updating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                    Mark as No-Show
-                  </Button>
-                )}
-              </div>
-            </CardContent>
+              </li>
+            </ul>
           </Card>
+
+          {/* Payment */}
+          <Card className="p-5 sm:p-6">
+            <SectionTitle action={<PaymentBadge status={b.paymentStatus} />}>Payment</SectionTitle>
+            <p className="mt-3 text-3xl font-semibold tracking-tight tabular">{formatMoney(b.totalPrice, 'USD', { cents: true })}</p>
+            <p className="text-xs text-muted-foreground">
+              {formatMoney(nightly, 'USD', { cents: true })} average a night · {formatNights(b.nights)}
+              {b.rooms > 1 ? ` × ${b.rooms} rooms` : ''}
+            </p>
+            {payment && (payment.cardLast4 || payment.stripeCheckoutSessionId) && (
+              <p className="mt-4 flex items-center gap-2 rounded-lg bg-muted/60 px-3 py-2 text-sm">
+                <CreditCard className="size-4 text-muted-foreground" aria-hidden />
+                {payment.cardLast4 ? `${payment.cardBrand ?? 'Card'} ending ${payment.cardLast4}` : 'Paid online by card'}
+              </p>
+            )}
+            {b.paymentStatus !== 'PAID' && b.status !== 'CANCELLED' && b.status !== 'NO_SHOW' && (
+              <p className="mt-4 text-sm text-muted-foreground">The balance is collected at the property, on arrival.</p>
+            )}
+          </Card>
+
+          {/* Agent (AI feature) */}
+          {can('agent.use') && !closed && (
+            <Card className="relative overflow-hidden p-5 sm:p-6">
+              <div className="bg-aurora pointer-events-none absolute inset-0 opacity-[0.06]" aria-hidden />
+              <div className="relative">
+                <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
+                  <Sparkles className="size-4 text-agent" aria-hidden /> Ask the agent
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">One tap sends it; you confirm before anything changes.</p>
+                <ul className="mt-3 space-y-1.5">
+                  {[
+                    b.status === 'CHECKED_IN' ? null : { cmd: `Best room for ${b.guest.name}`, label: `Find the best room for ${b.guest.name.split(' ')[0]}` },
+                    b.status === 'CHECKED_IN'
+                      ? { cmd: `Check out ${b.guest.name}`, label: `Check out ${b.guest.name.split(' ')[0]}` }
+                      : { cmd: `Check in ${b.guest.name}, quiet room on a high floor`, label: 'Check in to a quiet room on a high floor' },
+                    { cmd: `Add a note to ${b.guest.name}: `, label: 'Add a note…' },
+                  ]
+                    .filter((x): x is { cmd: string; label: string } => !!x)
+                    .map((s) => (
+                      <li key={s.cmd}>
+                        <Button
+                          variant="ghost"
+                          className="h-auto min-h-10 w-full justify-start whitespace-normal rounded-lg border border-agent/20 bg-card/70 px-3 py-2 text-left font-normal hover:border-agent/40 hover:bg-agent-soft/60"
+                          onClick={() => askAgent(s.cmd)}
+                        >
+                          <Sparkles className="text-agent" aria-hidden />
+                          {s.label}
+                        </Button>
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            </Card>
+          )}
         </div>
       </div>
+
+      <CheckInDialog booking={dialog === 'checkin' ? b : null} open={dialog === 'checkin'} onOpenChange={(o) => !o && setDialog(null)} />
+      <CheckOutDialog booking={dialog === 'checkout' ? b : null} open={dialog === 'checkout'} onOpenChange={(o) => !o && setDialog(null)} today={today} />
+      <NoteDialog booking={dialog === 'note' ? b : null} open={dialog === 'note'} onOpenChange={(o) => !o && setDialog(null)} />
+      <AssignRoomDialog booking={dialog === 'assign' ? b : null} open={dialog === 'assign'} onOpenChange={(o) => !o && setDialog(null)} />
+      <ConfirmDialog
+        open={dialog === 'noshow' || dialog === 'cancel' || dialog === 'reinstate'}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title={
+          dialog === 'reinstate'
+            ? `Reinstate ${b.guest.name}’s reservation?`
+            : dialog === 'noshow'
+              ? `Mark ${b.guest.name} as a no-show?`
+              : `Cancel ${b.guest.name}’s reservation?`
+        }
+        description={
+          dialog === 'reinstate'
+            ? 'It becomes confirmed again if the room type is still available for those nights.'
+            : 'The room is released back to sale. A manager can reinstate it later.'
+        }
+        confirmLabel={dialog === 'reinstate' ? 'Reinstate' : dialog === 'noshow' ? 'Mark no-show' : 'Cancel reservation'}
+        destructive={dialog !== 'reinstate'}
+        loading={busy}
+        onConfirm={async () => {
+          const to: BookingStatus = dialog === 'reinstate' ? 'CONFIRMED' : dialog === 'noshow' ? 'NO_SHOW' : 'CANCELLED';
+          const r = await transition(b, to);
+          if (r) setDialog(null);
+        }}
+      />
     </div>
   );
 }

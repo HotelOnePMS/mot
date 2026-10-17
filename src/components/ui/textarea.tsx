@@ -1,20 +1,22 @@
+"use client"
+
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { inputBase } from "@/components/ui/input"
+import { useFieldControl } from "@/components/ui/field-context"
 
-export type TextareaProps = 
-  React.TextareaHTMLAttributes<HTMLTextAreaElement>
+export type TextareaProps = React.TextareaHTMLAttributes<HTMLTextAreaElement>
 
 const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
   ({ className, ...props }, ref) => {
+    const a11y = useFieldControl(props)
     return (
       <textarea
-        className={cn(
-          "flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
-          className
-        )}
+        className={cn(inputBase, "min-h-[88px] py-2.5 leading-relaxed", className)}
         ref={ref}
         {...props}
+        {...a11y}
       />
     )
   }

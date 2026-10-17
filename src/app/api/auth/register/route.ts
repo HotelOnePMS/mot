@@ -1,58 +1,35 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
+import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
+import { isDemoEmail } from '@/config/product';
+import { conflict } from '@/server/errors';
+import { handleRoute, json, parseJson } from '@/server/http';
 
-export async function POST(request: NextRequest) {
-  try {
-    const { firstName, lastName, email, phone, password } = await request.json();
+const schema = z.object({
+  firstName: z.string().trim().min(1, 'is required').max(60),
+  lastName: z.string().trim().min(1, 'is required').max(60),
+  email: z.string().trim().toLowerCase().email('must be a valid email').refine((v) => !isDemoEmail(v), 'belongs to the public demo — use your own email'),
+  phone: z.string().trim().max(40).optional().nullable(),
+  password: z.string().min(8, 'must be at least 8 characters').max(200),
+});
 
-    // Validate required fields
-    if (!firstName || !lastName || !email || !password) {
-      return NextResponse.json(
-        { message: 'Missing required fields' },
-        { status: 400 }
-      );
-    }
-
-    // Check if user already exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (existingUser) {
-      return NextResponse.json(
-        { message: 'User already exists with this email' },
-        { status: 400 }
-      );
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    // Create user
-    const user = await prisma.user.create({
-      data: {
-        firstName,
-        lastName,
-        email,
-        phone,
-        password: hashedPassword,
-        role: 'CUSTOMER',
-      },
-    });
-
-    // Remove password from response
-    const { password: _, ...userWithoutPassword } = user;
-
-    return NextResponse.json(
-      { message: 'User created successfully', user: userWithoutPassword },
-      { status: 201 }
-    );
-  } catch (error) {
-    console.error('Registration error:', error);
-    return NextResponse.json(
-      { message: 'Internal server error' },
-      { status: 500 }
-    );
+/** POST — create a guest account. Staff accounts are created by their hotel. */
+export const POST = handleRoute(async (request: NextRequest) => {
+  const body = await parseJson(request, schema);
+  if (await prisma.user.findUnique({ where: { email: body.email }, select: { id: true } })) {
+    throw conflict('An account with this email already exists — sign in instead.');
   }
-}
+  const user = await prisma.user.create({
+    data: {
+      firstName: body.firstName,
+      lastName: body.lastName,
+      email: body.email,
+      phone: body.phone || null,
+      password: await bcrypt.hash(body.password, 12),
+      role: 'CUSTOMER',
+    },
+    select: { id: true, email: true, firstName: true, lastName: true },
+  });
+  return json({ message: 'Account created', user }, { status: 201 });
+});

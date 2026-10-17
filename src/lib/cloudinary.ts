@@ -1,6 +1,4 @@
-import { writeFile, unlink, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
-import path from 'path';
+import { put, del } from '@vercel/blob';
 import { randomUUID } from 'crypto';
 
 export interface UploadResult {
@@ -9,62 +7,64 @@ export interface UploadResult {
 }
 
 /**
- * Upload an image to local storage
- * @param file - Base64 encoded image data
- * @param folder - Folder to upload to (e.g., 'properties' or 'room-types')
- * @returns Upload result with URL and public ID
+ * Returns true when blob storage is configured (BLOB_READ_WRITE_TOKEN set).
+ * The app must keep working when it is absent — uploads are then disabled
+ * with a clear admin-facing message instead of crashing.
  */
-export async function uploadImage(file: string, folder: string = 'properties'): Promise<UploadResult> {
-  try {
-    // Extract the base64 data and file type
-    const matches = file.match(/^data:image\/(\w+);base64,(.+)$/);
-    if (!matches) {
-      throw new Error('Invalid image data format');
-    }
-
-    const extension = matches[1] === 'jpeg' ? 'jpg' : matches[1];
-    const base64Data = matches[2];
-    const buffer = Buffer.from(base64Data, 'base64');
-
-    // Create unique filename
-    const filename = `${randomUUID()}.${extension}`;
-    const publicId = `${folder}/${filename}`;
-    
-    // Ensure upload directory exists
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads', folder);
-    if (!existsSync(uploadDir)) {
-      await mkdir(uploadDir, { recursive: true });
-    }
-
-    // Write file to disk
-    const filePath = path.join(uploadDir, filename);
-    await writeFile(filePath, buffer);
-
-    // Return the public URL
-    const url = `/uploads/${folder}/${filename}`;
-
-    return {
-      url,
-      publicId,
-    };
-  } catch (error) {
-    console.error('Error uploading image:', error);
-    throw new Error('Failed to upload image');
-  }
+export function isBlobConfigured(): boolean {
+  return !!process.env.BLOB_READ_WRITE_TOKEN;
 }
 
 /**
- * Delete an image from local storage
- * @param publicId - The public ID of the image to delete
+ * Upload an image to Vercel Blob storage.
+ * @param file - Base64 encoded image data (data:image/...;base64,...)
+ * @param folder - Folder prefix (e.g., 'properties' or 'room-types')
+ */
+export async function uploadImage(file: string, folder: string = 'properties'): Promise<UploadResult> {
+  if (!isBlobConfigured()) {
+    throw new Error(
+      'Image uploads are disabled: BLOB_READ_WRITE_TOKEN is not configured. ' +
+      'Connect a Vercel Blob store to enable uploads.'
+    );
+  }
+
+  const matches = file.match(/^data:image\/(\w+);base64,(.+)$/);
+  if (!matches) {
+    throw new Error('Invalid image data format');
+  }
+
+  const extension = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+  const buffer = Buffer.from(matches[2], 'base64');
+  const filename = `${folder}/${randomUUID()}.${extension}`;
+
+  const blob = await put(filename, buffer, {
+    access: 'public',
+    contentType: `image/${matches[1]}`,
+  });
+
+  return {
+    url: blob.url,
+    publicId: blob.pathname,
+  };
+}
+
+/**
+ * Delete an image from Vercel Blob storage. No-op when storage is not configured.
+ * @param publicId - Blob pathname (or legacy local path — those are simply skipped)
  */
 export async function deleteImage(publicId: string): Promise<void> {
+  if (!isBlobConfigured()) {
+    console.warn('deleteImage: blob storage not configured, skipping delete of', publicId);
+    return;
+  }
+  // Legacy local-disk publicIds (e.g. "properties/uuid.jpg") are not valid blob URLs —
+  // only attempt deletion for values that look like blob pathnames/URLs.
+  if (!publicId || publicId.startsWith('/uploads/')) {
+    return;
+  }
   try {
-    const filePath = path.join(process.cwd(), 'public', 'uploads', publicId);
-    if (existsSync(filePath)) {
-      await unlink(filePath);
-    }
+    await del(publicId);
   } catch (error) {
-    console.error('Error deleting image:', error);
-    throw new Error('Failed to delete image');
+    console.error('Error deleting image from blob storage:', error);
   }
 }

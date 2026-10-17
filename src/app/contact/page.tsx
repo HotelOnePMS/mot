@@ -1,275 +1,155 @@
 'use client';
 
-import { useState } from 'react';
+import * as React from 'react';
+import Link from 'next/link';
+import { ArrowRight, CircleCheck, Mail, MonitorPlay, Rocket, Send } from 'lucide-react';
 import Navigation from '@/components/Navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Field } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Mail, Phone, MapPin, Clock, Send } from 'lucide-react';
+import { SiteFooter } from '@/components/guest/SiteFooter';
+import { PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL } from '@/config/product';
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+type FormState = { name: string; hotel: string; email: string; message: string };
+type Errors = Partial<Record<keyof FormState, string>>;
+
+const WAYS = [
+  { icon: Mail, title: 'Email us', text: PRODUCT_SUPPORT_EMAIL, href: `mailto:${PRODUCT_SUPPORT_EMAIL}` },
+  { icon: Rocket, title: 'Prefer to just try it?', text: 'Set up your hotel in a few minutes', href: '/onboarding' },
+  { icon: MonitorPlay, title: 'See it working', text: 'Open the live demo with one-click logins', href: '/login' },
+];
+
+function validate(form: FormState): Errors {
+  const e: Errors = {};
+  if (!form.name.trim()) e.name = 'Tell us your name.';
+  if (!form.email.trim()) e.email = 'Enter the email we should reply to.';
+  else if (!EMAIL_RE.test(form.email.trim())) e.email = 'Enter an email address like name@example.com.';
+  if (!form.message.trim()) e.message = 'Write a short message so we know how to help.';
+  return e;
+}
 
 export default function ContactPage() {
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    subject: '',
-    message: ''
+  const [form, setForm] = React.useState<FormState>({ name: '', hotel: '', email: '', message: '' });
+  const [errors, setErrors] = React.useState<Errors>({});
+  const [opened, setOpened] = React.useState(false);
+  const refs = React.useRef<Partial<Record<keyof FormState, HTMLInputElement | HTMLTextAreaElement | null>>>({});
+
+  const set = (k: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setForm((f) => ({ ...f, [k]: value }));
+    if (errors[k]) setErrors((x) => ({ ...x, [k]: undefined }));
+  };
+
+  const a11y = (k: keyof FormState) => ({
+    ref: (el: HTMLInputElement | HTMLTextAreaElement | null) => {
+      refs.current[k] = el;
+    },
+    value: form[k],
+    onChange: set(k),
   });
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setIsSubmitting(true);
-    
-    // Simulate form submission
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    alert('Thank you for your message! We\'ll get back to you soon.');
-    setFormData({ name: '', email: '', subject: '', message: '' });
-    setIsSubmitting(false);
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
-  };
+    const found = validate(form);
+    setErrors(found);
+    const first = (['name', 'email', 'message'] as const).find((k) => found[k]);
+    if (first) {
+      refs.current[first]?.focus();
+      return;
+    }
+    const subject = `${PRODUCT_NAME} — ${form.hotel.trim() || form.name.trim()}`;
+    const body = `${form.message.trim()}\n\n— ${form.name.trim()}${form.hotel.trim() ? `, ${form.hotel.trim()}` : ''}\n${form.email.trim()}`;
+    window.location.href = `mailto:${PRODUCT_SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    setOpened(true);
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
-      <Navigation />
-      
-      {/* Hero Section */}
-      <section className="bg-gradient-to-r from-blue-600 to-blue-800 text-white py-20">
-        <div className="container mx-auto px-4">
-          <div className="max-w-4xl mx-auto text-center">
-            <h1 className="text-5xl md:text-6xl font-bold mb-6">
-              Contact Us
-            </h1>
-            <p className="text-xl md:text-2xl text-blue-100">
-              We&apos;re here to help! Get in touch with any questions or concerns.
+    <div className="relative flex min-h-dvh flex-col overflow-x-clip bg-background">
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 h-[480px] bg-[radial-gradient(ellipse_at_20%_0%,hsl(var(--primary)/0.10),transparent_60%)]"
+        aria-hidden
+      />
+      <Navigation variant="marketing" />
+      <main id="main" className="relative flex-1">
+        <div className="relative mx-auto grid max-w-6xl gap-12 px-4 py-12 sm:px-6 sm:py-16 lg:grid-cols-[1fr_1.1fr] lg:gap-16 lg:py-20">
+          <div>
+            <p className="text-2xs font-semibold uppercase tracking-[0.18em] text-primary">Contact</p>
+            <h1 className="mt-3 font-display text-4xl font-medium tracking-tight sm:text-5xl">Talk to us</h1>
+            <p className="mt-4 max-w-md text-lg leading-relaxed text-muted-foreground">
+              Questions about switching, keeping your current system, or the AI phone agent? A person reads every message.
             </p>
+            <ul className="mt-10 space-y-3">
+              {WAYS.map((c) => (
+                <li key={c.title}>
+                  <Link
+                    href={c.href}
+                    className="group flex items-center gap-4 rounded-2xl border bg-card p-4 shadow-xs transition-[border-color,box-shadow] hover:border-primary/30 hover:shadow-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  >
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary-soft-foreground">
+                      <c.icon className="h-5 w-5" aria-hidden />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-medium">{c.title}</span>
+                      <span className="block break-words text-sm text-muted-foreground">{c.text}</span>
+                    </span>
+                    <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary motion-reduce:transition-none" aria-hidden />
+                  </Link>
+                </li>
+              ))}
+            </ul>
           </div>
-        </div>
-      </section>
 
-      {/* Contact Content */}
-      <section className="py-20">
-        <div className="container mx-auto px-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 max-w-6xl mx-auto">
-            {/* Contact Information */}
-            <div>
-              <h2 className="text-3xl font-bold text-gray-900 mb-8">Get in Touch</h2>
-              
-              <div className="space-y-6">
-                <Card>
-                  <CardContent className="flex items-center space-x-4 p-6">
-                    <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                      <Phone className="h-6 w-6 text-blue-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-gray-900">Phone</h3>
-                      <p className="text-gray-600">1-800-MOTELS (668-3577)</p>
-                      <p className="text-sm text-gray-500">Available 24/7</p>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="flex items-center space-x-4 p-6">
-                    <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
-                      <Mail className="h-6 w-6 text-green-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-gray-900">Email</h3>
-                      <p className="text-gray-600">support@motelbooking.com</p>
-                      <p className="text-sm text-gray-500">We&apos;ll respond within 24 hours</p>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="flex items-center space-x-4 p-6">
-                    <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
-                      <MapPin className="h-6 w-6 text-purple-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-gray-900">Address</h3>
-                      <p className="text-gray-600">123 Hospitality Lane</p>
-                      <p className="text-gray-600">Suite 100, City, ST 12345</p>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="flex items-center space-x-4 p-6">
-                    <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center">
-                      <Clock className="h-6 w-6 text-orange-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-gray-900">Business Hours</h3>
-                      <p className="text-gray-600">Customer Support: 24/7</p>
-                      <p className="text-gray-600">Office: Mon-Fri 9AM-6PM EST</p>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            </div>
-
-            {/* Contact Form */}
-            <div>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Send us a Message</CardTitle>
-                  <CardDescription>
-                    Fill out the form below and we&apos;ll get back to you as soon as possible.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleSubmit} className="space-y-6">
-                    <div>
-                      <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
-                        Full Name
-                      </label>
-                      <Input
-                        id="name"
-                        name="name"
-                        type="text"
-                        required
-                        value={formData.name}
-                        onChange={handleChange}
-                        placeholder="Enter your full name"
-                      />
-                    </div>
-
-                    <div>
-                      <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                        Email Address
-                      </label>
-                      <Input
-                        id="email"
-                        name="email"
-                        type="email"
-                        required
-                        value={formData.email}
-                        onChange={handleChange}
-                        placeholder="Enter your email address"
-                      />
-                    </div>
-
-                    <div>
-                      <label htmlFor="subject" className="block text-sm font-medium text-gray-700 mb-2">
-                        Subject
-                      </label>
-                      <Input
-                        id="subject"
-                        name="subject"
-                        type="text"
-                        required
-                        value={formData.subject}
-                        onChange={handleChange}
-                        placeholder="What is this regarding?"
-                      />
-                    </div>
-
-                    <div>
-                      <label htmlFor="message" className="block text-sm font-medium text-gray-700 mb-2">
-                        Message
-                      </label>
-                      <Textarea
-                        id="message"
-                        name="message"
-                        required
-                        rows={5}
-                        value={formData.message}
-                        onChange={handleChange}
-                        placeholder="Please describe your question or concern..."
-                      />
-                    </div>
-
-                    <Button 
-                      type="submit" 
-                      className="w-full" 
-                      disabled={isSubmitting}
-                    >
-                      {isSubmitting ? (
-                        'Sending...'
-                      ) : (
-                        <>
-                          <Send className="h-4 w-4 mr-2" />
-                          Send Message
-                        </>
-                      )}
-                    </Button>
-                  </form>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* FAQ Section */}
-      <section className="bg-gray-50 py-20">
-        <div className="container mx-auto px-4">
-          <div className="max-w-4xl mx-auto">
-            <h2 className="text-3xl font-bold text-gray-900 text-center mb-12">
-              Frequently Asked Questions
+          <form onSubmit={onSubmit} noValidate aria-labelledby="contact-form-title" className="rounded-3xl border bg-card p-5 shadow-soft sm:p-8">
+            <h2 id="contact-form-title" className="font-display text-2xl font-medium tracking-tight">
+              Send us a message
             </h2>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">How do I cancel my booking?</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <CardDescription>
-                    You can cancel your booking through your account dashboard or by contacting our support team. 
-                    Cancellation policies vary by property.
-                  </CardDescription>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Is my payment information secure?</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <CardDescription>
-                    Yes, we use industry-standard encryption and security measures to protect all payment 
-                    information and personal data.
-                  </CardDescription>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Can I modify my reservation?</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <CardDescription>
-                    Most reservations can be modified through your account or by contacting the property directly. 
-                    Some restrictions may apply.
-                  </CardDescription>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">What if I need help during my stay?</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <CardDescription>
-                    Our 24/7 customer support team is always available to help with any issues during your stay. 
-                    You can also contact the property directly.
-                  </CardDescription>
-                </CardContent>
-              </Card>
+            <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              <Field htmlFor="c-name" label="Your name" error={errors.name}>
+                <Input id="c-name" required autoComplete="name" className="h-11 text-base md:text-sm" {...a11y('name')} />
+              </Field>
+              <Field htmlFor="c-hotel" label="Hotel (optional)">
+                <Input id="c-hotel" autoComplete="organization" className="h-11 text-base md:text-sm" {...a11y('hotel')} />
+              </Field>
+              <Field htmlFor="c-email" label="Email" error={errors.email} className="sm:col-span-2">
+                <Input id="c-email" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} required autoComplete="email" className="h-11 text-base md:text-sm" {...a11y('email')} />
+              </Field>
+              <Field htmlFor="c-message" label="How can we help?" error={errors.message} className="sm:col-span-2">
+                <Textarea
+                  id="c-message"
+                  rows={6}
+                  required
+                  placeholder="We run a 30-room motel on Cloudbeds and want to try the phone agent…"
+                  className="text-base md:text-sm"
+                  {...a11y('message')}
+                />
+              </Field>
             </div>
-          </div>
+            <Button type="submit" size="lg" className="mt-6 w-full">
+              <Send className="h-4 w-4" aria-hidden /> Write the email
+            </Button>
+            <div role="status" aria-live="polite" className="mt-3">
+              {opened ? (
+                <p className="flex items-start gap-2 rounded-xl bg-success-soft px-3.5 py-3 text-sm text-success-soft-foreground">
+                  <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                  <span>
+                    Your email app should now be open with the message ready to send. Nothing opened? Email us at{' '}
+                    <a href={`mailto:${PRODUCT_SUPPORT_EMAIL}`} className="font-medium underline underline-offset-2">
+                      {PRODUCT_SUPPORT_EMAIL}
+                    </a>
+                    .
+                  </span>
+                </p>
+              ) : (
+                <p className="text-center text-xs text-muted-foreground">Opens your email app with this message ready to send to {PRODUCT_SUPPORT_EMAIL}.</p>
+              )}
+            </div>
+          </form>
         </div>
-      </section>
+      </main>
+      <SiteFooter />
     </div>
   );
 }

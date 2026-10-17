@@ -1,275 +1,295 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import * as React from 'react';
+import Link from 'next/link';
+import useSWR from 'swr';
+import { toast } from 'sonner';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { BedDouble, ChevronRight, EyeOff, Plus, Tag, TriangleAlert, Users } from 'lucide-react';
+import { api, fetcher } from '@/lib/fetcher';
+import { formatMoney } from '@/lib/format';
+import { ROOM_STATUS, formatNumber } from '@/lib/status';
+import { parseRoomNumbers } from '@/lib/rooms';
+import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { Bed, Users, Edit, Trash2, Plus, Search, DollarSign, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { EmptyState, PageHeader, Skeleton } from '@/components/ui/primitives';
+import { SmartImage } from '@/components/ui/smart-image';
+import { useConsole, usePropertyUrl } from '@/components/console/ConsoleProvider';
 
-type Property = {
-  id: string;
-  name: string;
-};
-
-type RoomType = {
+interface RoomTypeRow {
   id: string;
   name: string;
   description: string | null;
   capacity: number;
-  basePrice: number;
+  basePrice: number | string;
   totalRooms: number;
   amenities: string[];
   isActive: boolean;
-  property: {
-    id: string;
-    name: string;
-  };
-  _count?: {
-    bookings: number;
-  };
+  photos: { url: string }[];
+  _count: { bookings: number; rooms: number };
+}
+interface RoomRow {
+  id: string;
+  roomNumber: string;
+  floor: string | null;
+  roomTypeId: string;
+  status: 'CLEAN' | 'DIRTY' | 'INSPECTED' | 'OUT_OF_ORDER';
+  isOutOfOrder: boolean;
+}
+
+const FRAME = 'mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8';
+
+// Same tones as the room status badges elsewhere.
+const DOT: Record<RoomRow['status'], string> = {
+  CLEAN: 'bg-success',
+  INSPECTED: 'bg-info',
+  DIRTY: 'bg-warning',
+  OUT_OF_ORDER: 'bg-destructive',
 };
 
-export default function AdminRoomTypesPage() {
-  const router = useRouter();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [properties, setProperties] = useState<Property[]>([]);
-  const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [selectedPropertyId, setSelectedPropertyId] = useState('');
+function Legend() {
+  return (
+    <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" aria-label="Room status colors">
+      {(Object.keys(DOT) as RoomRow['status'][]).map((s) => (
+        <li key={s} className="inline-flex items-center gap-1.5">
+          <span className={cn('size-2 rounded-full', DOT[s])} aria-hidden />
+          {ROOM_STATUS[s].label}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
-  useEffect(() => {
-    const fetchProperties = async () => {
-      try {
-        const response = await fetch('/api/admin/properties');
-        if (!response.ok) {
-          throw new Error(`Failed to fetch properties: ${response.status}`);
-        }
-        const data = await response.json();
-        setProperties(data);
-      } catch (err) {
-        console.error('Error fetching properties:', err);
-        setError('Failed to load properties');
-      }
-    };
+function AddRooms({ roomType, propertyId, onDone }: { roomType: RoomTypeRow; propertyId: string; onDone: () => void }) {
+  const [open, setOpen] = React.useState(false);
+  const [text, setText] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const id = React.useId();
+  const parsed = text.trim() ? parseRoomNumbers(text) : null;
+  const error = parsed && 'error' in parsed ? parsed.error : null;
+  const numbers = parsed && 'numbers' in parsed ? parsed.numbers : [];
 
-    const fetchRoomTypes = async () => {
-      try {
-        setLoading(true);
-        console.log('Fetching room types...');
-        
-        // First try a non-auth test
-        const testResponse = await fetch('/api/admin/room-types', { method: 'HEAD' });
-        console.log('Test HEAD response:', testResponse.status, testResponse.ok);
-        if (testResponse.ok) {
-          console.log('HEAD test successful - endpoint is accessible');
-        } else {
-          console.log('Test response error - status:', testResponse.status);
-        }
-        
-        // Now try the actual GET request
-        const response = await fetch('/api/admin/room-types');
-        console.log('Room types response status:', response.status);
-        
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error('Response error text:', errorText);
-          throw new Error(`Failed to fetch room types: ${response.status} - ${errorText}`);
-        }
-        
-        const data = await response.json();
-        console.log('Room types data received:', data.length);
-        setRoomTypes(data);
-      } catch (err) {
-        console.error('Error fetching room types:', err);
-        setError('Failed to load room types');
-      } finally {
-        setLoading(false);
-      }
-    };
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (!numbers.length) return;
+    setBusy(true);
+    try {
+      await api('/api/admin/rooms', { method: 'POST', json: { propertyId, roomTypeId: roomType.id, roomNumbers: numbers } });
+      toast.success(`Added ${numbers.length} ${roomType.name} room${numbers.length > 1 ? 's' : ''}`);
+      setText('');
+      setOpen(false);
+      onDone();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
-    // Also test the auth API
-    const testAuth = async () => {
-      try {
-        const response = await fetch('/api/test-auth');
-        console.log('Auth test response status:', response.status);
-        if (response.ok) {
-          const data = await response.json();
-          console.log('Auth test data:', data);
-        } else {
-          console.log('Auth test error:', await response.text());
-        }
-      } catch (err) {
-        console.error('Auth test error:', err);
-      }
-    };
+  if (!open) {
+    return (
+      <Button variant="outline" size="sm" className="border-dashed px-2.5 text-muted-foreground hover:text-foreground" onClick={() => setOpen(true)} aria-label={`Add rooms to ${roomType.name}`}>
+        <Plus aria-hidden /> Add rooms
+      </Button>
+    );
+  }
+  return (
+    <form onSubmit={save} className="mt-2 w-full space-y-1.5">
+      <label htmlFor={id} className="text-sm font-medium">
+        Room numbers to add to {roomType.name}
+      </label>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          id={id}
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
+          placeholder="e.g. 101-110, 201, 203"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={`${id}-help`}
+          autoComplete="off"
+        />
+        <div className="flex gap-2">
+          <Button type="submit" loading={busy} loadingText="Adding…" disabled={!numbers.length}>
+            Add{numbers.length ? ` ${numbers.length}` : ''}
+          </Button>
+          <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+      <p id={`${id}-help`} className={cn('text-xs', error ? 'font-medium text-destructive' : 'text-muted-foreground')} aria-live="polite">
+        {error ?? (numbers.length ? `${numbers.slice(0, 12).join(', ')}${numbers.length > 12 ? ` … +${numbers.length - 12}` : ''} · floors are read from the number` : 'Ranges and lists both work.')}
+      </p>
+    </form>
+  );
+}
 
-    fetchProperties();
-    fetchRoomTypes();
-    testAuth();
-  }, []);
-
-  // Filter room types by property and search term
-  const filteredRoomTypes = roomTypes.filter(roomType => {
-    const matchesSearch = 
-      roomType.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      (roomType.description?.toLowerCase().includes(searchTerm.toLowerCase()) || false);
-    const matchesProperty = selectedPropertyId ? roomType.property.id === selectedPropertyId : true;
-    
-    return matchesSearch && matchesProperty;
-  });
+export default function RoomTypesPage() {
+  const { propertyId, property, can } = useConsole();
+  const reduce = useReducedMotion();
+  const typesUrl = usePropertyUrl('/api/admin/room-types');
+  const roomsUrl = usePropertyUrl('/api/admin/rooms');
+  const { data: types, isLoading, mutate } = useSWR<RoomTypeRow[]>(typesUrl, fetcher);
+  const { data: rooms, mutate: mutateRooms } = useSWR<RoomRow[]>(roomsUrl, fetcher);
+  const editable = can('inventory.write');
+  const byType = React.useMemo(() => {
+    const m = new Map<string, RoomRow[]>();
+    for (const r of rooms ?? []) m.set(r.roomTypeId, [...(m.get(r.roomTypeId) ?? []), r]);
+    return m;
+  }, [rooms]);
+  const totalRooms = (types ?? []).filter((t) => t.isActive).reduce((s, t) => s + t.totalRooms, 0);
+  // Voice-only hotels keep bookings in their own system: room counts and room numbers don't apply.
+  const voiceOnly = property?.setupPath === 'VOICE';
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Room Types</h1>
-          <p className="text-gray-600">Manage room types and configurations</p>
-        </div>
-        <Button 
-          className="flex items-center space-x-2"
-          onClick={() => router.push('/admin/room-types/add')}
-        >
-          <Plus className="h-4 w-4" />
-          <span>Add Room Type</span>
-        </Button>
-      </div>
+    <div className={FRAME}>
+      <div className="space-y-6">
+        <PageHeader
+          title="Rooms"
+          description={
+            types
+              ? voiceOnly
+                ? `${formatNumber(types.length)} room type${types.length === 1 ? '' : 's'} your voice front desk quotes`
+                : `${formatNumber(types.length)} room type${types.length === 1 ? '' : 's'} · ${formatNumber(totalRooms)} sellable room${totalRooms === 1 ? '' : 's'}${property ? ` at ${property.name}` : ''}`
+              : 'Loading rooms…'
+          }
+          actions={
+            editable ? (
+              <Button asChild>
+                <Link href="/admin/room-types/add">
+                  <Plus aria-hidden /> Add room type
+                </Link>
+              </Button>
+            ) : undefined
+          }
+        />
 
-      {/* Search and Filter */}
-      <div className="flex flex-col md:flex-row items-start md:items-center space-y-4 md:space-y-0 md:space-x-4">
-        <div className="relative flex-1 max-w-md w-full">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <Input
-            placeholder="Search room types..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 w-full"
-          />
-        </div>
-        
-        <div className="w-full md:w-auto">
-          <select
-            className="w-full md:w-64 p-2 border rounded-md"
-            value={selectedPropertyId}
-            onChange={(e) => setSelectedPropertyId(e.target.value)}
-          >
-            <option value="">All Properties</option>
-            {properties.map(property => (
-              <option key={property.id} value={property.id}>
-                {property.name}
-              </option>
+        {isLoading ? (
+          <div className="space-y-4" aria-busy>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-[180px] rounded-2xl" />
             ))}
-          </select>
-        </div>
-      </div>
-      
-      {/* Error display */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-md">
-          {error}
-        </div>
-      )}
-
-      {/* Loading state */}
-      {loading ? (
-        <div className="flex justify-center items-center h-64">
-          <div className="text-center">
-            <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-600 mb-4" />
-            <p className="text-gray-600">Loading room types...</p>
           </div>
-        </div>
-      ) : (
-        /* Room Types Grid */
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {filteredRoomTypes.map((roomType) => (
-            <Card key={roomType.id} className="hover:shadow-lg transition-shadow">
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-2">
-                      <Bed className="h-5 w-5 text-blue-600 flex-shrink-0" />
-                      <CardTitle className="text-lg">{roomType.name}</CardTitle>
-                    </div>
-                    <div className="mt-1 text-sm text-blue-600 font-medium">
-                      {roomType.property.name}
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <DollarSign className="h-4 w-4 text-green-600" />
-                    <span className="font-bold text-green-600">${Number(roomType.basePrice).toFixed(2)}/night</span>
-                  </div>
-                </div>
-                <CardDescription className="mt-2">{roomType.description || 'No description available'}</CardDescription>
-                <div className="mt-2">
-                  <Badge variant={roomType.isActive ? "default" : "secondary"}>
-                    {roomType.isActive ? 'Active' : 'Inactive'}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-3 gap-4 text-sm">
-                  <div className="text-center">
-                    <div className="flex items-center justify-center space-x-1">
-                      <Users className="h-4 w-4 text-gray-600" />
-                      <span className="font-semibold">{roomType.capacity}</span>
-                    </div>
-                    <span className="text-gray-600 text-xs">Max Guests</span>
-                  </div>
-                  <div className="text-center">
-                    <div className="font-semibold">{roomType.totalRooms}</div>
-                    <span className="text-gray-600 text-xs">Total Rooms</span>
-                  </div>
-                  <div className="text-center">
-                    <div className="font-semibold text-green-600">{roomType.totalRooms - (roomType._count?.bookings || 0)}</div>
-                    <span className="text-gray-600 text-xs">Available</span>
-                  </div>
-                </div>
-
-                {roomType.amenities.length > 0 && (
-                  <div>
-                    <h4 className="font-medium text-gray-900 mb-2">Amenities</h4>
-                    <div className="flex flex-wrap gap-1">
-                      {roomType.amenities.map((amenity, index) => (
-                        <Badge key={index} variant="secondary" className="text-xs">
-                          {amenity}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex space-x-2 pt-4">
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="flex-1"
-                    onClick={() => router.push(`/admin/room-types/${roomType.id}`)}
-                  >
-                    <Edit className="h-4 w-4 mr-2" />
-                    Edit
+        ) : !types?.length ? (
+          <Card>
+            <EmptyState
+              icon={BedDouble}
+              title="No room types yet"
+              description="Start with the kinds of rooms you sell — like “Ocean King” or “Family Suite” — then add the room numbers."
+              action={
+                editable ? (
+                  <Button asChild>
+                    <Link href="/admin/room-types/add">
+                      <Plus aria-hidden /> Add your first room type
+                    </Link>
                   </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+                ) : undefined
+              }
+            />
+          </Card>
+        ) : (
+          <>
+            {(rooms?.length ?? 0) > 0 && <Legend />}
+            <ul className="space-y-4">
+              <AnimatePresence initial={false}>
+                {types.map((t) => {
+                  const list = byType.get(t.id) ?? [];
+                  const gap = t.totalRooms - list.length;
+                  const photo = t.photos[0]?.url;
+                  return (
+                    <motion.li key={t.id} layout={!reduce} initial={reduce ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+                      <Card className="overflow-hidden p-0">
+                        <div className="flex flex-col sm:flex-row">
+                          {photo && (
+                            <Link href={`/admin/room-types/${t.id}`} className="relative block shrink-0 sm:w-56" tabIndex={-1} aria-hidden>
+                              <SmartImage src={photo} alt="" aspectRatio="16 / 10" sizes="(min-width: 640px) 224px, 100vw" className={cn('w-full sm:h-full', !t.isActive && 'opacity-60')} />
+                            </Link>
+                          )}
+                          <div className="flex min-w-0 flex-1 flex-col p-5">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <h2 className="flex flex-wrap items-center gap-2 text-lg font-semibold tracking-tight">
+                                  <Link href={`/admin/room-types/${t.id}`} className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                                    {t.name}
+                                  </Link>
+                                  {!t.isActive && (
+                                    <Badge variant="neutral" size="sm" icon={EyeOff}>
+                                      Hidden from sale
+                                    </Badge>
+                                  )}
+                                </h2>
+                                <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                                  <span className="flex items-center gap-1.5">
+                                    <Users className="size-4" aria-hidden /> Sleeps {t.capacity}
+                                  </span>
+                                  <span className="flex items-center gap-1.5">
+                                    <Tag className="size-4" aria-hidden /> {formatMoney(t.basePrice, 'USD', { cents: false })} a night
+                                  </span>
+                                  {!voiceOnly && (
+                                    <span className="flex items-center gap-1.5">
+                                      <BedDouble className="size-4" aria-hidden /> {formatNumber(t.totalRooms)} sellable
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <Button asChild variant="ghost" size="sm" className="shrink-0">
+                                <Link href={`/admin/room-types/${t.id}`} aria-label={`${editable ? 'Edit' : 'View'} ${t.name}`}>
+                                  {editable ? 'Edit' : 'View'} <ChevronRight aria-hidden />
+                                </Link>
+                              </Button>
+                            </div>
+                            {t.amenities.length > 0 && <p className="mt-2 line-clamp-1 text-sm text-muted-foreground">{t.amenities.join(' · ')}</p>}
 
-      {!loading && filteredRoomTypes.length === 0 && (
-        <div className="text-center py-12">
-          <Bed className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No room types found</h3>
-          <p className="text-gray-600">
-            {selectedPropertyId 
-              ? "No room types for the selected property. Try selecting a different property or creating new room types." 
-              : "Try adjusting your search terms or creating new room types."}
-          </p>
-        </div>
-      )}
-      
+                            {!voiceOnly && (
+                              <ul className="mt-4 flex flex-wrap items-center gap-1.5" aria-label={`${t.name} room numbers`}>
+                                {list.map((r) => {
+                                  const s = r.isOutOfOrder ? 'OUT_OF_ORDER' : r.status;
+                                  return (
+                                    <li key={r.id} className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-surface px-2 text-xs font-medium tabular" title={ROOM_STATUS[s].label}>
+                                      <span className={cn('size-2 rounded-full', DOT[s])} aria-hidden />
+                                      {r.roomNumber}
+                                      <span className="sr-only">, {ROOM_STATUS[s].label.toLowerCase()}</span>
+                                    </li>
+                                  );
+                                })}
+                                {can('room.manage') && propertyId && (
+                                  <li className="contents">
+                                    <AddRooms
+                                      roomType={t}
+                                      propertyId={propertyId}
+                                      onDone={() => {
+                                        void mutateRooms();
+                                        void mutate();
+                                      }}
+                                    />
+                                  </li>
+                                )}
+                              </ul>
+                            )}
+                            {gap > 0 && !voiceOnly && (
+                              <p className="mt-3 flex items-start gap-2 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning-soft-foreground">
+                                <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+                                {list.length === 0
+                                  ? `Add room numbers so guests can be given a room (${formatNumber(t.totalRooms)} to set up).`
+                                  : `${formatNumber(gap)} more sellable room${gap > 1 ? 's' : ''} than room numbers — add the rest so every guest can get a key.`}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </Card>
+                    </motion.li>
+                  );
+                })}
+              </AnimatePresence>
+            </ul>
+          </>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,36 +1,36 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  eslint: {
-    // Warning: This allows production builds to successfully complete even if
-    // your project has ESLint errors.
-    ignoreDuringBuilds: true,
-  },
-  typescript: {
-    // Warning: This allows production builds to successfully complete even if
-    // your project has type errors.
-    ignoreBuildErrors: true,
-  },
+  /* Build errors are NOT ignored — fix them instead of hiding them. */
   images: {
-    domains: ['res.cloudinary.com'], // If you're using Cloudinary for image hosting
+    remotePatterns: [
+      { protocol: 'https', hostname: 'images.unsplash.com' },
+      { protocol: 'https', hostname: 'res.cloudinary.com' },
+      { protocol: 'https', hostname: '**.public.blob.vercel-storage.com' },
+    ],
   },
-  // Required for NextAuth.js on a custom domain or hosting platform
+  // Older portal URLs now live inside the unified staff console.
+  async redirects() {
+    return [
+      { source: '/front-desk', destination: '/admin/front-desk', permanent: false },
+      { source: '/front-desk/:path*', destination: '/admin/front-desk', permanent: false },
+      { source: '/housekeeping', destination: '/admin/housekeeping', permanent: false },
+      { source: '/agent', destination: '/admin/agent', permanent: false },
+      { source: '/owner', destination: '/admin/dashboard', permanent: false },
+    ];
+  },
   async headers() {
     return [
       {
         source: "/:path*",
         headers: [
-          {
-            key: "Content-Security-Policy",
-            value: "frame-ancestors 'self'",
-          },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'self'" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(), geolocation=(), microphone=(self)" },
         ],
       },
     ];
-  },
-  env: {
-    NEXTAUTH_URL: process.env.NEXTAUTH_URL,
   },
 };
 

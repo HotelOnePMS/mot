@@ -1,1 +1,0 @@
-// Create a temporary file to check the entire component's structure
