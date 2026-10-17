@@ -9,7 +9,9 @@ import { PRODUCT_URL } from '@/config/product';
 import { consumeRateLimit, type RateLimitResult } from '../concierge';
 import { DomainError } from '../errors';
 import { errorResponse } from '../http';
+import { publicSiteUrl } from '../public-url';
 import { agentKeyFromRequest, type AgentKeyContext } from './keys';
+import { clientIp as sharedClientIp } from '../http';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -18,10 +20,8 @@ const HOUR = 60 * MINUTE;
 // Addresses
 // ---------------------------------------------------------------------------
 
-/** The caller's IP as the platform reports it (first X-Forwarded-For hop, else X-Real-IP). */
-export function clientIp(request: Request): string {
-  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('x-real-ip')?.trim() || 'unknown';
-}
+/** The caller's IP for rate limits (see clientIp in src/server/http.ts for which header is trusted). */
+export const clientIp = sharedClientIp;
 
 const isLoopbackHost = (host: string) => /^(localhost|127(?:\.\d{1,3}){3}|\[::1\]|::1)$/i.test(host.replace(/:\d+$/, '')) || host.toLowerCase().endsWith('.localhost');
 
@@ -70,12 +70,30 @@ export function originAllowed(request: Request): boolean {
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
   const own = requestOrigin(request);
-  if (parsed.origin === own || parsed.origin === new URL(request.url).origin) return true;
+  // "Our own origin" comes from configuration, never from the Host header: after DNS rebinding a
+  // hostile page sends a matching Host and Origin, which must not unlock a developer's local copy.
+  if (configuredOrigins().has(parsed.origin)) return true;
   const list = process.env.AGENT_API_ALLOWED_ORIGINS?.split(',').map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
   if (list?.length) return list.includes('*') || list.includes(parsed.origin);
   const local = isLoopbackHost(parsed.host);
   if (isLoopbackHost(new URL(own).host)) return local;
   return parsed.protocol === 'https:' || local;
+}
+
+/** Origins this deployment is configured to serve (product domain, public/site URL, Vercel URLs). */
+function configuredOrigins(): Set<string> {
+  const urls = [PRODUCT_URL, publicSiteUrl(), process.env.NEXT_PUBLIC_SITE_URL, process.env.NEXTAUTH_URL];
+  if (process.env.VERCEL_URL) urls.push(`https://${process.env.VERCEL_URL}`);
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) urls.push(`https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`);
+  const out = new Set<string>();
+  for (const u of urls) {
+    try {
+      if (u) out.add(new URL(u).origin);
+    } catch {
+      /* not a URL */
+    }
+  }
+  return out;
 }
 
 const ALLOW_HEADERS = 'Authorization, Content-Type, Accept, Mcp-Protocol-Version, Mcp-Session-Id, Last-Event-ID';

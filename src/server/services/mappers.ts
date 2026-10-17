@@ -23,7 +23,8 @@ export function toBookingSummary(b: BookingWithRelations): BookingSummary {
     guest: {
       id: b.user.id,
       name: `${b.user.firstName} ${b.user.lastName}`.trim(),
-      email: b.user.email,
+      // Direct bookings by API key belong to a per-booking guest record; show the contact email the integration sent.
+      email: b.guestEmail ?? b.user.email,
       phone: b.user.phone,
     },
     checkIn,

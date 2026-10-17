@@ -55,3 +55,19 @@ export function parseQuery<S extends ZodTypeAny>(request: Request, schema: S): Z
 }
 
 export const json = <T>(data: T, init?: ResponseInit) => NextResponse.json(data, init);
+
+/**
+ * The caller's IP for rate limits. Vercel sets x-vercel-forwarded-for and
+ * x-real-ip and overwrites X-Forwarded-For, so those can't be forged there.
+ * Elsewhere, the first X-Forwarded-For hop is whatever the client sent, so
+ * fall back to the LAST hop — the address the nearest proxy saw.
+ */
+export function clientIp(request: Request): string {
+  const h = request.headers;
+  const vercel = h.get('x-vercel-forwarded-for')?.split(',')[0]?.trim();
+  if (vercel) return vercel;
+  const real = h.get('x-real-ip')?.trim();
+  if (real) return real;
+  const hops = h.get('x-forwarded-for')?.split(',').map((s) => s.trim()).filter(Boolean) ?? [];
+  return hops[hops.length - 1] || 'unknown';
+}

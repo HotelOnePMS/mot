@@ -427,7 +427,7 @@ export async function confirmPlan(actor: Actor, token: string): Promise<ConfirmR
         ? 'Some changes didn’t go through'
         : bridged.length === plan.steps.length
           ? bridged.every((t) => t.mode === 'MCP')
-            ? `Sent to ${bridged[0].system}`
+            ? `Sent to ${bridged[0].system} — the result is below`
             : `Sent to ${bridged[0].system} — the operator is on it`
           : plan.steps.length === 1
             ? 'Done'

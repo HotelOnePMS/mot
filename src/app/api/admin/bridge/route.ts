@@ -5,6 +5,7 @@ import { requireStaff, requirePermission, resolvePropertyId } from '@/server/aut
 import { badRequest, notFound } from '@/server/errors';
 import { handleRoute, json, parseJson, parseQuery } from '@/server/http';
 import { recordAudit } from '@/server/services/audit';
+import { assertNotDemoHotel } from '@/server/demo';
 import { PMS_SYSTEMS, connectionView, getConnection, listTasks, taskView, upsertConnection } from '@/server/services/bridge';
 import { deleteCachedTools } from '@/server/pms';
 import { OPERATOR_MODEL, operatorConfigured } from '@/server/bridge/operator';
@@ -68,6 +69,10 @@ export const DELETE = handleRoute(async (request: NextRequest) => {
   const q = parseQuery(request, z.object({ propertyId: z.string().min(1) }));
   const propertyId = await resolvePropertyId(actor, q.propertyId);
   requirePermission(actor, 'bridge.manage');
+  const property = await prisma.property.findUnique({ where: { id: propertyId }, select: { isDemo: true } });
+  if (!property) throw notFound('Property');
+  // The shared demo hotels keep their PMS setup for every visitor.
+  assertNotDemoHotel(actor, property.isDemo, 'Demo hotels keep their PMS connection for every visitor. Set up your own hotel to try disconnecting.');
   const c = await getConnection(propertyId);
   if (!c) return json({ ok: true });
   await prisma.$transaction([

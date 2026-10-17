@@ -160,7 +160,7 @@ const SCHEMAS: Record<string, JsonSchema> = {
     nights: int(),
     guests: int(),
     rooms: int(),
-    bookingUrl: str('The guest’s booking page (they sign in with this email).', { format: 'uri' }),
+    manage: str('How the guest changes or cancels (through the hotel, with the confirmation code).'),
     confirmationEmailSent: { type: 'boolean' },
   }),
   FoundBooking: obj({

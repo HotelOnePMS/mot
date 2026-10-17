@@ -27,6 +27,7 @@ import {
   type VoiceScope,
 } from './live';
 import { conciergeVoiceAvailable } from './provider';
+import { clientIp } from '../http';
 
 const MINUTE = 60_000;
 const since = (ms: number) => ({ gte: new Date(Date.now() - ms) });
@@ -48,7 +49,6 @@ async function guestSkills(propertyId: string): Promise<string> {
 }
 
 /** The caller's IP as the edge saw it (rate-limit key only, hashed before it is stored). */
-const clientIp = (request: Request) => request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown';
 
 export interface VoiceSessionContext {
   audience: 'guest' | 'staff';

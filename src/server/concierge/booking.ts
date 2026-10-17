@@ -3,13 +3,12 @@
  * themselves), a request the hotel team confirms, a direct pay-at-hotel
  * booking for trusted API keys, and looking up an existing booking.
  */
-import { Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { prisma } from '@/lib/prisma';
-import { isDemoEmail } from '@/config/product';
 import { diffDays, toISODate } from '../dates';
-import { DomainError, badRequest, forbidden } from '../errors';
+import { DomainError, badRequest } from '../errors';
 import { isEmailConfigured, sendBookingConfirmation } from '../email';
-import { confirmationEmailAllowed, confirmPayAtProperty, createBooking as createSiteBooking } from '../services/bookings';
+import { confirmPayAtProperty, createBooking as createSiteBooking } from '../services/bookings';
 import { policyFor } from '../services/guest';
 import { CURRENCY } from './facts';
 import { findListedHotel } from './hotel';
@@ -98,8 +97,16 @@ const AGENT_REQUESTS_PER_HOTEL_HOUR = () => Number(process.env.CONCIERGE_MAX_REQ
 export async function requestBooking(input: RequestBookingInput): Promise<RequestBookingResult> {
   const a = conciergeSchemas.requestBooking.parse(input);
   const hotel = await findListedHotel(a.propertyId);
-  const recent = await prisma.guestRequest.count({ where: { propertyId: hotel.id, source: { in: ['AGENT', 'VOICE'] }, createdAt: { gte: new Date(Date.now() - 3600_000) } } });
+  const hourAgo = new Date(Date.now() - 3600_000);
+  // Each source has its own allowance, so assistants can't crowd out the hotel's own voice line (or the other way round).
+  const recent = await prisma.guestRequest.count({ where: { propertyId: hotel.id, source: a.source, createdAt: { gte: hourAgo } } });
   if (recent >= AGENT_REQUESTS_PER_HOTEL_HOUR()) throw new DomainError(429, 'RATE_LIMITED', `${hotel.name} has a lot of requests right now — try again later or send the guest a booking link instead.`);
+  // One guest doesn't need more than a couple of open requests an hour; this stops one caller filling the inbox.
+  const contact = [a.email ? { email: { equals: a.email.trim(), mode: 'insensitive' as const } } : null, a.phone ? { phone: a.phone.trim() } : null].filter((c) => c !== null);
+  if (contact.length) {
+    const same = await prisma.guestRequest.count({ where: { propertyId: hotel.id, createdAt: { gte: hourAgo }, OR: contact } });
+    if (same >= 2) throw new DomainError(429, 'RATE_LIMITED', `${hotel.name} already has a request from this guest — the team will be in touch. Send a booking link if they want to book straight away.`);
+  }
   const r = await submitBookingRequest(hotel.id, { ...a, email: a.email ?? null, phone: a.phone ?? null, notes: a.notes ?? null });
   if ('error' in r) throw badRequest(r.error);
   return r;
@@ -126,41 +133,40 @@ export interface CreateBookingResult {
   nights: number;
   guests: number;
   rooms: number;
-  /** The guest's booking page (they sign in with this email to see it). */
-  bookingUrl: string;
+  /** How the guest changes or cancels (they have no account here; through the hotel). */
+  manage: string;
   /** A confirmation email was handed to the mailer (false when email isn't configured or the hourly cap was hit). */
   confirmationEmailSent: boolean;
 }
 
+/** Email domain of per-booking guest records: the reserved .invalid TLD is never deliverable and never an account anyone signs in to. */
+export const INTEGRATION_GUEST_DOMAIN = 'guests.hotelone.invalid';
+/** Confirmation emails one address may receive from direct bookings per day, so a key can't be used to spam someone. */
+const CONFIRMATIONS_PER_RECIPIENT_DAY = 3;
+
 /**
- * The guest account a direct booking belongs to. Bookings need a user, so an
- * unknown email gets a CUSTOMER account with no password (like Google
- * sign-ups): nobody is signed in, and the account can't be used with a
- * password until one is set. Existing guest accounts are reused as they are
- * (name and phone unchanged). Demo logins, staff and inactive accounts are
- * refused with the same message, so this can't probe who works where.
+ * The guest record a direct booking belongs to: made for this booking alone
+ * from the details the integration sent, never an existing account. So a key
+ * can't read anyone's stored name or phone, can't put a booking into their
+ * account, and can't tell which emails have accounts or belong to staff —
+ * every email is handled the same way. The record can't sign in (no
+ * password, inactive, undeliverable address); the contact email the
+ * integration sent is kept on the booking (Booking.guestEmail).
  */
-async function guestUserFor(guest: { name: string; email: string; phone?: string | null }): Promise<{ id: string; email: string; firstName: string; lastName: string }> {
-  const refused = forbidden('That email can’t be used for this booking — use the guest’s own email address.');
-  if (isDemoEmail(guest.email)) throw refused;
-  const select = { id: true, email: true, firstName: true, lastName: true, role: true, isActive: true } as const;
-  const find = () => prisma.user.findFirst({ where: { email: { equals: guest.email, mode: 'insensitive' } }, select });
-  let user = await find();
-  if (!user) {
-    const [firstName, ...rest] = guest.name.trim().split(/\s+/);
-    try {
-      user = await prisma.user.create({
-        data: { email: guest.email, password: '', firstName, lastName: rest.join(' '), phone: guest.phone || null, role: 'CUSTOMER' },
-        select,
-      });
-    } catch (e) {
-      // Two bookings for a new email at once: use the account the other one made.
-      if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
-      user = await find();
-    }
-  }
-  if (!user || user.role !== 'CUSTOMER' || !user.isActive) throw refused;
-  return user;
+async function integrationGuest(guest: { name: string; email: string; phone?: string | null }): Promise<{ id: string }> {
+  const [firstName, ...rest] = guest.name.trim().split(/\s+/);
+  return prisma.user.create({
+    data: {
+      email: `guest-${randomUUID()}@${INTEGRATION_GUEST_DOMAIN}`,
+      password: '',
+      firstName,
+      lastName: rest.join(' '),
+      phone: guest.phone || null,
+      role: 'CUSTOMER',
+      isActive: false,
+    },
+    select: { id: true },
+  });
 }
 
 /**
@@ -169,18 +175,19 @@ async function guestUserFor(guest: { name: string; email: string; phone?: string
  * booking service (serializable transaction, live availability, server-side
  * price = the quote) and is confirmed instantly like pay-at-property bookings
  * on the site; the guest gets the usual confirmation email when email is
- * configured. See `guestUserFor` for how the guest account is found or made.
- * DomainError 400/404/409 (sold out) / 403 (email refused).
+ * configured (capped per recipient). The booking belongs to a guest record
+ * made for it alone (`integrationGuest`), never an existing account.
+ * DomainError 400/404/409 (sold out).
  */
 export async function createBooking(input: CreateBookingInput): Promise<CreateBookingResult> {
   const a = conciergeSchemas.createBooking.parse(input);
   const hotel = await findListedHotel(a.propertyId);
-  // Check the stay before making a guest account; the booking service re-checks inside its transaction.
+  // Check the stay before making the guest record; the booking service re-checks inside its transaction.
   const stay = await bookableStay(hotel.id, a, 'Stays are limited to 30 nights online.');
   if ('error' in stay) throw badRequest(stay.error);
-  const user = await guestUserFor(a.guest);
+  const guest = await integrationGuest(a.guest);
   const booking = await createSiteBooking({
-    userId: user.id,
+    userId: guest.id,
     propertyId: hotel.id,
     roomTypeId: a.roomTypeId,
     checkIn: a.checkIn,
@@ -191,14 +198,17 @@ export async function createBooking(input: CreateBookingInput): Promise<CreateBo
     paymentStatus: 'PAY_AT_PROPERTY',
     createdVia: `Booked by ${a.source} — pay at property`,
   });
+  const guestEmail = a.guest.email.trim().toLowerCase();
+  await prisma.booking.update({ where: { id: booking.id }, data: { guestEmail } });
   await confirmPayAtProperty(booking.id);
 
   const total = Number(booking.totalPrice);
-  const sendEmail = isEmailConfigured() && (await confirmationEmailAllowed(user.id));
+  const sentToday = await prisma.booking.count({ where: { guestEmail, createdAt: { gte: new Date(Date.now() - 24 * 3600_000) } } });
+  const sendEmail = isEmailConfigured() && sentToday <= CONFIRMATIONS_PER_RECIPIENT_DAY;
   if (sendEmail) {
     await sendBookingConfirmation({
-      to: user.email,
-      guestName: `${user.firstName} ${user.lastName}`.trim() || user.email,
+      to: guestEmail,
+      guestName: a.guest.name.trim(),
       propertyName: booking.property.name,
       roomTypeName: booking.roomType.name,
       checkIn: a.checkIn,
@@ -225,9 +235,14 @@ export async function createBooking(input: CreateBookingInput): Promise<CreateBo
     nights: diffDays(a.checkIn, a.checkOut),
     guests: a.guests,
     rooms: a.rooms,
-    bookingUrl: bookingPageUrl(booking.id),
+    manage: integrationManageNote((await prisma.property.findUnique({ where: { id: hotel.id }, select: { phone: true } }))?.phone),
     confirmationEmailSent: sendEmail,
   };
+}
+
+/** How the guest of a direct booking changes or cancels: they have no account here, so through the hotel. */
+function integrationManageNote(phone: string | null | undefined): string {
+  return `To change or cancel, the guest contacts the hotel${phone ? ` at ${phone}` : ''} with the confirmation code (free until 3 PM hotel time the day before arrival), or asks their assistant to look the booking up with the code and their last name.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +295,9 @@ export async function findBooking(input: FindBookingInput): Promise<FindBookingR
     guests: b.guests,
     rooms: b.rooms,
     freeChangesUntil: policy.passed ? null : policy.deadlineLabel,
-    manage: 'The guest can change dates or cancel from the link in their confirmation, or by signing in at the booking site.',
+    manage: b.guestEmail
+      ? integrationManageNote(b.property.phone)
+      : 'The guest can change dates or cancel by signing in at the booking site with the email they booked with.',
     bookingUrl: bookingPageUrl(b.id),
   };
 }

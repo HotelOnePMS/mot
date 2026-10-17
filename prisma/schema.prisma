@@ -165,6 +165,9 @@ model Booking {
   cardBrand     String?                // Visa, Mastercard, Amex, etc.
   billingName   String?
   billingZip    String?
+  /// Direct bookings by an integration's API key: the contact email it sent. Those bookings belong to a
+  /// guest record made for that booking alone, never to an existing account (see src/server/concierge).
+  guestEmail    String?
   createdAt     DateTime               @default(now())
   updatedAt     DateTime               @updatedAt
   statusHistory BookingStatusHistory[]
@@ -385,6 +388,7 @@ model VoiceSession {
 
   @@index([propertyId, startedAt])
   @@index([clientKey, startedAt])
+  @@index([channel, startedAt])
   @@map("voice_sessions")
 }
 

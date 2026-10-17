@@ -37,10 +37,11 @@ export async function consumeRateLimit(key: string, max: number, windowMs: numbe
   const clientKey = `rl:${createHash('sha256').update(key).digest('hex')}`;
   const now = new Date();
   const row = await prisma.voiceSession.create({
-    data: { propertyId: null, audience: 'SYSTEM', scope: 'GLOBAL', channel: RATE_LIMIT_CHANNEL, clientKey, startedAt: now, endedAt: now },
+    // endedAt = when this hit stops counting, so short windows (a minute) don't keep rows for a day.
+    data: { propertyId: null, audience: 'SYSTEM', scope: 'GLOBAL', channel: RATE_LIMIT_CHANNEL, clientKey, startedAt: now, endedAt: new Date(now.getTime() + window) },
     select: { id: true },
   });
-  if (Math.random() < 0.01) sweep();
+  if (Math.random() < 0.02) sweep();
   const since = new Date(now.getTime() - window);
   const hits = await prisma.voiceSession.count({ where: { clientKey, startedAt: { gte: since } } });
   if (hits <= max) return { limit: max, remaining: max - hits };
@@ -50,9 +51,10 @@ export async function consumeRateLimit(key: string, max: number, windowMs: numbe
   throw new DomainError(429, 'RATE_LIMITED', message, { retryAfterSeconds });
 }
 
-/** Drops hits older than the longest window. Best effort, never awaited. */
+/** Drops hits whose window has passed (endedAt is each hit's expiry; the (channel, startedAt) index bounds the scan). Best effort, never awaited. */
 function sweep() {
+  const now = new Date();
   prisma.voiceSession
-    .deleteMany({ where: { channel: RATE_LIMIT_CHANNEL, startedAt: { lt: new Date(Date.now() - MAX_WINDOW_MS) } } })
+    .deleteMany({ where: { channel: RATE_LIMIT_CHANNEL, startedAt: { lt: now }, OR: [{ endedAt: { lt: now } }, { startedAt: { lt: new Date(now.getTime() - MAX_WINDOW_MS) } }] } })
     .catch((e) => console.error('[concierge] rate-limit sweep failed', e));
 }

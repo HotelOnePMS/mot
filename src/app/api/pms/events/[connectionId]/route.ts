@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { EVENT_MAX_BYTES, EVENT_SIGNATURE_HEADER, EVENT_TIMESTAMP_HEADER, recordPmsEvent, verifyEventSignature } from '@/server/pms';
 import { floodGuard } from '@/server/pms/events';
+import { clientIp } from '@/server/http';
 
 type Params = { params: Promise<{ connectionId: string }> };
 
@@ -50,7 +51,7 @@ async function readCapped(request: NextRequest, max: number): Promise<Buffer | n
 export async function POST(request: NextRequest, { params }: Params) {
   const { connectionId } = await params;
   if (!/^[a-z0-9]{10,40}$/i.test(connectionId)) return reply(404, { error: 'Unknown connection.' });
-  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+  const ip = clientIp(request);
   if (!floodGuard(`pms-events:${connectionId}`, 240) || !floodGuard(`pms-events-ip:${ip}`, 600)) {
     return reply(429, { error: 'Too many events — slow down.' }, { 'Retry-After': '60' });
   }
