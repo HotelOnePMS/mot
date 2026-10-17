@@ -143,6 +143,8 @@ export default function RoomTypesPage() {
     return m;
   }, [rooms]);
   const totalRooms = (types ?? []).filter((t) => t.isActive).reduce((s, t) => s + t.totalRooms, 0);
+  // Voice-only hotels keep bookings in their own system: room counts and room numbers don't apply.
+  const voiceOnly = property?.setupPath === 'VOICE';
 
   return (
     <div className={FRAME}>
@@ -151,7 +153,9 @@ export default function RoomTypesPage() {
           title="Rooms"
           description={
             types
-              ? `${formatNumber(types.length)} room type${types.length === 1 ? '' : 's'} · ${formatNumber(totalRooms)} sellable room${totalRooms === 1 ? '' : 's'}${property ? ` at ${property.name}` : ''}`
+              ? voiceOnly
+                ? `${formatNumber(types.length)} room type${types.length === 1 ? '' : 's'} your voice front desk quotes`
+                : `${formatNumber(types.length)} room type${types.length === 1 ? '' : 's'} · ${formatNumber(totalRooms)} sellable room${totalRooms === 1 ? '' : 's'}${property ? ` at ${property.name}` : ''}`
               : 'Loading rooms…'
           }
           actions={
@@ -226,9 +230,11 @@ export default function RoomTypesPage() {
                                   <span className="flex items-center gap-1.5">
                                     <Tag className="size-4" aria-hidden /> {formatMoney(t.basePrice, 'USD', { cents: false })} a night
                                   </span>
-                                  <span className="flex items-center gap-1.5">
-                                    <BedDouble className="size-4" aria-hidden /> {formatNumber(t.totalRooms)} sellable
-                                  </span>
+                                  {!voiceOnly && (
+                                    <span className="flex items-center gap-1.5">
+                                      <BedDouble className="size-4" aria-hidden /> {formatNumber(t.totalRooms)} sellable
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                               <Button asChild variant="ghost" size="sm" className="shrink-0">
@@ -239,31 +245,33 @@ export default function RoomTypesPage() {
                             </div>
                             {t.amenities.length > 0 && <p className="mt-2 line-clamp-1 text-sm text-muted-foreground">{t.amenities.join(' · ')}</p>}
 
-                            <ul className="mt-4 flex flex-wrap items-center gap-1.5" aria-label={`${t.name} room numbers`}>
-                              {list.map((r) => {
-                                const s = r.isOutOfOrder ? 'OUT_OF_ORDER' : r.status;
-                                return (
-                                  <li key={r.id} className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-surface px-2 text-xs font-medium tabular" title={ROOM_STATUS[s].label}>
-                                    <span className={cn('size-2 rounded-full', DOT[s])} aria-hidden />
-                                    {r.roomNumber}
-                                    <span className="sr-only">, {ROOM_STATUS[s].label.toLowerCase()}</span>
+                            {!voiceOnly && (
+                              <ul className="mt-4 flex flex-wrap items-center gap-1.5" aria-label={`${t.name} room numbers`}>
+                                {list.map((r) => {
+                                  const s = r.isOutOfOrder ? 'OUT_OF_ORDER' : r.status;
+                                  return (
+                                    <li key={r.id} className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-surface px-2 text-xs font-medium tabular" title={ROOM_STATUS[s].label}>
+                                      <span className={cn('size-2 rounded-full', DOT[s])} aria-hidden />
+                                      {r.roomNumber}
+                                      <span className="sr-only">, {ROOM_STATUS[s].label.toLowerCase()}</span>
+                                    </li>
+                                  );
+                                })}
+                                {can('room.manage') && propertyId && (
+                                  <li className="contents">
+                                    <AddRooms
+                                      roomType={t}
+                                      propertyId={propertyId}
+                                      onDone={() => {
+                                        void mutateRooms();
+                                        void mutate();
+                                      }}
+                                    />
                                   </li>
-                                );
-                              })}
-                              {can('room.manage') && propertyId && (
-                                <li className="contents">
-                                  <AddRooms
-                                    roomType={t}
-                                    propertyId={propertyId}
-                                    onDone={() => {
-                                      void mutateRooms();
-                                      void mutate();
-                                    }}
-                                  />
-                                </li>
-                              )}
-                            </ul>
-                            {gap > 0 && (
+                                )}
+                              </ul>
+                            )}
+                            {gap > 0 && !voiceOnly && (
                               <p className="mt-3 flex items-start gap-2 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning-soft-foreground">
                                 <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
                                 {list.length === 0

@@ -8,6 +8,7 @@
 import { Resend } from 'resend';
 import { PRODUCT_DOMAIN, PRODUCT_NAME, PRODUCT_URL } from '@/config/product';
 import { money } from '@/lib/status';
+import { formatPhone } from '@/lib/format';
 
 const resendApiKey = process.env.RESEND_API_KEY;
 const fromAddress = process.env.EMAIL_FROM || `${PRODUCT_NAME} <bookings@${PRODUCT_DOMAIN}>`;
@@ -221,5 +222,98 @@ export async function sendBookingConfirmation(data: BookingEmailData): Promise<v
     });
   } catch (error) {
     console.error('[email] Failed to send booking confirmation:', error);
+  }
+}
+
+export interface GuestRequestAlertData {
+  to: string[];
+  propertyName: string;
+  /** "Phone call", "WhatsApp", "Booking page"… */
+  channel: string;
+  /** A booking request rather than a message. */
+  booking: boolean;
+  guestName: string;
+  phone: string | null;
+  email: string | null;
+  message: string;
+  /** Where the team handles it in the console. */
+  consoleUrl: string;
+}
+
+function alertHtml(data: GuestRequestAlertData): string {
+  const e = (v: unknown) => escapeHtml(v);
+  const title = data.booking ? `New booking request from ${data.guestName}` : `New message from ${data.guestName}`;
+  const contacts = [
+    data.phone ? `<a href="tel:${e(data.phone.replace(/[^\d+]/g, ''))}" style="color: ${C.primary}; font-weight: 600; text-decoration: none;">${e(formatPhone(data.phone))}</a>` : '',
+    data.email ? `<a href="mailto:${e(data.email)}" style="color: ${C.primary}; font-weight: 600; text-decoration: none;">${e(data.email)}</a>` : '',
+  ]
+    .filter(Boolean)
+    .join(' &nbsp;·&nbsp; ');
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>${e(title)}</title>
+  </head>
+  <body style="margin: 0; padding: 0; background: ${C.page}; font-family: ${FONT}; color: ${C.ink};">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background: ${C.page};">
+      <tr>
+        <td align="center" style="padding: 32px 16px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 560px;">
+            <tr>
+              <td style="padding: 0 4px 16px; font-size: 15px; line-height: 22px; font-weight: 700; color: ${C.ink};">${e(data.propertyName)}</td>
+            </tr>
+            <tr>
+              <td style="background: ${C.card}; border: 1px solid ${C.border}; border-radius: 16px; padding: 28px;">
+                <p style="margin: 0 0 6px; font-size: 13px; line-height: 18px; color: ${C.muted};">${e(data.channel)} · your voice front desk</p>
+                <h1 style="margin: 0 0 16px; font-size: 20px; line-height: 28px; font-weight: 700; color: ${C.ink};">${e(title)}</h1>
+                <p style="margin: 0 0 16px; font-size: 15px; line-height: 24px; color: ${C.ink}; white-space: pre-wrap;">${e(data.message)}</p>
+                ${contacts ? `<p style="margin: 0 0 20px; font-size: 15px; line-height: 24px;">${contacts}</p>` : ''}
+                <a href="${e(data.consoleUrl)}" style="display: inline-block; background: ${C.primary}; color: #ffffff; font-size: 14px; font-weight: 600; line-height: 20px; padding: 10px 16px; border-radius: 8px; text-decoration: none;">Open messages</a>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 20px 4px 0; font-size: 12px; line-height: 18px; color: ${C.muted};">
+                Sent by ${PRODUCT_NAME} for ${e(data.propertyName)}. Change where these go in Voice → Settings.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+/** Tell the hotel's team a caller left a message or a booking request. Skips (logs) when Resend is not configured. */
+export async function sendGuestRequestAlert(data: GuestRequestAlertData): Promise<void> {
+  if (!resend) {
+    console.log(`[email] Skipping message alert to ${data.to.join(', ')} (RESEND_API_KEY not configured)`);
+    return;
+  }
+  const subject = `${data.booking ? 'Booking request' : 'New message'} from ${oneLine(data.guestName)} — ${oneLine(data.propertyName)}`;
+  const text = [
+    `${data.booking ? 'New booking request' : 'New message'} from ${data.guestName} (${data.channel})`,
+    '',
+    data.message,
+    '',
+    ...(data.phone ? [`Phone: ${formatPhone(data.phone)}`] : []),
+    ...(data.email ? [`Email: ${data.email}`] : []),
+    '',
+    `Open messages: ${data.consoleUrl}`,
+  ].join('\n');
+  try {
+    await resend.emails.send({
+      from: fromAddress,
+      to: data.to,
+      ...(data.email ? { replyTo: data.email } : {}),
+      subject,
+      html: alertHtml(data),
+      text,
+    });
+  } catch (error) {
+    console.error('[email] Failed to send message alert:', error);
   }
 }

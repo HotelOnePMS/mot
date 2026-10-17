@@ -5,12 +5,14 @@
  */
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { formatClock } from '@/lib/format';
 
 /**
  * Which hotels guests and agents can find and book: the same rule as the
- * public directory (GET /api/properties) and the booking page.
+ * public directory (GET /api/properties) and the booking page. Voice-only
+ * hotels take bookings in their own system, so they are never listed.
  */
-export const LISTED_PROPERTY = { isActive: true } as const satisfies Prisma.PropertyWhereInput;
+export const LISTED_PROPERTY = { isActive: true, setupPath: { not: 'VOICE' } } as const satisfies Prisma.PropertyWhereInput;
 
 /** The house policy every guest-facing answer quotes (voice tools, skills, concierge). */
 export const HOTEL_POLICY = {
@@ -21,6 +23,33 @@ export const HOTEL_POLICY = {
 
 /** Prices are quoted in this currency everywhere (see StayQuote.currency). */
 export const CURRENCY = 'USD' as const;
+
+/**
+ * Hotels on the voice-only or keep-your-PMS paths take bookings in their own
+ * system: HotelOne can't see their availability or reservations, and their
+ * policy is their own. Only hotels running fully on HotelOne are listed and
+ * bookable online, and only they quote live availability.
+ */
+export const runsOnHotelOne = (setupPath: string | null | undefined) => (setupPath ?? 'FULL') === 'FULL';
+
+/** What callers are told when a hotel hasn't given a policy: the team answers it. */
+const NOT_ON_FILE = 'Not on file — offer to take a message so the team can confirm.';
+
+/**
+ * The check-in/out times and cancellation policy guests are told: the booking
+ * engine's for hotels on HotelOne, the hotel's own otherwise.
+ */
+export function hotelPolicy(
+  setupPath: string | null | undefined,
+  own: { checkInTime?: string | null; checkOutTime?: string | null; cancellationPolicy?: string | null } | null | undefined,
+): { checkIn: string; checkOut: string; cancellation: string } {
+  if (runsOnHotelOne(setupPath)) return HOTEL_POLICY;
+  return {
+    checkIn: own?.checkInTime ? `from ${formatClock(own.checkInTime)}` : NOT_ON_FILE,
+    checkOut: own?.checkOutTime ? `by ${formatClock(own.checkOutTime)}` : NOT_ON_FILE,
+    cancellation: own?.cancellationPolicy?.trim() || NOT_ON_FILE,
+  };
+}
 
 /** A hotel FAQ as stored in VoiceAgentConfig.faqs; malformed entries are dropped. */
 export function cleanFaqs(raw: unknown): { q: string; a: string }[] {
@@ -39,6 +68,7 @@ export async function propertyFacts(propertyId: string) {
     include: { roomTypes: { where: { isActive: true }, orderBy: { basePrice: 'asc' } }, voiceAgent: true },
   });
   const faqs = Array.isArray(p.voiceAgent?.faqs) ? (p.voiceAgent!.faqs as { q?: string; a?: string }[]).filter((f) => f?.q && f?.a) : [];
+  const policy = hotelPolicy(p.setupPath, p.voiceAgent);
   return {
     name: p.name,
     type: p.type,
@@ -48,9 +78,9 @@ export async function propertyFacts(propertyId: string) {
     phone: p.phone,
     email: p.email,
     amenities: p.amenities,
-    check_in: HOTEL_POLICY.checkIn,
-    check_out: HOTEL_POLICY.checkOut,
-    cancellation: HOTEL_POLICY.cancellation,
+    check_in: policy.checkIn,
+    check_out: policy.checkOut,
+    cancellation: policy.cancellation,
     room_types: p.roomTypes.map((rt) => ({ id: rt.id, name: rt.name, sleeps: rt.capacity, from_price_per_night: Number(rt.basePrice), amenities: rt.amenities, description: rt.description })),
     faqs,
   };

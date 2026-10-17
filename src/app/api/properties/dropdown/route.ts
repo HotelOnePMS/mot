@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { LISTED_PROPERTY } from '@/server/concierge/facts';
 
 export async function GET() {
   try {
     // Get all active properties for dropdown selection
     const properties = await prisma.property.findMany({
-      where: { 
-        isActive: true 
-      },
+      where: LISTED_PROPERTY,
       select: {
         id: true,
         name: true,

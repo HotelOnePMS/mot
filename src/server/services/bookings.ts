@@ -136,10 +136,12 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
 
   const roomType = await prisma.roomType.findUnique({
     where: { id: input.roomTypeId },
-    select: { id: true, name: true, propertyId: true, capacity: true, isActive: true, property: { select: { isActive: true } } },
+    select: { id: true, name: true, propertyId: true, capacity: true, isActive: true, property: { select: { isActive: true, setupPath: true, phone: true } } },
   });
   if (!roomType || !roomType.isActive || !roomType.property.isActive) throw notFound('Room type');
   if (roomType.propertyId !== input.propertyId) throw badRequest('That room type does not belong to this property.');
+  // Voice-only hotels take bookings in their own system; HotelOne only quotes them.
+  if (roomType.property.setupPath === 'VOICE') throw badRequest(`This hotel takes bookings directly — please call ${roomType.property.phone}.`);
   if (input.guests > roomType.capacity * rooms) {
     throw badRequest(`${roomType.name} sleeps up to ${roomType.capacity} per room. Add another room or choose a larger room type.`);
   }

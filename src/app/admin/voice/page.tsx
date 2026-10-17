@@ -28,7 +28,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, fetcher } from '@/lib/fetcher';
-import { formatPhone, telHref, timeAgo } from '@/lib/format';
+import { HALF_HOURS, formatClock, formatPhone, telHref, timeAgo } from '@/lib/format';
 import { formatNumber } from '@/lib/status';
 import { cn } from '@/lib/utils';
 import { PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL } from '@/config/product';
@@ -58,6 +58,10 @@ interface VoiceConfig {
   faqs: { q: string; a: string }[];
   handoffPhone: string | null;
   guestWidget: boolean;
+  checkInTime: string | null;
+  checkOutTime: string | null;
+  cancellationPolicy: string | null;
+  notifyEmail: string | null;
 }
 interface VoiceOverview {
   connected: boolean;
@@ -68,7 +72,10 @@ interface VoiceOverview {
   phoneLine: { enabled: boolean } | null;
   /** Phone lines run on ElevenLabs, whichever provider serves the booking page. */
   phoneReady: boolean;
+  /** Email alerts can be sent (Resend is configured). */
+  emailReady: boolean;
   stats: { guestCalls: number; phoneCalls: number; whatsAppChats: number; staffSessions: number; toolCalls: number; recentMinutes: number; openRequests: number };
+  setup: { roomTypes: number; faqs: number; policies: boolean; testCalls: number; phoneCalls: number; notifyTo: string[] };
   recent: { id: string; audience: string; startedAt: string; endedAt: string | null; toolCalls: number }[];
 }
 interface GuestRequest {
@@ -96,7 +103,7 @@ interface ModelCheck {
 const FRAME = 'mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8';
 
 /** Try the guest line from the console: same voice, prompts and tools guests get. */
-function TestCall({ propertyId, connected, showModels }: { propertyId: string; connected: boolean; showModels: boolean }) {
+function TestCall({ propertyId, connected, showModels, voiceOnly }: { propertyId: string; connected: boolean; showModels: boolean; voiceOnly: boolean }) {
   const voice = useLiveVoice({
     propertyId,
     audience: 'guest',
@@ -134,7 +141,9 @@ function TestCall({ propertyId, connected, showModels }: { propertyId: string; c
             ) : live ? (
               agentLine ?? 'Listening — ask about a room for next weekend.'
             ) : (
-              'Start a test call with your voice front desk. It uses live availability and your settings.'
+              voiceOnly
+                ? 'Start a test call with your voice front desk. It answers like it does on your phone line, with your prices and settings.'
+                : 'Start a test call with your voice front desk. It uses live availability and your settings.'
             )}
           </p>
         </div>
@@ -183,6 +192,97 @@ function TestCall({ propertyId, connected, showModels }: { propertyId: string; c
   );
 }
 
+/**
+ * Voice-only hotels: the few things between signing up and the phone being
+ * answered, in order, each with where to do it. Ticks come from real use
+ * (a test call made, a first call answered), not from clicks.
+ */
+function GoLive({ data, onTab }: { data: VoiceOverview; onTab: (t: Tab) => void }) {
+  const s = data.setup;
+  const steps: { title: string; text: string; done: boolean; cta: string; href?: string; tab?: Tab }[] = [
+    {
+      title: 'Rooms and prices',
+      text: s.roomTypes ? `${s.roomTypes} room type${s.roomTypes > 1 ? 's' : ''} for the voice to quote. Set different prices for busy nights under Rates.` : 'Add your room types and nightly prices — the voice quotes them.',
+      done: s.roomTypes > 0,
+      cta: s.roomTypes ? 'Check rooms' : 'Add rooms',
+      href: '/admin/room-types',
+    },
+    {
+      title: 'Policies and common questions',
+      text: s.faqs ? `${s.faqs} answer${s.faqs > 1 ? 's' : ''} so far — parking, breakfast, pets and early check-in are the usual ones.` : 'Add answers to the questions callers ask most — parking, breakfast, pets, early check-in.',
+      done: s.policies && s.faqs > 0,
+      cta: 'Open Settings',
+      tab: 'settings',
+    },
+    {
+      title: 'Hear it yourself',
+      text: s.testCalls ? 'You’ve talked to it. Try again after changing Settings — new calls use them straight away.' : 'Press Test call above and ask for a room next weekend, like a guest would.',
+      done: s.testCalls > 0,
+      cta: 'Test call',
+    },
+    {
+      title: 'Connect your phone number',
+      text: s.phoneCalls ? 'Calls are coming in on your line.' : 'Connect a Twilio number, then forward your hotel line to it for calls you can’t pick up.',
+      done: s.phoneCalls > 0,
+      cta: 'Set up the line',
+      tab: 'phone',
+    },
+  ];
+  const done = steps.filter((x) => x.done).length;
+  if (done === steps.length) return null;
+  return (
+    <Card className="p-5 sm:p-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-base font-semibold tracking-tight">Go live</h2>
+        <p className="text-sm text-muted-foreground">
+          {done} of {steps.length} done
+        </p>
+      </div>
+      <ol className="mt-4 space-y-2.5">
+        {steps.map((step, i) => (
+          <li key={step.title} className="flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center">
+            <span
+              className={cn(
+                'flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold tabular',
+                step.done ? 'bg-success-soft text-success-soft-foreground' : 'border border-border-strong/60 text-foreground'
+              )}
+              aria-hidden
+            >
+              {step.done ? <Check className="size-4" /> : i + 1}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                <span className="sr-only">{step.done ? 'Done: ' : 'To do: '}</span>
+                {step.title}
+              </p>
+              <p className="text-sm text-muted-foreground">{step.text}</p>
+            </div>
+            {!step.done &&
+              (step.href ? (
+                <Button asChild variant="outline" size="sm" className="self-start sm:self-center">
+                  <Link href={step.href}>{step.cta}</Link>
+                </Button>
+              ) : step.tab ? (
+                <Button variant="outline" size="sm" className="self-start sm:self-center" onClick={() => onTab(step.tab!)}>
+                  {step.cta}
+                </Button>
+              ) : null)}
+          </li>
+        ))}
+      </ol>
+      <p className="mt-4 text-sm text-muted-foreground">
+        {s.notifyTo.length ? (
+          <>
+            Messages and booking requests from callers land in Messages{data.emailReady ? <> and are emailed to {s.notifyTo.join(', ')}</> : null}.
+          </>
+        ) : (
+          'Messages and booking requests from callers land in Messages.'
+        )}
+      </p>
+    </Card>
+  );
+}
+
 function SwitchRow({ id, title, text, checked, onChange }: { id: string; title: string; text: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <div className="flex items-center justify-between gap-4 p-5">
@@ -200,7 +300,8 @@ function SwitchRow({ id, title, text, checked, onChange }: { id: string; title: 
 }
 
 function Settings({ data, onSaved }: { data: VoiceOverview; onSaved: () => void }) {
-  const { propertyId, can, role } = useConsole();
+  const { propertyId, property, can, role } = useConsole();
+  const setupPath = property?.setupPath ?? 'FULL';
   const [cfg, setCfg] = React.useState<VoiceConfig>(data.config);
   const [saving, setSaving] = React.useState(false);
   React.useEffect(() => setCfg(data.config), [data.config]);
@@ -244,17 +345,90 @@ function Settings({ data, onSaved }: { data: VoiceOverview; onSaved: () => void 
           <SwitchRow
             id="v-enabled"
             title="Voice front desk"
-            text="Answer guest questions by voice with live availability and prices — on your booking page and your phone line."
+            text={
+              setupPath === 'VOICE'
+                ? 'Answer callers with your prices and policies, and take booking requests and messages for your team.'
+                : 'Answer guest questions by voice with live availability and prices — on your booking page and your phone line.'
+            }
             checked={cfg.enabled}
             onChange={(v) => set('enabled', v)}
           />
-          <SwitchRow
-            id="v-widget"
-            title="“Talk to us” on your booking page"
-            text="Guests can start a voice conversation right from your hotel page."
-            checked={cfg.guestWidget}
-            onChange={(v) => set('guestWidget', v)}
-          />
+          {/* Voice-only hotels have no booking page to put it on. */}
+          {setupPath !== 'VOICE' && (
+            <SwitchRow
+              id="v-widget"
+              title="“Talk to us” on your booking page"
+              text="Guests can start a voice conversation right from your hotel page."
+              checked={cfg.guestWidget}
+              onChange={(v) => set('guestWidget', v)}
+            />
+          )}
+        </Card>
+
+        {setupPath !== 'FULL' && (
+          <Card className="space-y-5 p-5 sm:p-6">
+            <div>
+              <h2 className="text-base font-semibold tracking-tight">Your policies</h2>
+              <p className="mt-0.5 text-sm text-muted-foreground">What the voice tells callers. Anything left blank, it offers to take a message about instead of guessing.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+              <Field label="Check-in from">
+                <Select value={cfg.checkInTime ?? ''} onValueChange={(v) => set('checkInTime', v || null)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Not set" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {HALF_HOURS.map((t) => (
+                      <SelectItem key={t} value={t}>
+                        {formatClock(t)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Check-out by">
+                <Select value={cfg.checkOutTime ?? ''} onValueChange={(v) => set('checkOutTime', v || null)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Not set" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {HALF_HOURS.map((t) => (
+                      <SelectItem key={t} value={t}>
+                        {formatClock(t)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            </div>
+            <Field label="Cancellation policy" optional>
+              <Textarea
+                rows={2}
+                value={cfg.cancellationPolicy ?? ''}
+                onChange={(e) => set('cancellationPolicy', e.target.value)}
+                placeholder="Free cancellation until 24 hours before arrival. After that, the first night is charged."
+                maxLength={500}
+              />
+            </Field>
+          </Card>
+        )}
+
+        <Card className="space-y-5 p-5 sm:p-6">
+          <div>
+            <h2 className="text-base font-semibold tracking-tight">Messages and booking requests</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">Each one lands in Messages{data.emailReady ? ' and is emailed to you right away' : ''}.</p>
+          </div>
+          <Field
+            label="Email them to"
+            optional
+            hint={
+              data.emailReady
+                ? 'Separate several addresses with commas. Left blank, they go to the hotel’s owners.'
+                : `Email alerts start once ${PRODUCT_NAME} email is switched on for this site. Until then, check Messages.`
+            }
+          >
+            <Input type="text" inputMode="email" autoComplete="email" spellCheck={false} value={cfg.notifyEmail ?? ''} onChange={(e) => set('notifyEmail', e.target.value)} placeholder="frontdesk@yourhotel.com" maxLength={500} />
+          </Field>
         </Card>
 
         <Card className="space-y-5 p-5 sm:p-6">
@@ -388,7 +562,7 @@ const SOURCE: Record<string, { label: string; icon: LucideIcon }> = {
   AGENT: { label: 'AI assistant', icon: Sparkles },
 };
 
-function Requests() {
+function Requests({ voiceOnly }: { voiceOnly: boolean }) {
   const url = usePropertyUrl('/api/admin/voice/requests');
   const { data, mutate, isLoading } = useSWR<GuestRequest[]>(url, fetcher, { refreshInterval: 30_000 });
   const [show, setShow] = React.useState<'NEW' | 'DONE'>('NEW');
@@ -453,7 +627,8 @@ function Requests() {
         <Card className="divide-y p-0">
           {list.map((r) => {
             const link = bookingLink(r.message);
-            const src = SOURCE[r.source] ?? SOURCE.VOICE;
+            // Voice-only hotels have no booking page: their web conversations are test calls.
+            const src = r.source === 'VOICE' && voiceOnly ? { label: 'Test call', icon: PhoneCall } : (SOURCE[r.source] ?? SOURCE.VOICE);
             return (
               <article key={r.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:p-5" aria-labelledby={`req-${r.id}`}>
                 <div className="min-w-0 flex-1">
@@ -528,6 +703,7 @@ export default function VoicePage() {
   const { data, mutate } = useSWR<VoiceOverview>(url, fetcher);
   const [tab, setTabState] = React.useState<Tab>('overview');
   const isAdmin = role === 'ADMIN';
+  const voiceOnly = property?.setupPath === 'VOICE';
 
   // The tab lives in the URL hash (#settings, #phone, #messages) so it can be linked to.
   React.useEffect(() => {
@@ -564,7 +740,7 @@ export default function VoicePage() {
       <div className="space-y-6">
         <PageHeader
           title="Voice front desk"
-          description={property ? `The voice that answers for ${property.name} — on your booking page and your phone line.` : undefined}
+          description={property ? `The voice that answers for ${property.name} — ${voiceOnly ? 'on your phone line' : 'on your booking page and your phone line'}.` : undefined}
           actions={
             <SegmentedControl
               layoutId="voice-tab"
@@ -583,7 +759,9 @@ export default function VoicePage() {
         />
 
         <WelcomeBanner title="Your voice front desk is set up">
-          Add your top questions under Settings, check your rooms and prices under Rooms and Rates, then press Test call to hear it.
+          {voiceOnly
+            ? 'Press Test call to hear it, add the questions callers ask most under Settings, then connect your phone number. The checklist below keeps track.'
+            : 'Add your top questions under Settings, check your rooms and prices under Rooms and Rates, then press Test call to hear it.'}
         </WelcomeBanner>
 
         {!data || !propertyId ? (
@@ -625,8 +803,9 @@ export default function VoicePage() {
 
             {tab === 'overview' && (
               <div className="space-y-6">
-                <TestCall propertyId={propertyId} connected={data.connected} showModels={isAdmin} />
-                <section aria-label="Last 7 days" className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+                <TestCall propertyId={propertyId} connected={data.connected} showModels={isAdmin} voiceOnly={voiceOnly} />
+                {voiceOnly && <GoLive data={data} onTab={setTab} />}
+                <section aria-label="Last 7 days" className={cn('grid grid-cols-2 gap-3 sm:gap-4', voiceOnly ? 'lg:grid-cols-3' : 'lg:grid-cols-4')}>
                   <StatTile
                     label="Guest conversations"
                     value={formatNumber(data.stats.guestCalls)}
@@ -640,7 +819,7 @@ export default function VoicePage() {
                     }
                     icon={AudioLines}
                   />
-                  <StatTile label="Staff voice sessions" value={formatNumber(data.stats.staffSessions)} hint="Last 7 days" icon={Mic} />
+                  {!voiceOnly && <StatTile label="Staff voice sessions" value={formatNumber(data.stats.staffSessions)} hint="Last 7 days" icon={Mic} />}
                   <StatTile label="Lookups and actions" value={formatNumber(data.stats.toolCalls)} hint="From live data" icon={ShieldCheck} />
                   <StatTile
                     label="Messages to handle"
@@ -678,7 +857,10 @@ export default function VoicePage() {
                         onClick: () => setTab('phone'),
                         cta: data.phoneLine ? 'Manage the line' : 'Set it up',
                       },
-                    ].map((c) => (
+                    ]
+                      // Voice-only hotels have no booking page or staff agent: just the phone.
+                      .filter((c) => !voiceOnly || c.title === 'Phone & WhatsApp')
+                      .map((c) => (
                       <Card key={c.title} className="flex flex-col p-5 shadow-xs">
                         <div className="flex items-center justify-between gap-2">
                           <span className="flex size-9 items-center justify-center rounded-xl bg-muted text-muted-foreground" aria-hidden>
@@ -713,7 +895,7 @@ export default function VoicePage() {
             )}
             {tab === 'settings' && <Settings data={data} onSaved={() => void mutate()} />}
             {tab === 'phone' && <PhoneLine key={propertyId} onChanged={() => void mutate()} onOpenSettings={() => setTab('settings')} />}
-            {tab === 'requests' && <Requests />}
+            {tab === 'requests' && <Requests voiceOnly={voiceOnly} />}
           </>
         )}
       </div>

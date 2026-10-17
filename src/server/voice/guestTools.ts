@@ -7,9 +7,10 @@ import { prisma } from '@/lib/prisma';
 import { HOTEL_TIMEZONE, formatDay, hotelToday, isISODate, toISODate } from '../dates';
 import { DomainError, badRequest } from '../errors';
 import { policyFor } from '../services/guest';
-import { propertyFacts } from '../concierge/facts';
-import { availabilityOptions, lookupBooking, submitBookingRequest } from '../concierge/shared';
+import { propertyFacts, runsOnHotelOne } from '../concierge/facts';
+import { availabilityOptions, lookupBooking, priceOptions, submitBookingRequest } from '../concierge/shared';
 import { checkoutPath } from '../concierge/urls';
+import { alertTeam } from '../services/guestRequests';
 import { useSkill as runSkill } from '../skills';
 
 // Hotel facts live with the concierge (shared with the agent API and skills).
@@ -28,17 +29,22 @@ const optionalText = (max: number) => z.string().trim().max(max).nullable().opti
 export async function runGuestTool(propertyId: string, name: string, rawArgs: unknown, channel: GuestChannel = { kind: 'WEB' }): Promise<unknown> {
   const phone = channel.kind === 'PHONE';
   const source = channel.kind === 'PHONE' ? (channel.via ?? 'PHONE') : 'VOICE';
+  // Hotels that keep their own system: HotelOne can't see their availability or reservations, so their team confirms bookings.
+  const hotel = await prisma.property.findUnique({ where: { id: propertyId }, select: { setupPath: true } });
+  const live = runsOnHotelOne(hotel?.setupPath);
   switch (name) {
     case 'get_property_info':
       return propertyFacts(propertyId);
 
     case 'check_availability': {
       const a = z.object({ check_in: isoDate, check_out: isoDate, guests: z.number().int().min(1).max(16), rooms: z.number().int().min(1).max(9) }).parse(rawArgs);
-      return availabilityOptions(propertyId, { checkIn: a.check_in, checkOut: a.check_out, guests: a.guests, rooms: a.rooms });
+      const stay = { checkIn: a.check_in, checkOut: a.check_out, guests: a.guests, rooms: a.rooms };
+      return live ? availabilityOptions(propertyId, stay) : priceOptions(propertyId, stay);
     }
 
     case 'start_booking': {
       if (phone) return { error: 'There’s no screen on a phone call — use request_booking instead.' };
+      if (!live) return { error: 'This hotel’s front desk confirms bookings — use request_booking instead.' };
       const a = z.object({ room_type_id: z.string().min(1), check_in: isoDate, check_out: isoDate, guests: z.number().int().min(1).max(16), rooms: z.number().int().min(1).max(9) }).parse(rawArgs);
       const rt = await prisma.roomType.findFirst({ where: { id: a.room_type_id, propertyId, isActive: true }, select: { id: true, name: true } });
       if (!rt) return { error: 'That room type isn’t available here — check availability again.' };
@@ -47,6 +53,7 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
     }
 
     case 'find_booking': {
+      if (!live) return { found: false, say: 'I can’t look up reservations here, but I can take a message for the front desk — what’s your name, your dates, and what do you need?' };
       const a = z.object({ confirmation_code: z.string().min(4).max(20), last_name: z.string().min(1).max(60) }).parse(rawArgs);
       const b = await lookupBooking({ propertyId, code: a.confirmation_code, lastName: a.last_name });
       // Same answer for a wrong code or a wrong name: don't confirm either alone.
@@ -66,7 +73,7 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
     }
 
     case 'request_booking': {
-      if (!phone) return { error: 'Use start_booking to open the checkout on the guest’s screen.' };
+      if (!phone && live) return { error: 'Use start_booking to open the checkout on the guest’s screen.' };
       const a = z
         .object({
           room_type_id: z.string().min(1),
@@ -80,19 +87,25 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
           notes: optionalText(500),
         })
         .parse(rawArgs);
-      return submitBookingRequest(propertyId, {
-        roomTypeId: a.room_type_id,
-        checkIn: a.check_in,
-        checkOut: a.check_out,
-        guests: a.guests,
-        rooms: a.rooms,
-        name: a.name,
-        email: a.email,
-        // On the phone, the caller ID is the callback number unless they gave another.
-        phone: a.phone || channel.callerNumber,
-        notes: a.notes,
-        source,
-      });
+      return submitBookingRequest(
+        propertyId,
+        {
+          roomTypeId: a.room_type_id,
+          checkIn: a.check_in,
+          checkOut: a.check_out,
+          guests: a.guests,
+          rooms: a.rooms,
+          name: a.name,
+          email: a.email,
+          // On the phone, the caller ID is the callback number unless they gave another.
+          phone: a.phone || (phone ? channel.callerNumber : null),
+          notes: a.notes,
+          source,
+          // On the web, a voice-only hotel's only guest is its own team trying it out.
+          label: phone ? undefined : hotel?.setupPath === 'VOICE' ? 'Test call' : 'Booking page',
+        },
+        live,
+      );
     }
 
     case 'use_skill': {
@@ -115,6 +128,7 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
       const callback = a.phone || (phone ? channel.callerNumber : null);
       if (!callback && !a.email) return { error: 'Ask for a phone number or email so the team can reply.' };
       const r = await prisma.guestRequest.create({ data: { propertyId, name: a.name, phone: callback || null, email: a.email || null, message: a.message, source } });
+      alertTeam(r.id);
       return { saved: true, reference: r.id.slice(-6).toUpperCase(), say: 'I’ve passed that to the team — they’ll get back to you.' };
     }
 

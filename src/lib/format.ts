@@ -182,3 +182,14 @@ export function formatDateRange(a: ISODate, b: ISODate, opts: { year?: boolean; 
 
 /** "1 night", "3 nights". */
 export const formatNights = (n: number) => `${n} night${n === 1 ? '' : 's'}`;
+
+/** "15:00" → "3:00 PM"; anything else is shown as typed. */
+export function formatClock(value: string): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+  if (!m || Number(m[1]) > 23) return value.trim();
+  const h = Number(m[1]);
+  return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+/** Every half hour of the day as "HH:MM", for check-in and check-out pickers. */
+export const HALF_HOURS: string[] = Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);

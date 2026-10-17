@@ -6,8 +6,16 @@ import { isDemoEmail } from '@/config/product';
 import { badRequest, conflict, DomainError } from '@/server/errors';
 import { handleRoute, json, parseJson } from '@/server/http';
 import { VOICES } from '@/server/voice/live';
+import { toE164 } from '@/lib/phone';
 import { cloudLoginUrlIssue, pmsLoginUrlSchema } from '@/server/schemas';
 import { scheduleConfigSkillSync } from '@/server/skills';
+
+/** "15:00" — a time of day on the 24-hour clock. */
+const clock = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+  .optional()
+  .nullable();
 
 const schema = z.object({
   path: z.enum(['FULL', 'BRIDGE', 'VOICE']).default('FULL'),
@@ -33,7 +41,24 @@ const schema = z.object({
     .max(8)
     .default([]),
   bridge: z.object({ system: z.string().trim().min(2).max(60), mode: z.enum(['DESKTOP', 'CLOUD']), loginUrl: pmsLoginUrlSchema }).optional(),
-  voice: z.object({ voice: z.enum(VOICES).default('marin'), greeting: z.string().trim().max(300).optional().nullable(), handoffPhone: z.string().trim().max(40).optional().nullable() }).optional(),
+  voice: z
+    .object({
+      voice: z.enum(VOICES).default('marin'),
+      greeting: z.string().trim().max(300).optional().nullable(),
+      handoffPhone: z.string().trim().max(40).optional().nullable(),
+      checkInTime: clock,
+      checkOutTime: clock,
+      cancellationPolicy: z.string().trim().max(500).optional().nullable(),
+      /** Voice only: where the phone line puts callers who ask for a person. */
+      transferNumber: z
+        .string()
+        .trim()
+        .max(40)
+        .optional()
+        .nullable()
+        .refine((v) => !v || toE164(v) !== null, 'must be an international number, like +1 831 555 0100'),
+    })
+    .optional(),
 });
 
 /**
@@ -43,6 +68,9 @@ const schema = z.object({
  */
 export const POST = handleRoute(async (request: NextRequest) => {
   const body = await parseJson(request, schema);
+  if (body.path === 'VOICE' && body.roomTypes.length === 0) {
+    throw new DomainError(400, 'VALIDATION', 'Add at least one room type with its price — the voice quotes it to callers.', { issues: [{ path: ['roomTypes', 0, 'name'], message: 'is required' }] });
+  }
   const urlIssue = body.bridge ? cloudLoginUrlIssue(body.bridge.mode, body.bridge.loginUrl) : null;
   if (urlIssue) throw badRequest(urlIssue);
   // Sign-up is open, so cap new hotels per hour (shared across server instances).
@@ -86,6 +114,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
       await tx.pmsConnection.create({ data: { propertyId: property.id, system: body.bridge.system, mode: body.bridge.mode, loginUrl: body.bridge.loginUrl || null } });
     }
     // Every path gets the voice front desk configured (it's how VOICE hotels start).
+    const voiceOnly = body.path === 'VOICE';
     await tx.voiceAgentConfig.create({
       data: {
         propertyId: property.id,
@@ -93,9 +122,21 @@ export const POST = handleRoute(async (request: NextRequest) => {
         greeting: body.voice?.greeting || `Thanks for calling ${body.property.name} — how can I help?`,
         handoffPhone: body.voice?.handoffPhone || body.property.phone,
         enabled: true,
-        guestWidget: true,
+        // Voice-only hotels have no booking page to show it on.
+        guestWidget: !voiceOnly,
+        // Hotels that keep their own system tell callers their own times and policy.
+        ...(body.path !== 'FULL'
+          ? { checkInTime: body.voice?.checkInTime ?? null, checkOutTime: body.voice?.checkOutTime ?? null, cancellationPolicy: body.voice?.cancellationPolicy || null }
+          : {}),
+        // Messages and booking requests from callers go to the owner until they change it.
+        notifyEmail: body.account.email,
       },
     });
+    // The phone line is what voice-only hotels sign up for: it's on from the start, and its
+    // agent is created at ElevenLabs the first time the Phone tab is opened.
+    if (voiceOnly) {
+      await tx.voicePhoneLine.create({ data: { propertyId: property.id, enabled: true, transferNumber: toE164(body.voice?.transferNumber) } });
+    }
     await tx.agentAuditLog.create({
       data: { propertyId: property.id, userId: user.id, action: 'ONBOARDED', detail: JSON.stringify({ source: 'classic', summary: `Set up ${property.name} (${body.path === 'FULL' ? 'full platform' : body.path === 'BRIDGE' ? `keeping ${body.bridge?.system ?? 'their PMS'}` : 'voice front desk'})` }) },
     });
