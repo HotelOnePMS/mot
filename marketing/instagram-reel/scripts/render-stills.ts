@@ -2,6 +2,7 @@
 //   node scripts/render-stills.ts                 every shot at 45% and at its last frame -3 -> out/stills, out/storyboard-{1,2}.jpg
 //   node scripts/render-stills.ts --scene Morning one scene's shots (same two frames each) -> out/stills/<scene>/
 //   node scripts/render-stills.ts --frames 0,1155 exact frames -> out/stills/frames/
+//   node scripts/render-stills.ts --comp LobbyPreview --frames 0,30   frames of a dev preview (src/dev/*Preview.tsx) -> out/stills/<comp>/
 //   add --safe to draw the Instagram UI zones (top 270, bottom 380, right 140) on each still
 import {execFileSync} from 'node:child_process';
 import fs from 'node:fs';
@@ -39,9 +40,10 @@ let jobs: Job[];
 let outDir: string;
 const scene = opt('scene');
 const frames = opt('frames');
+const comp = opt('comp') ?? 'ReelSilent';
 if (frames) {
   jobs = frames.split(',').map((x) => Number(x.trim())).map((frame) => ({frame, name: `f${String(frame).padStart(4, '0')}`, label: `f${frame}`}));
-  outDir = path.join(root, 'out', 'stills', 'frames');
+  outDir = path.join(root, 'out', 'stills', comp === 'ReelSilent' ? 'frames' : comp);
 } else if (scene) {
   const shots = board.shots.filter((s) => s.scene === scene);
   if (!shots.length) throw new Error(`No scene ${scene}`);
@@ -54,7 +56,7 @@ if (frames) {
 fs.mkdirSync(outDir, {recursive: true});
 
 const serveUrl = await bundle({entryPoint: path.join(root, 'src', 'index.ts')});
-const composition = await selectComposition({serveUrl, id: 'ReelSilent', inputProps: {placement: 'organic', withAudio: false}, browserExecutable});
+const composition = await selectComposition({serveUrl, id: comp, inputProps: {placement: 'organic', withAudio: false}, browserExecutable});
 
 for (const job of jobs) {
   const output = path.join(outDir, `${job.name}.jpg`);
@@ -69,7 +71,7 @@ for (const job of jobs) {
 }
 
 // Contact sheets for the full pass: one cell per still, labelled, 7 across.
-if (!frames && !scene) {
+if (!frames && !scene && comp === 'ReelSilent') {
   for (const [suffix, sheet] of [['a', 1], ['b', 2]] as const) {
     const cells = jobs.filter((j) => j.name.endsWith(`-${suffix}`));
     const inputs = cells.flatMap((j) => ['-i', path.join(outDir, `${j.name}.jpg`)]);
