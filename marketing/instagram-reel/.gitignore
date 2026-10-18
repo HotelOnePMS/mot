@@ -6,3 +6,4 @@ public/audio/mix.wav
 out/*
 !out/hotelone-reel.mp4
 !out/storyboard-*.jpg
+!out/cover.jpg

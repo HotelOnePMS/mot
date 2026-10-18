@@ -9,7 +9,7 @@
     "voice": "python3 -I scripts/make-voice.py",
     "audio": "node scripts/make-audio.ts",
     "stills": "node scripts/render-stills.ts",
-    "render": "remotion render Reel out/master.mp4 && node scripts/deliver.ts out/master.mp4 out/hotelone-reel.mp4 copy",
+    "render": "remotion render Reel out/master.mp4 && node scripts/deliver.ts out/master.mp4 out/hotelone-reel.mp4 6M grain && remotion still Cover out/cover.jpg --image-format=jpeg",
     "build": "npm run fonts && npm run audio && npm run stills && npm run render",
     "studio": "remotion studio",
     "typecheck": "tsc --noEmit"
