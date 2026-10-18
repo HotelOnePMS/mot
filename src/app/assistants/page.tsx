@@ -1,12 +1,12 @@
 import type { Metadata } from 'next';
-import { headers } from 'next/headers';
 import Link from 'next/link';
 import { ArrowRight, BedDouble, Code2, Link2, Mic, MousePointerClick, ShieldCheck } from 'lucide-react';
 import Navigation from '@/components/Navigation';
 import { SiteFooter } from '@/components/guest/SiteFooter';
 import { CopyButton } from '@/components/setup/CopyButton';
 import { Button } from '@/components/ui/button';
-import { PRODUCT_NAME, PRODUCT_URL } from '@/config/product';
+import { PRODUCT_NAME } from '@/config/product';
+import { publicOrigin } from '@/server/agent-api/http';
 
 export const metadata: Metadata = {
   title: 'Book with your AI assistant',
@@ -14,13 +14,9 @@ export const metadata: Metadata = {
   alternates: { canonical: '/assistants' },
 };
 
-/** The origin this page was reached on, so the link works on any deployment. */
+/** This deployment's configured public origin (never taken from request headers, which a client can set). */
 async function origin(): Promise<string> {
-  const h = await headers();
-  const host = h.get('x-forwarded-host')?.split(',')[0]?.trim() || h.get('host');
-  if (!host || !/^[a-z0-9.-]+(:\d+)?$/i.test(host)) return PRODUCT_URL;
-  const proto = h.get('x-forwarded-proto')?.split(',')[0]?.trim() || (/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host) ? 'http' : 'https');
-  return `${proto === 'http' ? 'http' : 'https'}://${host}`;
+  return publicOrigin();
 }
 
 const ASSISTANTS: { name: string; steps: React.ReactNode[] }[] = [

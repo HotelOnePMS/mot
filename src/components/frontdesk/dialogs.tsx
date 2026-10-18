@@ -354,9 +354,22 @@ export function ConfirmDialog({
   onConfirm: () => void;
   children?: React.ReactNode;
 }) {
+  // Opened from code (no DialogTrigger), so remember what had focus and give it back on close.
+  const opener = React.useRef<HTMLElement | null>(null);
+  React.useLayoutEffect(() => {
+    if (open && document.activeElement instanceof HTMLElement && document.activeElement !== document.body) opener.current = document.activeElement;
+  }, [open]);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent
+        onCloseAutoFocus={(e) => {
+          const el = opener.current;
+          if (el?.isConnected) {
+            e.preventDefault();
+            el.focus();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
