@@ -105,8 +105,8 @@ export const CAB = {
   pillarBottom: [742, 802] as const,
   pillarY: [1040, 1566] as const,
   /** Gus's office window seen through the windshield, and his phone in it. */
-  office: {x: 912, y: 1316, rx: 118, ry: 84},
-  gusPhone: {x: 884, y: 1338},
+  office: {x: 866, y: 1300, w: 164, h: 104},
+  gusPhone: {x: 846, y: 1322},
   wheel: {cx: 806, cy: 1702, rx: 48, ry: 238, rot: -16},
 } as const;
 
@@ -117,6 +117,40 @@ export type ProfileCabProps = {
   ring?: number;
   /** Seconds, for the slow neon breathing. */
   t?: number;
+};
+
+/** Gus's office across the lot, soft through the windshield: the block's roofline, a lit window with blinds and a mullion, the desk line. */
+const OfficeAcross: React.FC<{id: string}> = ({id}) => {
+  const o = CAB.office;
+  const x0 = o.x - o.w / 2;
+  const y0 = o.y - o.h / 2;
+  return (
+    <g>
+      <defs>
+        <linearGradient id={`${id}-win`} x1="0" y1={y0} x2="0" y2={y0 + o.h} gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor={mix(NIGHT.tealDeep, NIGHT.teal, 0.75)} />
+          <stop offset="0.7" stopColor={mix(NIGHT.tealDeep, NIGHT.teal, 0.5)} />
+          <stop offset="1" stopColor={NIGHT.tealDeep} />
+        </linearGradient>
+      </defs>
+      {/* the office block, a shade off the lot, its fascia catching the sign */}
+      <path d={`M${x0 - 120} ${y0 - 64} L1120 ${y0 - 80} L1120 ${y0 + o.h + 120} L${x0 - 120} ${y0 + o.h + 120} Z`} fill={mix(NIGHT.ink, NIGHT.tealDeep, 0.6)} opacity={0.75} />
+      <path d={`M${x0 - 120} ${y0 - 64} L1120 ${y0 - 80}`} stroke={NIGHT.tealSoft} strokeWidth={4} opacity={0.22} />
+      <path d={`M${x0 - 120} ${y0 - 54} L1120 ${y0 - 70}`} stroke={NIGHT.ink} strokeWidth={10} opacity={0.35} />
+      <ellipse cx={o.x} cy={o.y} rx={o.w * 0.95} ry={o.h * 1.05} fill={`url(#${id}-glow-t)`} opacity={0.45} />
+      {/* the window: a soft spill, the pane, blinds, mullion, frame */}
+      <rect x={x0 - 10} y={y0 - 10} width={o.w + 20} height={o.h + 20} rx={12} fill={NIGHT.teal} opacity={0.1} />
+      <rect x={x0} y={y0} width={o.w} height={o.h} rx={4} fill={`url(#${id}-win)`} opacity={0.85} />
+      {[1, 2, 3, 4, 5].map((i) => (
+        <path key={i} d={`M${x0 + 4} ${y0 + (i * o.h) / 6.4} L${x0 + o.w - 4} ${y0 + (i * o.h) / 6.4}`} stroke={NIGHT.ink} strokeWidth={3} opacity={0.2} />
+      ))}
+      <path d={`M${o.x + 18} ${y0} L${o.x + 18} ${y0 + o.h}`} stroke={NIGHT.ink} strokeWidth={6} opacity={0.45} />
+      {/* the counter line inside, under the phone */}
+      <path d={`M${x0} ${y0 + o.h * 0.8} L${x0 + o.w} ${y0 + o.h * 0.8}`} stroke={NIGHT.ink} strokeWidth={10} opacity={0.4} />
+      <rect x={x0} y={y0} width={o.w} height={o.h} rx={4} fill="none" stroke={NIGHT.ink} strokeWidth={7} opacity={0.55} />
+      <path d={`M${x0} ${y0 - 2} L${x0 + o.w} ${y0 - 2}`} stroke={NIGHT.tealSoft} strokeWidth={2} opacity={0.3} />
+    </g>
+  );
 };
 
 /** Everything behind Rita. */
@@ -188,8 +222,7 @@ export const ProfileCabBack: React.FC<ProfileCabProps> = ({gusPhone = 1, ring = 
           <Disc key={i} x={812 + i * 34} y={1098 - Math.sin(i * 0.7) * 10} r={17} fill={`${id}-disc-tb`} o={0.42 * breathe} />
         ))}
         <Disc x={1010} y={1062} r={26} fill={`${id}-disc-w`} o={0.3} />
-        <ellipse cx={CAB.office.x} cy={CAB.office.y} rx={CAB.office.rx} ry={CAB.office.ry} fill={`url(#${id}-glow-t)`} opacity={0.5} />
-        <rect x={CAB.office.x - 92} y={CAB.office.y - 58} width={184} height={118} rx={18} fill={NIGHT.teal} opacity={0.16} />
+        <OfficeAcross id={id} />
         {/* Gus's phone, ringing on the desk */}
         <circle cx={CAB.gusPhone.x} cy={CAB.gusPhone.y} r={56} fill={`url(#${id}-glow-w)`} opacity={(0.18 + 0.32 * ring) * gusPhone} />
         <Disc x={CAB.gusPhone.x} y={CAB.gusPhone.y} r={11} fill={`${id}-disc-w`} o={0.95 * gusPhone} />
@@ -273,6 +306,8 @@ export const CabLight: React.FC = () => {
       </defs>
       <circle cx={1000} cy={1260} r={560} fill={`url(#${id}-t)`} />
       <circle cx={760} cy={1640} r={300} fill={`url(#${id}-g)`} />
+      {/* the dash's green under her jaw */}
+      <circle cx={540} cy={1590} r={210} fill={`url(#${id}-g)`} opacity={0.9} />
     </g>
   );
 };

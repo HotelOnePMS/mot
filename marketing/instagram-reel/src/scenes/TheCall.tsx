@@ -54,6 +54,8 @@ const PAD = 40;
 const CONTACT_TIP = {x: CALL_PT.x - AX.x * PAD, y: CALL_PT.y - AX.y * PAD};
 
 const TAP = L(S06.tap);
+/** The macro's focus falls off below the call buttons: the lower screen sinks into her lap's shadow. */
+const FALLOFF = [1130, 1420] as const;
 const WHIP0 = L(S06.whip.start);
 const WHIP1 = L(S06.whip.end);
 
@@ -70,11 +72,11 @@ const S06Shot: React.FC<{frame: number}> = ({frame}) => {
   const approach = interpolate(frame, [0, 24], [1, 0], {...clamp, easing: Easing.out(Easing.cubic)});
   const strike = interpolate(frame, [TAP - 3, TAP], [0, 1], {...clamp, easing: Easing.in(Easing.quad)});
   const lift = interpolate(frame, [TAP - 7, TAP - 3, TAP], [0, 1, 0], clamp);
-  const release = interpolate(frame, [TAP + 2, WHIP0 + 2], [0, 1], {...clamp, easing: Easing.in(Easing.cubic)});
+  const release = interpolate(frame, [TAP + 1, TAP + 7], [0, 1], {...clamp, easing: Easing.out(Easing.quad)});
   const still = 1 - strike;
   const dx = 5 * perlin1('s06-thumb-x', sec * 0.9) * still;
   const dy = 4 * perlin1('s06-thumb-y', sec * 0.9) * still;
-  const hover = {x: CONTACT_TIP.x + 26 + 46 * approach + dx, y: CONTACT_TIP.y + 38 + 80 * approach + dy};
+  const hover = {x: CONTACT_TIP.x + 58 + 46 * approach + dx, y: CONTACT_TIP.y + 62 + 80 * approach + dy};
   const tip = {
     x: lerp(hover.x, CONTACT_TIP.x, strike) + 8 * lift + 320 * release,
     y: lerp(hover.y, CONTACT_TIP.y, strike) + 12 * lift + 560 * release,
@@ -85,9 +87,9 @@ const S06Shot: React.FC<{frame: number}> = ({frame}) => {
 
   // ── the phone: press, ripple, 2-frame flip to Calling…
   const press = interpolate(frame, [TAP - 1, TAP, TAP + 3], [0, 1, 0], clamp);
-  const ripple = interpolate(frame, [TAP, TAP + 12], [0, 1], {...clamp, easing: Easing.out(Easing.quad)});
-  const calling = interpolate(frame, [TAP, TAP + 2], [0, 1], clamp);
-  const flash = frame === TAP + 1 ? 0.12 : 0;
+  const ripple = interpolate(frame, [TAP, TAP + 6], [0, 1], {...clamp, easing: Easing.out(Easing.quad)});
+  const calling = frame >= TAP + 1;
+  const flash = frame === TAP + 1 ? 0.2 : frame === TAP + 2 ? 0.06 : 0;
   const tap = ripple > 0 && ripple < 1 ? {at: 'call' as const, progress: ripple} : undefined;
 
   // ── 12.25–12.5: the whip up to her ear (the camera tilts with it)
@@ -135,17 +137,24 @@ const S06Shot: React.FC<{frame: number}> = ({frame}) => {
             </g>
           </svg>
           <div style={{position: 'absolute', left: PHONE_X, top: PHONE_Y}}>
-            <GenericPhone width={PHONE_W} screen="contact" name="Starlite — front desk" initials="S" avatarColor={NIGHT.teal} time="2:21" press={press} tap={calling < 1 ? tap : undefined} rim={NIGHT.teal} rimAmount={0.85} />
-          </div>
-          {calling > 0 ? (
-            <div style={{position: 'absolute', left: PHONE_X, top: PHONE_Y, opacity: calling}}>
+            {calling ? (
               <GenericPhone width={PHONE_W} screen="calling" name="Starlite — front desk" status="Calling…" elapsed={0} initials="S" avatarColor={NIGHT.teal} time="2:21" tap={tap} rim={NIGHT.teal} rimAmount={0.85} />
-            </div>
-          ) : null}
+            ) : (
+              <GenericPhone width={PHONE_W} screen="contact" name="Starlite — front desk" initials="S" avatarColor={NIGHT.teal} time="2:21" press={press} tap={tap} rim={NIGHT.teal} rimAmount={0.85} />
+            )}
+          </div>
           {flash > 0 ? (
             <div style={{position: 'absolute', left: PHONE_X + 13, top: PHONE_Y + 13, width: PHONE_W - 26, height: PHONE_H - 26, borderRadius: 66, background: NIGHT.ivory, opacity: flash}} />
           ) : null}
           <svg width={1080} height={1920} viewBox="0 0 1080 1920" style={{position: 'absolute', inset: 0, overflow: 'visible'}}>
+            <defs>
+              <linearGradient id={`${fid}f`} x1="0" y1={FALLOFF[0]} x2="0" y2={FALLOFF[1]} gradientUnits="userSpaceOnUse">
+                <stop offset="0" stopColor={NIGHT.ink} stopOpacity={0} />
+                <stop offset="0.55" stopColor={NIGHT.ink} stopOpacity={0.62} />
+                <stop offset="1" stopColor={NIGHT.ink} stopOpacity={0.8} />
+              </linearGradient>
+            </defs>
+            <rect x={PHONE_X + 10} y={FALLOFF[0]} width={PHONE_W - 20} height={PHONE_Y + PHONE_H - 10 - FALLOFF[0]} rx={60} fill={`url(#${fid}f)`} />
             {/* the hovering thumb's soft shadow on the glass (tightens as it lands) */}
             {release < 1 ? (
               <ThumbShadow x={pad.x - 16 * height} y={pad.y + 26 * height} spread={height} fade={1 - release} />
@@ -194,6 +203,8 @@ const SEAM = {top: 955, bottom: 965};
 const S07_CROP: Crop = {scale: 0.56, x: 0, y: -312};
 /** Rita (rig B): neck pivot and scale that put her head at y 1320–1520, phone 1330–1480, shoulder at the 1540 edge. */
 const RITA = {x: 470, y: 1528, scale: 0.68};
+/** Her knuckles on the phone, in rig-B units (PhoneInHand at [-14,-116] turned -22°). */
+const KNUCKLES = {x: 24, y: -100};
 /** The bottom half's 3% push centre (her head). */
 const BOTTOM_PUSH_AT = {x: 505, y: 1420};
 /** 6-frame ±6 px camera shake for the truck. */
@@ -240,6 +251,23 @@ const mouthAt = (sec: number): number => {
     if (sec >= w.start && sec < w.end) return 0.85 * Math.sin((Math.PI * (sec - w.start)) / (w.end - w.start));
   }
   return 0;
+};
+
+/** A small screen-blended glint on her knuckles (the grip highlight, read at phone size). */
+const KnuckleGlint: React.FC<{at: {x: number; y: number}; amount: number}> = ({at, amount}) => {
+  const id = useUid('kg');
+  return (
+    <g style={{mixBlendMode: 'screen'}} opacity={amount}>
+      <defs>
+        <radialGradient id={id} cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0" stopColor={NIGHT.ivory} stopOpacity={0.55} />
+          <stop offset="0.35" stopColor={NIGHT.tealSoft} stopOpacity={0.3} />
+          <stop offset="1" stopColor={NIGHT.tealSoft} stopOpacity={0} />
+        </radialGradient>
+      </defs>
+      <ellipse cx={at.x} cy={at.y} rx={34} ry={56} transform={`rotate(-22 ${at.x} ${at.y})`} fill={`url(#${id})`} />
+    </g>
+  );
 };
 
 /** One 3-frame blink at a local frame. */
@@ -301,6 +329,8 @@ const S07Shot: React.FC<{frame: number}> = ({frame}) => {
               <ProfileCabBack gusPhone={dark ? 0 : lightUp} ring={env} t={sec} />
               <g transform={`translate(${RITA.x + jolt.x} ${RITA.y + jolt.y}) scale(${RITA.scale})`}>
                 <RitaBArt grip={grip} blink={blink} browRaise={Math.min(1, brow)} mouthOpen={mouthAt(sec)} t={sec} light={1} />
+                {/* 14.5: the knuckles whiten round the phone, a hot glint that settles */}
+                {grip > 0 ? <KnuckleGlint at={KNUCKLES} amount={grip * interpolate(framesSince(frame, S07.knuckles, SCENE), [0, 3, 14], [0.4, 1, 0.45], clamp)} /> : null}
               </g>
               <ProfileCabFront />
               <CabLight />
