@@ -1,6 +1,6 @@
 // Generates the noise tiles the film-wide overlays use (src/fx/Dither.tsx and
 // src/fx/Grain.tsx). Run once: `node scripts/make-fx-tiles.ts`. Output:
-//   public/fx/dither.png        256×256 RGB, independent uniform noise per channel, mean 128 (static dither)
+//   public/fx/dither.png        512×512 RGB, independent uniform noise per channel, mean 128 (static dither)
 //   public/fx/grain-0..5.png    512×512 grey, soft film grain (periodic Gaussian blur, so every tile is seamless)
 // The tiles are pre-generated so the browser never computes noise per frame: an
 // overlay just shows a cached PNG, and Grain picks a tile + offset every 6 frames.
@@ -66,7 +66,7 @@ const writePng = (file: string, width: number, height: number, channels: 1 | 3, 
 
 // ─── Dither: uniform noise per channel, mean 128 ────────────────────────────
 {
-  const N = 256;
+  const N = 512;
   const rnd = mulberry32(0x0d17);
   const px = new Uint8Array(N * N * 3);
   for (let i = 0; i < px.length; i++) px[i] = Math.floor(rnd() * 256);

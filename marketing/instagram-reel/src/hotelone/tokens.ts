@@ -170,13 +170,18 @@ export const useHO = (mode?: Mode): Tokens => {
 };
 
 /** Inter with the app's stylistic sets: set on every top-level primitive so it renders right outside <Screen> too. */
-export const uiFont: React.CSSProperties = {fontFamily: INTER, fontFeatureSettings: INTER_FEATURES, WebkitFontSmoothing: 'antialiased'};
+export const uiFont: React.CSSProperties = {fontFamily: INTER, fontFeatureSettings: INTER_FEATURES, WebkitFontSmoothing: 'antialiased', textRendering: 'optimizeLegibility'};
 
-/** Body text defaults (globals.css body): Inter with cv11/ss01/ss03, antialiased. */
+/**
+ * Body text defaults (globals.css html/body): Inter with cv11/ss01/ss03, antialiased, and
+ * text-rendering: optimizeLegibility (kerning on at every size: without it lines are a hair wider
+ * and wrap a word earlier than the app does).
+ */
 export const bodyStyle = (t: Tokens): React.CSSProperties => ({
   fontFamily: INTER,
   fontFeatureSettings: INTER_FEATURES,
   WebkitFontSmoothing: 'antialiased',
+  textRendering: 'optimizeLegibility',
   color: t.foreground,
   fontSize: 16,
   lineHeight: 1.5,

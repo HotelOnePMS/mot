@@ -98,7 +98,7 @@ const S20: React.FC<{lf: number}> = ({lf}) => {
             mode="dark"
             requests={inbox('night')}
             fx={{
-              rita: {opacity: 0.3, maxHeight: 70 / zoom},
+              rita: {opacity: 0.3, cropTop: 12, maxHeight: 56},
               sam: {dimMessage: {opacity: 0.4, blur: 1.1}, email: {opacity: 0.4}, phone: {circle: c2}, total: {circle: c3}},
             }}
           />

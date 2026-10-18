@@ -101,7 +101,8 @@ export const inbox = (when: 'night' | 'morning'): GuestRequest[] =>
  * stroke keeps an even width (non-scaling-stroke) and each part (the turn, then the overshoot) is revealed
  * through its own mask stroke, whose dash runs in the unit box where pathLength is exact.
  */
-export const MarkerCircle: React.FC<{progress: number; color: string; pad?: number; strokeWidth?: number; seed?: string}> = ({progress, color, pad = 7, strokeWidth = 2.5, seed = 'm'}) => {
+export const MarkerCircle: React.FC<{progress: number; color: string; pad?: number; padY?: number; strokeWidth?: number; seed?: string}> = ({progress, color, pad = 7, padY, strokeWidth = 2.5, seed = 'm'}) => {
+  const py = padY ?? pad * 0.8;
   const uid = `mc${React.useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const p = Math.max(0, Math.min(1, progress));
   if (p <= 0) return null;
@@ -128,7 +129,7 @@ export const MarkerCircle: React.FC<{progress: number; color: string; pad?: numb
     <svg
       viewBox="0 0 1 1"
       preserveAspectRatio="none"
-      style={{position: 'absolute', left: -pad, top: -pad * 0.8, width: `calc(100% + ${pad * 2}px)`, height: `calc(100% + ${pad * 1.6}px)`, overflow: 'visible', pointerEvents: 'none', zIndex: 3}}
+      style={{position: 'absolute', left: -pad, top: -py, width: `calc(100% + ${pad * 2}px)`, height: `calc(100% + ${py * 2}px)`, overflow: 'visible', pointerEvents: 'none', zIndex: 3}}
       aria-hidden
     >
       <defs>
@@ -159,6 +160,8 @@ export type RowFx = {
   collapse?: number;
   /** Show only the top N CSS px of the row (a collage crop, S20 article 1). */
   maxHeight?: number;
+  /** Hide this many CSS px from the top of the row (with maxHeight: a window into the row, e.g. S20's 70 px strip of article 1 skipping its top padding). */
+  cropTop?: number;
   /** 0..1 focus ring on the row (S22: 2px primary at 30%). */
   focus?: number;
   /** Everything in the message except "Quoted total: $X" is dimmed/blurred (S20: 0.4 and ~1.4px). */
@@ -220,7 +223,7 @@ export const MessageRow: React.FC<MessageRowProps> = ({request: r, fx = {}, divi
             }}
           >
             {m[0]}
-            {fx.total?.circle ? <MarkerCircle progress={fx.total.circle} color={fx.total.circleColor ?? t.destructive} seed={`${r.id}total`} pad={8} /> : null}
+            {fx.total?.circle ? <MarkerCircle progress={fx.total.circle} color={fx.total.circleColor ?? t.destructive} seed={`${r.id}total`} pad={11} padY={5} /> : null}
           </span>
           <span style={dimStyle}>{text.slice(m.index + m[0].length)}</span>
         </>
@@ -243,7 +246,8 @@ export const MessageRow: React.FC<MessageRowProps> = ({request: r, fx = {}, divi
         boxShadow: focus > 0 ? `inset 0 0 0 2px ${alpha(t.primary, 0.3 * focus)}` : undefined,
         opacity: fx.opacity ?? 1,
         transform: fx.x ? `translateX(${fx.x}px)` : undefined,
-        maxHeight: fx.maxHeight,
+        maxHeight: fx.maxHeight !== undefined ? fx.maxHeight + (fx.cropTop ?? 0) : undefined,
+        marginTop: fx.cropTop ? -fx.cropTop : undefined,
         overflow: fx.maxHeight !== undefined ? 'hidden' : undefined,
         boxSizing: 'border-box',
       }}
@@ -296,11 +300,12 @@ export const MessageRow: React.FC<MessageRowProps> = ({request: r, fx = {}, divi
     </article>
   );
 
-  if (collapse <= 0) return body;
+  const cropped = fx.cropTop ? <div style={{overflow: 'hidden'}}>{body}</div> : body;
+  if (collapse <= 0) return cropped;
   // grid-template-rows 1fr -> 0fr interpolates the row height without measuring it.
   return (
     <div style={{display: 'grid', gridTemplateRows: `${1 - collapse}fr`}}>
-      <div style={{minHeight: 0, overflow: 'hidden'}}>{body}</div>
+      <div style={{minHeight: 0, overflow: 'hidden'}}>{cropped}</div>
     </div>
   );
 };

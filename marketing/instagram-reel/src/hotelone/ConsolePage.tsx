@@ -8,7 +8,7 @@ import React from 'react';
 import {Icon} from './icons.tsx';
 import {MessagesList, type GuestRequest, type RowFx} from './Messages.tsx';
 import {Avatar, SegmentedControl, type SegmentedProps} from './primitives.tsx';
-import {alpha, RADIUS, shadow, uiFont, useHO, type Mode} from './tokens.ts';
+import {alpha, mix, RADIUS, shadow, uiFont, useHO, type Mode} from './tokens.ts';
 
 /** The story's property and user. */
 export const STARLITE = 'Starlite Motor Court';
@@ -24,8 +24,10 @@ export type ConsoleHeaderProps = {
   user?: string;
   /**
    * Content scrolls beneath the pinned header. The app's .glass is surface/72% + backdrop saturate(180%) blur(14px);
-   * the renderer's headless Chrome does not paint backdrop-filter (the text beneath showed through sharp), so this
-   * stands in for the blurred wash with the surface at 96%. With nothing beneath (default), the 72% tint is exact.
+   * the renderer's headless Chrome does not paint backdrop-filter (the text beneath showed through sharp, reading as a
+   * glitch), so this stands in for the blurred wash: a 14px blur of a mostly-background page averages to the page
+   * background, so the bar is surface at 72% over the page background, made opaque. With nothing beneath (default),
+   * the plain 72% tint is exact.
    */
   blur?: boolean;
   mode?: Mode;
@@ -48,7 +50,7 @@ export const ConsoleHeader: React.FC<ConsoleHeaderProps> = ({property = STARLITE
         position: 'relative',
         zIndex: 40,
         // .glass = surface at 72% + saturate(180%) blur(14px) of whatever scrolls beneath (see `blur`).
-        background: alpha(t.surface, blur ? 0.96 : 0.72),
+        background: blur ? mix(t.background, t.surface, 0.72) : alpha(t.surface, 0.72),
         borderBottom: `1px solid ${t.border}`,
         ...style,
       }}
