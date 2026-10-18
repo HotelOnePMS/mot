@@ -76,6 +76,8 @@ export async function searchBookings(actor: Actor, q: BookingSearch): Promise<Bo
             { user: { firstName: { contains: text, mode: 'insensitive' } } },
             { user: { lastName: { contains: text, mode: 'insensitive' } } },
             { user: { email: { contains: text, mode: 'insensitive' } } },
+            // Direct (API-key) bookings keep the guest's contact email on the booking; the guest record has a placeholder.
+            { guestEmail: { contains: text, mode: 'insensitive' } },
             { user: { phone: { contains: text } } },
             ...nameParts(text),
           ],

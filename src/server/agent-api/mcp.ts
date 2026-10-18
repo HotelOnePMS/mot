@@ -15,7 +15,7 @@ import { formatDay, hotelToday } from '../dates';
 import { DomainError } from '../errors';
 import { prisma } from '@/lib/prisma';
 import { skillCatalogText } from '../skills';
-import { clientIp, consumeAgentLimit, corsHeaders, errorHeaders, originAllowed } from './http';
+import { MAX_MCP_BODY_BYTES, clientIp, consumeAgentLimit, corsHeaders, errorHeaders, originAllowed, readBodyText } from './http';
 import { agentKeyFromRequest, keyCanBook, type AgentKeyContext } from './keys';
 import { callTool, isToolName, listTools, type ScopedHotel, type ToolContext } from './tools';
 import type { RateLimitResult } from '../concierge';
@@ -27,7 +27,6 @@ export const MCP_LATEST_VERSION = MCP_PROTOCOL_VERSIONS[0];
 export const MCP_SERVER_VERSION = '1.0.0';
 export const MCP_METHODS = 'POST, GET, DELETE, OPTIONS';
 
-const MAX_BODY_BYTES = 256 * 1024;
 const MAX_BATCH = 20;
 
 /** JSON-RPC error codes: the standard ones and this server's (-32000…-32099). */
@@ -216,8 +215,13 @@ export async function handleMcpPost(request: Request, propertyId: string | null 
       return reply(request, 400, rpcError(null, RPC.INVALID_REQUEST, `Unsupported MCP-Protocol-Version "${version}". Supported: ${MCP_PROTOCOL_VERSIONS.join(', ')}.`));
     }
 
-    const text = await request.text();
-    if (text.length > MAX_BODY_BYTES) return reply(request, 413, rpcError(null, RPC.INVALID_REQUEST, 'Request body is too large.'));
+    let text: string;
+    try {
+      text = await readBodyText(request, MAX_MCP_BODY_BYTES);
+    } catch (e) {
+      if (e instanceof DomainError && e.status === 413) return reply(request, 413, rpcError(null, RPC.INVALID_REQUEST, e.message));
+      throw e;
+    }
     let body: unknown;
     try {
       body = JSON.parse(text);

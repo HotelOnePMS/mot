@@ -159,14 +159,38 @@ export async function submitBookingRequest(propertyId: string, a: BookingRequest
 /** Normalises a spoken or typed confirmation code ("abc-123" → "ABC123"). */
 export const normalizeBookingCode = (code: string) => code.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+/** A name for comparing: trimmed, single spaces, lower case. */
+const nameKey = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
+
+/**
+ * Whether the last name a guest gives matches the one stored. Exact (case
+ * and spacing aside) for every booking. Direct bookings by API key store
+ * everything after the first word of the name the integration sent ("Mary
+ * Jane Watson" → "Jane Watson"), so for those (`direct`) the trailing words
+ * also match ("Watson", "Jane Watson") — the confirmation code is still
+ * required either way.
+ */
+export function lastNameMatches(stored: string, given: string, direct: boolean): boolean {
+  const s = nameKey(stored);
+  const g = nameKey(given);
+  if (!g || !s) return false;
+  if (s === g) return true;
+  return direct && s.endsWith(` ${g}`);
+}
+
 /**
  * Finds a booking by confirmation code and the guest's last name (both must
- * match; case-insensitive name). Scoped to one hotel when `propertyId` is
- * given (the hotel voice tools); codes are unique platform-wide otherwise.
+ * match; see lastNameMatches). Scoped to one hotel when `propertyId` is given
+ * (the hotel voice tools); codes are unique platform-wide otherwise.
  */
 export async function lookupBooking(q: { propertyId?: string; code: string; lastName: string }) {
-  return prisma.booking.findFirst({
-    where: { ...(q.propertyId ? { propertyId: q.propertyId } : {}), code: normalizeBookingCode(q.code), user: { lastName: { equals: q.lastName.trim(), mode: 'insensitive' } } },
-    include: { roomType: { select: { name: true } }, property: { select: { id: true, name: true, phone: true } } },
+  const code = normalizeBookingCode(q.code);
+  if (!code) return null;
+  const found = await prisma.booking.findFirst({
+    where: { ...(q.propertyId ? { propertyId: q.propertyId } : {}), code },
+    include: { roomType: { select: { name: true } }, property: { select: { id: true, name: true, phone: true } }, user: { select: { lastName: true } } },
   });
+  if (!found || !lastNameMatches(found.user.lastName, q.lastName, !!found.guestEmail)) return null;
+  const { user: _user, ...booking } = found;
+  return booking;
 }

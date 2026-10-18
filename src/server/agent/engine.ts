@@ -92,16 +92,19 @@ async function* runIntents(ctx: ToolCtx, intents: Intent[], state: RunState, opt
   }
 }
 
-/** Signs the gathered writes into one plan (or says they were held back). Returns the plan title. */
+/**
+ * Signs the gathered writes into one plan (or says they were held back).
+ * Returns the plan title, which only ever describes the real steps — never a
+ * shortcut's name, which anyone who saved it chose.
+ */
 async function* finishPlan(
   ctx: ToolCtx,
   state: RunState,
   intents: Intent[],
-  opts: { titlePrefix?: string; shape?: { shape: string; template: string } } = {}
+  opts: { shape?: { shape: string; template: string } } = {}
 ): AsyncGenerator<AgentEvent, string | undefined> {
   if (state.steps.length && !state.aborted) {
-    const base = state.steps.length === 1 ? state.steps[0].summary : titleFor(intents, state.steps);
-    const planTitle = opts.titlePrefix ? `${opts.titlePrefix}: ${base}` : base;
+    const planTitle = state.steps.length === 1 ? state.steps[0].summary : titleFor(intents, state.steps);
     const { token, expiresAt } = signPlan({ userId: ctx.actor.userId, propertyId: ctx.propertyId, title: planTitle, steps: state.steps, shape: opts.shape });
     const block: AgentBlock = {
       type: 'plan',
@@ -217,7 +220,7 @@ export async function* runAgent(input: AgentRunInput): AsyncGenerator<AgentEvent
       }
       yield* runIntents({ ...ctx, message: step }, intents, state);
     }
-    const planTitle = yield* finishPlan(ctx, state, all, { titlePrefix: hit.skill.title });
+    const planTitle = yield* finishPlan(ctx, state, all);
     if (!state.steps.length) yield { type: 'block', block: { type: 'result', ok: !state.problem, title: state.problem ? `“${hit.skill.title}” needs a look` : `Ran “${hit.skill.title}”`, lines: exp.steps.map((s) => `${state.problem ? '○' : '✓'} ${s}`) } };
     yield { type: 'context', context: state.memory };
     await audit(planTitle ? `Ran the shortcut “${hit.skill.title}” → proposed ${planTitle}` : `Ran the shortcut “${hit.skill.title}”`, { intents: all.map((i) => i.kind), shortcut: hit.skill.key, engine: 'skills' });
