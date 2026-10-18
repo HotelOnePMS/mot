@@ -1,6 +1,7 @@
 import React from 'react';
 import {Composition} from 'remotion';
 import {Reel, type ReelProps} from './Reel.tsx';
+import {Cover} from './Cover.tsx';
 import {FPS, HEIGHT, TOTAL_FRAMES, WIDTH} from './timeline.ts';
 
 /**
@@ -18,6 +19,7 @@ export const Root: React.FC = () => (
   <>
     <Composition id="Reel" component={Reel} durationInFrames={TOTAL_FRAMES} fps={FPS} width={WIDTH} height={HEIGHT} defaultProps={{placement: 'organic', withAudio: true} satisfies ReelProps} />
     <Composition id="ReelSilent" component={Reel} durationInFrames={TOTAL_FRAMES} fps={FPS} width={WIDTH} height={HEIGHT} defaultProps={{placement: 'organic', withAudio: false} satisfies ReelProps} />
+    <Composition id="Cover" component={Cover} durationInFrames={1} fps={FPS} width={WIDTH} height={HEIGHT} />
     {PREVIEWS.map((p) => (
       <Composition key={p.id} id={p.id} component={p.component} durationInFrames={p.durationInFrames} fps={FPS} width={p.width ?? WIDTH} height={p.height ?? HEIGHT} />
     ))}
