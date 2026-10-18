@@ -16,7 +16,7 @@
 // geography holds up at phone size.
 import React from 'react';
 import {AbsoluteFill, random} from 'remotion';
-import {NIGHT} from '../theme.ts';
+import {DARK, FONT, NIGHT} from '../theme.ts';
 import {LobbyArt, type LobbyProps} from './Lobby.tsx';
 import {Glint, RitaSign, Sedan, StarliteSign, Stars, alpha, clamp01, mix, useUid} from './parts.tsx';
 
@@ -202,7 +202,7 @@ const Motel: React.FC<{side: -1 | 1; color: string; soft: string; neon: number; 
       <path d={fq(FACADE, BACK, 3.02, 3.14)} fill={color} opacity={0.4 + 0.6 * lit} />
       {/* OFFICE sign */}
       <path d={fq(10.9, 13.7, 3.45, 4.08)} fill={NIGHT.ink} />
-      <text x={office.x} y={office.y + 0.12 * pxm} textAnchor="middle" fontFamily="'Inter Tight', sans-serif" fontWeight={800} fontSize={0.42 * pxm} letterSpacing={0.06 * pxm} fill={mix(mix(NIGHT.ink, color, 0.4), soft, lit)}>
+      <text x={office.x} y={office.y + 0.12 * pxm} textAnchor="middle" fontFamily={FONT.tight} fontWeight={800} fontSize={0.42 * pxm} letterSpacing={0.06 * pxm} fill={mix(mix(NIGHT.ink, color, 0.4), soft, lit)}>
         OFFICE
       </text>
       <path d={onFacade(s * FACADE, 0, ROOF, NEAR, NEAR + 0.01)} fill="none" stroke={alpha(soft, 0.45 * lit)} strokeWidth={1.6} />
@@ -238,6 +238,75 @@ const RoadWear: React.FC = () => (
     })}
   </g>
 );
+
+/**
+ * The lot strip between the road and each facade: painted stall lines (cars
+ * park nose-in to the rooms, as Rita does at Gus's office) and warm light
+ * spilling from a few occupied rooms just past the canopy.
+ */
+const LotMarks: React.FC<{side: -1 | 1; color: string; neon: number; label: string}> = ({side, color, neon, label}) => {
+  const s = side;
+  const stalls = [31.6, 36.2, 40.8, 45.4, 50, 54.6, 59.2, 63.8];
+  return (
+    <g>
+      {stalls.map((z) => (
+        <path key={z} d={onGround(s * 5.3, s * 8.3, z, z + 0.14)} fill={mix(NIGHT.grey, color, 0.25)} opacity={0.2 + 0.16 * neon * Math.max(0, 1 - (z - 30) / 30)} />
+      ))}
+      {[38.5, 43.2, 47.9, 52.6, 57.3, 62, 66.7, 71.4].map((z, i) =>
+        random(`room-${label}-${i}`) > 0.7 ? <path key={z} d={onGround(s * 6.6, s * 8.5, z + 1.2, z + 3.8)} fill={NIGHT.brassLight} opacity={0.07} /> : null,
+      )}
+      {/* concrete wheel stops */}
+      {stalls.slice(0, 6).map((z) => (
+        <path key={`ws${z}`} d={onGround(s * 8.7, s * 8.95, z + 0.9, z + 3.4)} fill={mix(NIGHT.ink, NIGHT.grey, 0.18)} />
+      ))}
+    </g>
+  );
+};
+
+/**
+ * Damp asphalt: each sign lays a long soft streak down its own lane toward the
+ * camera (red in Rita's lane, teal in the Starlite's), dipping with its neon.
+ * Drawn on the ground plane, so it stays put under the crane move.
+ */
+const WetReflections: React.FC<{rN: number; sN: number; uid: string}> = ({rN, sN, uid}) => {
+  const top = project(0, 0, 44).y;
+  const peak = project(0, 0, 26).y;
+  const bottom = project(0, 0, 12).y;
+  // a soft core across the lane: stacked trapezoids, narrower = brighter
+  const lane = (side: -1 | 1, k: number, key: string) => (
+    <g key={key} opacity={clamp01(k)}>
+      {[
+        [3.95, 0.7, 0.55],
+        [3.6, 1.2, 0.6],
+        [3.25, 1.75, 0.7],
+        [2.95, 2.2, 0.8],
+      ].map(([a, b, o]) => (
+        <path key={a} d={onGround(side * a, side * b, 12, 44)} fill={`url(#${uid}${key})`} opacity={o} />
+      ))}
+    </g>
+  );
+  return (
+    <g>
+      <defs>
+        {(
+          [
+            ['wr', NIGHT.red],
+            ['wt', NIGHT.teal],
+          ] as const
+        ).map(([k, c]) => (
+          <linearGradient key={k} id={`${uid}${k}`} x1="0" y1={top} x2="0" y2={bottom} gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor={c} stopOpacity={0} />
+            <stop offset={(peak - top) / (bottom - top)} stopColor={c} stopOpacity={0.085} />
+            <stop offset="0.75" stopColor={c} stopOpacity={0.03} />
+            <stop offset="1" stopColor={c} stopOpacity={0} />
+          </linearGradient>
+        ))}
+      </defs>
+      {lane(-1, rN, 'wr')}
+      {lane(1, sN, 'wt')}
+    </g>
+  );
+};
 
 /** Road-edge reflectors catching each motel's neon. */
 const Reflectors: React.FC<{rN: number; sN: number}> = ({rN, sN}) => (
@@ -293,8 +362,8 @@ const Crane: React.FC<Required<Pick<HighwayProps, 'ritaNeon' | 'starliteNeon' | 
         </linearGradient>
         <linearGradient id={`${uid}road`} x1="0" y1={HZ} x2="0" y2="2100" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor={mix(NIGHT.wall, NIGHT.grey, 0.06)} />
-          <stop offset="0.3" stopColor={mix(NIGHT.ink, '#131720', 0.9)} />
-          <stop offset="1" stopColor={mix(NIGHT.ink, '#131720', 0.5)} />
+          <stop offset="0.3" stopColor={mix(NIGHT.ink, DARK.surface, 0.9)} />
+          <stop offset="1" stopColor={mix(NIGHT.ink, DARK.surface, 0.5)} />
         </linearGradient>
         <radialGradient id={`${uid}hl`} cx={0.5} cy={0.5} r={0.5}>
           <stop offset="0" stopColor={NIGHT.red} stopOpacity={0.5} />
@@ -326,7 +395,7 @@ const Crane: React.FC<Required<Pick<HighwayProps, 'ritaNeon' | 'starliteNeon' | 
       <path d={onGround(-ROAD + 0.15, -ROAD + 0.3, 8, 4000)} fill={alpha(NIGHT.grey, 0.18)} />
       <path d={onGround(ROAD - 0.3, ROAD - 0.15, 8, 4000)} fill={alpha(NIGHT.grey, 0.18)} />
       {dashes.map((d, i) => (
-        <path key={i} d={d} fill="#2b303b" />
+        <path key={i} d={d} fill={DARK.border} />
       ))}
       {/* neon pools on the ground and the road edges */}
       <ellipse cx={ritaBase.x + 40} cy={ritaBase.y - 120} rx={380} ry={150} fill={`url(#${uid}hl)`} opacity={0.9 * rN} />
@@ -358,9 +427,12 @@ const Crane: React.FC<Required<Pick<HighwayProps, 'ritaNeon' | 'starliteNeon' | 
       {/* the motels */}
       <Scrub />
       <RoadWear />
+      <WetReflections rN={rN} sN={sN} uid={uid} />
       <Reflectors rN={rN} sN={sN} />
       <Motel side={-1} color={NIGHT.red} soft={NIGHT.redSoft} neon={rN} pulse={missedPulse} uid={uid} label="rita" />
       <Motel side={1} color={NIGHT.teal} soft={NIGHT.tealSoft} neon={sN} uid={uid} label="starlite" />
+      <LotMarks side={-1} color={NIGHT.red} neon={rN} label="rita" />
+      <LotMarks side={1} color={NIGHT.teal} neon={sN} label="starlite" />
       {/* Rita's sedan, nose-in to Gus's office */}
       <g transform={`translate(${car.x} ${car.y - car.h * 0.0}) scale(${car.w / 300})`}>
         <Sedan rim={NIGHT.teal} rimAmount={0.55 + 0.4 * sN} />
@@ -385,6 +457,10 @@ const Crane: React.FC<Required<Pick<HighwayProps, 'ritaNeon' | 'starliteNeon' | 
 export const FACADE_BOX = {x0: -260, y0: -200, x1: 1340, y1: 2120} as const;
 /** Where Rita's office plate window sits in the facade art. */
 export const FACADE_WINDOW = {x: 290, y: 820, w: 580, h: 340} as const;
+/** The lobby inside the plate window: LobbyArt scaled by FACADE_LOBBY.scale with its phone-screen area centred near the window's middle. */
+const FACADE_LOBBY = {x: FACADE_WINDOW.x + FACADE_WINDOW.w * 0.46, y: FACADE_WINDOW.y + FACADE_WINDOW.h * 0.46, scale: 0.66, ax: 505, ay: 895} as const;
+/** Set point of the lobby → facade units (e.g. to find her phone through the glass). */
+export const facadeLobbyPoint = (p: {x: number; y: number}) => ({x: FACADE_LOBBY.x + (p.x - FACADE_LOBBY.ax) * FACADE_LOBBY.scale, y: FACADE_LOBBY.y + (p.y - FACADE_LOBBY.ay) * FACADE_LOBBY.scale});
 
 /**
  * Rita's Motor Inn seen front-on from across the highway: the red arrow sign
@@ -400,8 +476,7 @@ export const RitasMotelFacade: React.FC<{neon?: number; lobby?: Omit<LobbyProps,
   const C = NIGHT.red;
   const stucco = mix(NIGHT.wallLow, C, 0.14 + 0.1 * lit);
   // map the lobby's counter/phone region into the window
-  const ls = 0.66;
-  const lobbyT = `translate(${W.x + W.w * 0.46} ${W.y + W.h * 0.46}) scale(${ls}) translate(-505 -895)`;
+  const lobbyT = `translate(${FACADE_LOBBY.x} ${FACADE_LOBBY.y}) scale(${FACADE_LOBBY.scale}) translate(${-FACADE_LOBBY.ax} ${-FACADE_LOBBY.ay})`;
   return (
     <g>
       <defs>
@@ -420,7 +495,7 @@ export const RitasMotelFacade: React.FC<{neon?: number; lobby?: Omit<LobbyProps,
           <stop offset="1" stopColor={C} stopOpacity={0} />
         </radialGradient>
         <linearGradient id={`${uid}road`} x1="0" y1="1240" x2="0" y2={FACADE_BOX.y1} gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor={mix(NIGHT.ink, '#131720', 0.9)} />
+          <stop offset="0" stopColor={mix(NIGHT.ink, DARK.surface, 0.9)} />
           <stop offset="1" stopColor={NIGHT.ink} />
         </linearGradient>
         <linearGradient id={`${uid}streak`} x1="0" y1="0" x2="1" y2="0">
@@ -453,7 +528,7 @@ export const RitasMotelFacade: React.FC<{neon?: number; lobby?: Omit<LobbyProps,
           <rect x={x} y={900} width={80} height={280} fill={mix(NIGHT.ink, NIGHT.wall, 0.7)} />
           <rect x={x + 6} y={906} width={68} height={274} fill="none" stroke={alpha(NIGHT.redSoft, 0.12)} strokeWidth={2} />
           <circle cx={x + 66} cy={1050} r={4} fill={NIGHT.brass} opacity={0.6} />
-          <text x={x + 40} y={950} textAnchor="middle" fontFamily="'JetBrains Mono', monospace" fontWeight={700} fontSize={22} fill={alpha(NIGHT.brass, 0.6)}>
+          <text x={x + 40} y={950} textAnchor="middle" fontFamily={FONT.mono} fontWeight={700} fontSize={22} fill={alpha(NIGHT.brass, 0.6)}>
             {`${i + 1}`}
           </text>
           <circle cx={x + 40} cy={870} r={6} fill={NIGHT.brassLight} opacity={0.8} />
@@ -484,11 +559,12 @@ export const RitasMotelFacade: React.FC<{neon?: number; lobby?: Omit<LobbyProps,
       <rect x={910} y={840} width={100} height={340} fill={mix(NIGHT.ink, C, 0.22)} />
       <ellipse cx={960} cy={920} rx={70} ry={60} fill={C} opacity={0.25 * lit} filter={`url(#${uid}b)`} />
       <g transform="translate(960 0)">
-        <rect x={-44} y={880} width={88} height={74} rx={10} fill="none" stroke={C} strokeWidth={2.4} opacity={0.4 + 0.6 * lit} />
-        <text x={0} y={916} textAnchor="middle" fontFamily="'Fraunces', serif" fontStyle="italic" fontWeight={700} fontSize={30} fill={mix(mix(NIGHT.ink, C, 0.4), NIGHT.redSoft, lit)} stroke={C} strokeWidth={0.8} paintOrder="stroke">
-          Rita’s
+        {/* the same sign whose back Rita's lobby shows mirrored on frame 0 */}
+        <rect x={-44} y={882} width={88} height={68} rx={10} fill="none" stroke={C} strokeWidth={2.4} opacity={0.4 + 0.6 * lit} />
+        <text x={0} y={915} textAnchor="middle" fontFamily={FONT.tight} fontWeight={900} fontSize={23} letterSpacing={0.6} fill={mix(mix(NIGHT.ink, C, 0.4), mix(NIGHT.redSoft, NIGHT.ivory, 0.25), lit)} stroke={C} strokeWidth={0.8} paintOrder="stroke">
+          RITA’S
         </text>
-        <text x={0} y={940} textAnchor="middle" fontFamily="'Inter Tight', sans-serif" fontWeight={800} fontSize={12} letterSpacing={1.2} fill={mix(mix(NIGHT.ink, C, 0.4), NIGHT.redSoft, lit)}>
+        <text x={0} y={937} textAnchor="middle" fontFamily={FONT.tight} fontWeight={800} fontSize={11} letterSpacing={1.4} fill={mix(mix(NIGHT.ink, C, 0.4), NIGHT.redSoft, lit)}>
           MOTOR INN
         </text>
       </g>
@@ -515,7 +591,7 @@ export const RitasMotelFacade: React.FC<{neon?: number; lobby?: Omit<LobbyProps,
           <rect x={FACADE_BOX.x0} y={1350} width={FACADE_BOX.x1 - FACADE_BOX.x0} height={FACADE_BOX.y1 - 1350} fill={`url(#${uid}road)`} />
           <rect x={FACADE_BOX.x0} y={1350} width={FACADE_BOX.x1 - FACADE_BOX.x0} height={4} fill={alpha(NIGHT.grey, 0.2)} />
           {Array.from({length: 9}, (_, i) => (
-            <rect key={i} x={FACADE_BOX.x0 + 40 + i * 200} y={1600} width={110} height={10} fill="#2b303b" />
+            <rect key={i} x={FACADE_BOX.x0 + 40 + i * 200} y={1600} width={110} height={10} fill={DARK.border} />
           ))}
         </g>
       ) : null}

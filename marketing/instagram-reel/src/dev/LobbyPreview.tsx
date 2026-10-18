@@ -6,10 +6,11 @@
 //   f120–149 red, S19 pull-back/pan (0.92, x -260), phone soft-focus, glint
 //   f150–179 red, missed (lock screen) at S19 crop
 //   f180–209 teal, blinds closed ('none'), dark
+//   f210–239 teal, S07: Rita calling the Starlite (RITA_NUMBER, clock 2:21), ringing
 import React from 'react';
 import {AbsoluteFill, interpolate, Easing, useCurrentFrame} from 'remotion';
 import {loadFonts} from '../fonts.ts';
-import {Lobby, HOOK_CROP, buzzOffset, lobbyToFrame, LOBBY} from '../set/Lobby.tsx';
+import {Lobby, HOOK_CROP, RITA_NUMBER, buzzOffset, lobbyToFrame, LOBBY} from '../set/Lobby.tsx';
 import {FONT, NIGHT} from '../theme.ts';
 
 loadFonts();
@@ -58,7 +59,13 @@ const LobbyPreviewComp: React.FC = () => {
     );
   }
   if (seg === 5) return (<AbsoluteFill><Lobby tint="red" phoneState="missed" crop={{scale: 0.92, x: -260, y: 0}} /><Label text="red · missed" /></AbsoluteFill>);
-  return (<AbsoluteFill><Lobby tint="teal" windowView="none" phoneState="dark" /><Label text="teal · blinds · dark" /></AbsoluteFill>);
+  if (seg === 6) return (<AbsoluteFill><Lobby tint="teal" windowView="none" phoneState="dark" /><Label text="teal · blinds · dark" /></AbsoluteFill>);
+  return (
+    <AbsoluteFill>
+      <Lobby tint="teal" screenNumber={RITA_NUMBER} clock="2:21" crop={{scale: 0.8, x: 0, y: -330}} buzz={buzzOffset(lf, 1)} ringPulse={0.8} />
+      <Label text="teal · S07 · Rita calling" />
+    </AbsoluteFill>
+  );
 };
 
-export const preview = {id: 'LobbyPreview', component: LobbyPreviewComp, durationInFrames: 210};
+export const preview = {id: 'LobbyPreview', component: LobbyPreviewComp, durationInFrames: 240};

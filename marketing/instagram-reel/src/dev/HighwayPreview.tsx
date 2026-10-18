@@ -4,13 +4,13 @@
 import React from 'react';
 import {AbsoluteFill, Easing, interpolate, useCurrentFrame} from 'remotion';
 import {loadFonts} from '../fonts.ts';
+import {missedPulse} from '../marks.ts';
 import {Highway, HIGHWAY} from '../set/Highway.tsx';
 import {buzzOffset} from '../set/Lobby.tsx';
 import {FONT, NIGHT} from '../theme.ts';
 
 loadFonts();
 
-const pulse = (sec: number) => 0.5 + 0.5 * Math.cos(2 * Math.PI * (sec - 0.5));
 
 const HighwayPreviewComp: React.FC = () => {
   const frame = useCurrentFrame();
@@ -20,7 +20,7 @@ const HighwayPreviewComp: React.FC = () => {
     const y = interpolate(k, [0, 1], [180, 0]);
     return (
       <AbsoluteFill>
-        <Highway camera={{scale, x: 0, y}} ritaNeon={frame >= 21 && frame < 24 ? 0.25 : 1} starliteNeon={frame >= 42 && frame < 45 ? 0.25 : 1} missedPulse={pulse(9 + frame / 30)} carGlint={0} />
+        <Highway camera={{scale, x: 0, y}} ritaNeon={frame >= 21 && frame < 24 ? 0.25 : 1} starliteNeon={frame >= 42 && frame < 45 ? 0.25 : 1} missedPulse={missedPulse(9 + frame / 30)} carGlint={0} />
         <svg width={1080} height={1920} style={{position: 'absolute', inset: 0}}>
           {frame >= 33 ? (
             <>

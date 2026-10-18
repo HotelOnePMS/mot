@@ -1,18 +1,18 @@
 // Dev preview for src/set/CarInterior.tsx.
 //   f0–29    S04 rest framing, all layers, tonight's "20s" stroke-drawing with the pen
 //   f30–59   S12 top-down pad (StenoPad): "Fri 23", "$119?!", underline, "(I’m $129)" drawing, light bands
-//   f60–89   S17: push into the rearview mirror (mirrorCamera), 1 Hz glow, thermos steam
-//   f90–119  S21 dawn ramp through the windshield, sign switching off
-//   f120–149 back + front layers split (a stand-in block where Rita sits)
+//   f60–89   S17: mirrorCamera(300, 520, 480, depth 0.1) pushed 1→2.4 about (540, 760), outside dimmed 0.7, thermos out of the holder
+//   f90–119  S21 dawn ramp through the windshield, sign switching off, pad on the floor mat
+//   f120–149 back + front layers split (a stand-in block where Rita sits), S04 dolly-out 1.8→1 (parallax)
 import React from 'react';
 import {AbsoluteFill, Easing, interpolate, useCurrentFrame} from 'remotion';
 import {loadFonts} from '../fonts.ts';
-import {CarInterior, StenoPad, mirrorCamera} from '../set/CarInterior.tsx';
+import {missedPulse} from '../marks.ts';
+import {CarInterior, PAD_ON_FLOOR, StenoPad, mirrorCamera, pushCamera} from '../set/CarInterior.tsx';
 import {FONT, NIGHT} from '../theme.ts';
 
 loadFonts();
 
-const pulse = (sec: number) => 0.5 + 0.5 * Math.cos(2 * Math.PI * (sec - 0.5));
 const Label: React.FC<{text: string}> = ({text}) => (
   <div style={{position: 'absolute', left: 24, bottom: 24, fontFamily: FONT.mono, fontSize: 26, color: NIGHT.brass, background: 'rgba(7,9,13,0.7)', padding: '6px 12px', borderRadius: 8}}>{text}</div>
 );
@@ -23,7 +23,12 @@ const CarPreviewComp: React.FC = () => {
   const lf = frame % 30;
   if (seg === 0) {
     const p = interpolate(lf, [3, 21], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
-    return (<AbsoluteFill><CarInterior pad={{tonight: p}} pen={p > 0 && p < 1} mirrorPulse={pulse(7 + lf / 30)} /><Label text={`S04 · tonight ${p.toFixed(2)}`} /></AbsoluteFill>);
+    return (
+      <AbsoluteFill>
+        <CarInterior pad={{tonight: p}} pen={p > 0 && p < 1} mirrorPulse={missedPulse(7 + lf / 30)} />
+        <Label text={`S04 · tonight ${p.toFixed(2)}`} />
+      </AbsoluteFill>
+    );
   }
   if (seg === 1) {
     const t = lf / 29;
@@ -36,27 +41,36 @@ const CarPreviewComp: React.FC = () => {
     );
   }
   if (seg === 2) {
-    const k = interpolate(lf, [0, 29], [0, 1], {easing: Easing.inOut(Easing.cubic)});
-    const base = mirrorCamera(300, 520, 480);
-    const cam = {...base, scale: base.scale * (1 + 1.4 * k), x: base.x * (1 + 1.4 * k) + (540 - 540 * (1 + 1.4 * k)) * 0, y: base.y};
-    // grow about the mirror's centre (540, 640)
-    const s = 1 + 1.4 * k;
-    const camera = {scale: base.scale * s, ox: 0, oy: 0, x: 540 - (540 - base.x) * s, y: 640 - (640 - base.y) * s};
-    void cam;
-    return (<AbsoluteFill><CarInterior camera={camera} mirrorPulse={pulse(37 + lf / 20)} steam={1} time={lf / 30} /><Label text={`S17 mirror push ${s.toFixed(2)}`} /></AbsoluteFill>);
+    const k = interpolate(lf, [0, 29], [1, 2.4], {easing: Easing.inOut(Easing.cubic)});
+    const camera = pushCamera(mirrorCamera(300, 520, 480, 0.1), k, 540, 760);
+    return (
+      <AbsoluteFill>
+        <CarInterior camera={camera} mirrorPulse={missedPulse(37 + lf / 20)} thermos={false} outsideDim={0.7} office={{clock: '2:22'}} />
+        <Label text={`S17 mirror push ${k.toFixed(2)}`} />
+      </AbsoluteFill>
+    );
   }
   if (seg === 3) {
     const d = lf / 29;
-    return (<AbsoluteFill><CarInterior dawn={d} neon={lf > 15 ? 0 : 1} clock="6:52" pad={false} /><Label text={`S21 dawn ${d.toFixed(2)}`} /></AbsoluteFill>);
+    return (
+      <AbsoluteFill>
+        <CarInterior dawn={d} neon={lf > 15 ? 0 : 1} clock="6:52" pad={{tonight: 1, fri: 1, price: 1, underline: 1, margin: 1}} padAt={PAD_ON_FLOOR} />
+        <Label text={`S21 dawn ${d.toFixed(2)}`} />
+      </AbsoluteFill>
+    );
   }
+  const s = interpolate(lf, [0, 24], [1.8, 1], {extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic)});
+  const camera = {scale: s, x: 0, y: 0, ox: 470, oy: 760};
   return (
     <AbsoluteFill>
-      <CarInterior layer="back" />
+      <CarInterior layer="back" camera={camera} />
       <svg width={1080} height={1920} style={{position: 'absolute', inset: 0}}>
-        <path d="M180 1180 L240 820 Q300 640 470 640 Q600 650 610 760 L600 900 L640 1180 Z" fill="#1a1013" />
+        <g transform={`translate(470 760) scale(${s}) translate(-470 -760)`}>
+          <path d="M180 1180 L240 820 Q300 640 470 640 Q600 650 610 760 L600 900 L640 1180 Z" fill={NIGHT.redDeep} />
+        </g>
       </svg>
-      <CarInterior layer="front" pad={{tonight: 1}} />
-      <Label text="back / Rita stand-in / front" />
+      <CarInterior layer="front" camera={camera} pad={{tonight: 1}} />
+      <Label text={`back / Rita stand-in / front · dolly ${s.toFixed(2)}`} />
     </AbsoluteFill>
   );
 };

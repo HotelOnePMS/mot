@@ -86,7 +86,7 @@ export type LobbyProps = {
   windowView?: WindowView;
   /** 'ringing'/'incoming' = incoming-call UI; 'dark' = screen off; 'missed' = dim lock screen with a missed-call card. */
   phoneState?: PhoneState;
-  /** Number on the incoming-call UI and the missed card. Default red '(928) 555-0147', teal '(928) 555-0163'. */
+  /** Number on the incoming-call UI and the missed card. Default SAM_NUMBER (S01/S02/S18); pass RITA_NUMBER for Gus's phone during Rita's call (S07). */
   screenNumber?: string;
   /** Missed-call card title. */
   missedLabel?: string;
@@ -100,7 +100,7 @@ export type LobbyProps = {
   buzz?: number;
   /** 0..1 screen level multiplier (snap to black, the glow dying, a missed-call pulse). */
   screen?: number;
-  /** The LED wall clock, e.g. '2:13'. Also the phone's status-bar time unless statusTime is set. */
+  /** The LED wall clock. Also the phone's status-bar time unless statusTime is set. Default '2:13' red (S01/S18), '2:14' teal (S02: Sam tried Gus next). Pass '2:21' for the Starlite during Rita's call (S07/S08). */
   clock?: string;
   statusTime?: string;
   /** 0..1 neon level of the sign in the window (dips, flicker). */
@@ -117,7 +117,10 @@ export type LobbyProps = {
   crop?: Crop;
 };
 
-const DEFAULT_NUMBER = {red: '(928) 555-0147', teal: '(928) 555-0163'} as const;
+/** Sam Ortiz, the 2:13 caller: rings Rita's desk (S01/S18) and then Gus's (S02, "tried Gus next"). */
+export const SAM_NUMBER = '(928) 555-0147';
+/** Rita's own phone: what Gus's desk shows while she calls the Starlite (S07). */
+export const RITA_NUMBER = '(928) 555-0163';
 
 // ─── Small pieces ───────────────────────────────────────────────────────────
 
@@ -210,7 +213,7 @@ export const LobbyArt: React.FC<Omit<LobbyProps, 'crop'>> = ({
   ringPulse = 0,
   buzz = 0,
   screen = 1,
-  clock = '2:13',
+  clock,
   statusTime,
   windowNeon = 1,
   doorNeon = 1,
@@ -220,10 +223,11 @@ export const LobbyArt: React.FC<Omit<LobbyProps, 'crop'>> = ({
 }) => {
   const uid = useUid('lb');
   const T = TINT[tint];
+  const clockText = clock ?? (tint === 'red' ? '2:13' : '2:14');
   const K = T.key;
   const lbl = label ?? (tint === 'red' ? 'tape' : 'printed');
   const view: WindowView = windowView ?? (tint === 'red' ? 'starlite' : 'none');
-  const number = screenNumber ?? DEFAULT_NUMBER[tint];
+  const number = screenNumber ?? SAM_NUMBER;
   const id = (s: string) => `${uid}${s}`;
   const url = (s: string) => `url(#${uid}${s})`;
 
@@ -376,6 +380,9 @@ export const LobbyArt: React.FC<Omit<LobbyProps, 'crop'>> = ({
         <filter id={id('blur6')} x="-30%" y="-30%" width="160%" height="160%">
           <feGaussianBlur stdDeviation={6} />
         </filter>
+        <filter id={id('blur3')} x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation={3.2} />
+        </filter>
         <filter id={id('glow')} x="-40%" y="-40%" width="180%" height="180%">
           <feGaussianBlur stdDeviation={5} />
         </filter>
@@ -458,29 +465,28 @@ export const LobbyArt: React.FC<Omit<LobbyProps, 'crop'>> = ({
         <rect x={-92} y={538} width={244} height={545} fill={mix(NIGHT.ink, NIGHT.wall, 0.4)} />
         <rect x={-70} y={560} width={200} height={520} fill={url('doorglass')} />
         <g clipPath={url('door')}>
-          <ellipse cx={30} cy={740} rx={170} ry={150} fill={K} opacity={0.22 * doorNeon} filter={url('blur6')} />
-          {/* the sign hangs in the glass facing out: we read its back, mirror-reversed, out of focus */}
-          <g transform="translate(60 0) scale(-1 1)" filter={url('blur6')} opacity={0.95}>
-            <rect x={-82} y={658} width={164} height={130} rx={14} fill="none" stroke={K} strokeWidth={4} opacity={0.75 * doorNeon} />
-            {tint === 'red' ? (
-              <>
-                <text x={0} y={722} textAnchor="middle" fontFamily={FONT.display} fontStyle="italic" fontWeight={700} fontSize={54} fill={mix(K, T.soft, 0.6)} opacity={doorNeon}>
-                  Rita’s
-                </text>
-                <text x={0} y={764} textAnchor="middle" fontFamily={FONT.tight} fontWeight={800} fontSize={25} letterSpacing={2} fill={mix(K, T.soft, 0.5)} opacity={doorNeon}>
-                  MOTOR INN
-                </text>
-              </>
-            ) : (
-              <>
-                <text x={0} y={716} textAnchor="middle" fontFamily={FONT.tight} fontWeight={900} fontSize={38} fill={mix(K, T.soft, 0.6)} opacity={doorNeon}>
-                  STARLITE
-                </text>
-                <text x={0} y={760} textAnchor="middle" fontFamily={FONT.tight} fontWeight={800} fontSize={20} letterSpacing={2.5} fill={mix(K, T.soft, 0.5)} opacity={doorNeon}>
-                  MOTOR COURT
-                </text>
-              </>
-            )}
+          <ellipse cx={40} cy={730} rx={170} ry={150} fill={K} opacity={0.22 * doorNeon} filter={url('blur6')} />
+          {/* The window sign hangs in the door glass facing the road: from inside we read its BACK,
+              mirror-reversed and out of focus ("NNI ROTOM / S’ATIR" for Rita, the rewatch clue). */}
+          <g transform="translate(58 0) scale(-1 1)" opacity={doorNeon}>
+            <g filter={url('blur6')}>
+              <rect x={-74} y={668} width={148} height={112} rx={16} fill="none" stroke={K} strokeWidth={9} opacity={0.55} />
+              <text x={0} y={721} textAnchor="middle" fontFamily={FONT.tight} fontWeight={900} fontSize={tint === 'red' ? 40 : 32} letterSpacing={tint === 'red' ? 1 : 0.5} fill="none" stroke={K} strokeWidth={9} opacity={0.6}>
+                {tint === 'red' ? 'RITA’S' : 'STARLITE'}
+              </text>
+              <text x={0} y={758} textAnchor="middle" fontFamily={FONT.tight} fontWeight={800} fontSize={tint === 'red' ? 19 : 16} letterSpacing={2.4} fill="none" stroke={K} strokeWidth={7} opacity={0.5}>
+                {tint === 'red' ? 'MOTOR INN' : 'MOTOR COURT'}
+              </text>
+            </g>
+            <g filter={url('blur3')}>
+              <rect x={-74} y={668} width={148} height={112} rx={16} fill="none" stroke={mix(K, T.soft, 0.5)} strokeWidth={3} />
+              <text x={0} y={721} textAnchor="middle" fontFamily={FONT.tight} fontWeight={900} fontSize={tint === 'red' ? 40 : 32} letterSpacing={tint === 'red' ? 1 : 0.5} fill={mix(T.soft, NIGHT.ivory, 0.25)}>
+                {tint === 'red' ? 'RITA’S' : 'STARLITE'}
+              </text>
+              <text x={0} y={758} textAnchor="middle" fontFamily={FONT.tight} fontWeight={800} fontSize={tint === 'red' ? 19 : 16} letterSpacing={2.4} fill={mix(K, T.soft, 0.7)}>
+                {tint === 'red' ? 'MOTOR INN' : 'MOTOR COURT'}
+              </text>
+            </g>
           </g>
           {/* glass sheen + reflection of the phone */}
           <path d="M-70 980 L130 640 L130 700 L-70 1040 Z" fill={alpha(NIGHT.ivory, 0.035)} />
@@ -499,7 +505,7 @@ export const LobbyArt: React.FC<Omit<LobbyProps, 'crop'>> = ({
       </g>
 
       {/* ── LED clock + key rack ───────────────────────────────── */}
-      <LedClock text={clock} color={ledColor} core={ledCore} glow={id('glow')} x={LOBBY.clock.x} y={LOBBY.clock.y} />
+      <LedClock text={clockText} color={ledColor} core={ledCore} glow={id('glow')} x={LOBBY.clock.x} y={LOBBY.clock.y} />
       <ellipse cx={255} cy={790} rx={150} ry={68} fill={url('led')} />
       <g>
         <rect x={182} y={812} width={150} height={168} rx={6} fill={woodDark} />
@@ -672,7 +678,7 @@ export const LobbyArt: React.FC<Omit<LobbyProps, 'crop'>> = ({
           <circle cx={548} cy={706.5} r={3.6} fill={NIGHT.ink} />
           <circle cx={547.4} cy={705.8} r={1.2} fill={alpha(T.bloom, 0.5)} />
           {lit > 0 ? <rect x={S.x - 6} y={S.y - 6} width={S.w + 12} height={S.h - 10} rx={26} fill={T.bloom} opacity={Math.min(1, 0.55 * bloomK)} filter={url('bloom')} /> : null}
-          <PhoneScreen state={phoneState} lit={lit} tint={tint} number={number} statusTime={statusTime ?? clock} missedLabel={missedLabel} missedTime={missedTime} missedAt={missedAt} ringPulse={ringPulse} id={id} />
+          <PhoneScreen state={phoneState} lit={lit} tint={tint} number={number} statusTime={statusTime ?? clockText} missedLabel={missedLabel} missedTime={missedTime} missedAt={missedAt} ringPulse={ringPulse} id={id} />
         </g>
         {/* cradle */}
         <g transform={`translate(${buzz * 0.3} 0)`}>
@@ -705,12 +711,20 @@ export const LobbyArt: React.FC<Omit<LobbyProps, 'crop'>> = ({
       <rect x={LOBBY_SET.x0} y={1108.5} width={LOBBY_SET.x1 - LOBBY_SET.x0} height={3.5} fill={url('rim')} />
       <rect x={LOBBY_SET.x0} y={1112} width={LOBBY_SET.x1 - LOBBY_SET.x0} height={8} fill={url('rim')} opacity={0.18} />
       <rect x={LOBBY_SET.x0} y={1130} width={LOBBY_SET.x1 - LOBBY_SET.x0} height={LOBBY_SET.y1 - 1130} fill={url('face')} />
-      {slats.map((x) => (
-        <g key={x}>
-          <rect x={x} y={1130} width={2.5} height={LOBBY_SET.y1 - 1130} fill={alpha(NIGHT.ink, 0.6)} />
-          <rect x={x + 2.5} y={1130} width={1} height={LOBBY_SET.y1 - 1130} fill={alpha(K, 0.045)} />
-        </g>
-      ))}
+      {/* tongue-and-groove planks: a little tone per board, the bevel catching the door neon */}
+      {slats.map((x, i) => {
+        const v = random(`plank${i}`);
+        const near = Math.max(0, 1 - Math.abs(x - 40) / 1000);
+        return (
+          <g key={x}>
+            <rect x={x + 2.5} y={1130} width={59.5} height={LOBBY_SET.y1 - 1130} fill={v > 0.5 ? alpha(NIGHT.wallLow, 0.05 + 0.12 * (v - 0.5)) : alpha(NIGHT.ink, 0.12 * (0.5 - v))} />
+            <rect x={x} y={1130} width={2.5} height={LOBBY_SET.y1 - 1130} fill={alpha(NIGHT.ink, 0.6)} />
+            <rect x={x + 2.5} y={1130} width={1.4} height={LOBBY_SET.y1 - 1130} fill={alpha(T.soft, (0.03 + 0.13 * near * near) * doorNeon)} />
+          </g>
+        );
+      })}
+      {/* the counter lip's shadow falling down the face, and the phone light catching the lip's underside */}
+      {lit > 0 ? <ellipse cx={505} cy={1131} rx={240} ry={14} fill={T.bloom} opacity={0.07 * bloomK} filter={url('glow')} /> : null}
       <rect x={LOBBY_SET.x0} y={1130} width={LOBBY_SET.x1 - LOBBY_SET.x0} height={760} fill={url('spill')} opacity={0.45} />
       {/* rails */}
       {[1196, 1590].map((y) => (
