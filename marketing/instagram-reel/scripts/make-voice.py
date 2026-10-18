@@ -26,6 +26,8 @@ import argparse
 import json
 import pathlib
 import re
+import subprocess
+import tempfile
 
 import numpy as np
 import soundfile as sf
@@ -70,6 +72,20 @@ def trim(audio: np.ndarray) -> np.ndarray:
     s = max(0, int((runs[0][0] - PAD) * SR))
     e = min(len(audio), int((runs[-1][1] + PAD) * SR))
     return audio[s:e]
+
+
+def pitch_shift(audio: np.ndarray, semitones: float) -> np.ndarray:
+    """Time-preserving pitch shift that moves formants too (resample, then tempo back)."""
+    r = 2 ** (semitones / 12)
+    with tempfile.TemporaryDirectory() as d:
+        src, dst = pathlib.Path(d, "in.wav"), pathlib.Path(d, "out.wav")
+        sf.write(src, audio, SR, subtype="FLOAT")
+        af = f"asetrate={SR * r:.3f},aresample={SR},atempo={1 / r:.6f}"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-af", af, "-c:a", "pcm_f32le", str(dst)], check=True)
+        out, _ = sf.read(dst, dtype="float32")
+    # atempo is not sample-exact: pad or trim to the original length so timings hold.
+    n = len(audio)
+    return np.pad(out, (0, max(0, n - len(out))))[:n]
 
 
 def word_timings(kokoro: Kokoro, text: str, audio: np.ndarray) -> list[dict]:
@@ -141,22 +157,27 @@ def main() -> None:
             sw = word_timings(kokoro, text, audio)
             for w in sw:
                 words.append({"word": w["word"], "start": round(t + w["start"], 3), "end": round(t + w["end"], 3)})
-            # Caption chunks: consecutive word spans, in the order given.
-            chunk_texts = sentence.get("chunks") or [text]
+            # Caption chunks: consecutive word spans, in the order given. A chunk is
+            # either the spoken words, or [spoken words, caption text] when the
+            # caption should read differently ("twenty-third" -> "23rd").
             wi = 0
-            for ct in chunk_texts:
-                n = len(ct.split())
+            for chunk in sentence.get("chunks") or [text]:
+                said, shown = (chunk, chunk) if isinstance(chunk, str) else chunk
+                n = len(said.split())
                 span = sw[wi:wi + n]
-                assert span and " ".join(x["word"] for x in span) == ct, f"{line['id']}: chunk {ct!r} does not match the sentence words"
-                chunks.append({"text": ct, "start": round(t + span[0]["start"], 3), "end": round(t + span[-1]["end"], 3)})
+                assert span and " ".join(x["word"] for x in span) == said, f"{line['id']}: chunk {said!r} does not match the sentence words"
+                chunks.append({"text": shown, "start": round(t + span[0]["start"], 3), "end": round(t + span[-1]["end"], 3)})
                 wi += n
             assert wi == len(sw), f"{line['id']}: chunks don't cover sentence {text!r}"
             pieces.append(audio)
             t += len(audio) / SR
             if si < len(line["sentences"]) - 1:
-                pieces.append(np.zeros(int(gap * SR), dtype=np.float32))
-                t += gap
+                g = sentence.get("gapAfter", gap)
+                pieces.append(np.zeros(int(g * SR), dtype=np.float32))
+                t += g
         audio = np.concatenate(pieces)
+        if cast.get("pitchSemitones"):
+            audio = pitch_shift(audio, cast["pitchSemitones"])
         audio = audio / float(np.abs(audio).max()) * 0.89  # -1 dBFS; the mix sets the final level
         sf.write(out_dir / f"{line['id']}.wav", audio, SR, subtype="PCM_16")
         manifest[line["id"]] = {

@@ -1,5 +1,11 @@
-import {AbsoluteFill, Composition} from 'remotion';
+import React from 'react';
+import {Composition} from 'remotion';
+import {Reel, type ReelProps} from './Reel.tsx';
+import {FPS, HEIGHT, TOTAL_FRAMES, WIDTH} from './timeline.ts';
 
-const Smoke = () => <AbsoluteFill style={{background: '#111', color: 'white', fontSize: 120, justifyContent: 'center', alignItems: 'center'}}>smoke</AbsoluteFill>;
-
-export const Root = () => <Composition id="Reel" component={Smoke} durationInFrames={30} fps={30} width={1080} height={1920} />;
+export const Root: React.FC = () => (
+  <>
+    <Composition id="Reel" component={Reel} durationInFrames={TOTAL_FRAMES} fps={FPS} width={WIDTH} height={HEIGHT} defaultProps={{placement: 'organic', withAudio: true} satisfies ReelProps} />
+    <Composition id="ReelSilent" component={Reel} durationInFrames={TOTAL_FRAMES} fps={FPS} width={WIDTH} height={HEIGHT} defaultProps={{placement: 'organic', withAudio: false} satisfies ReelProps} />
+  </>
+);

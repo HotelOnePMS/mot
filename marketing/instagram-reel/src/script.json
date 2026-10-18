@@ -1,0 +1,46 @@
+{
+  "_comment": "Voice lines for 'Across the Street'. Read by scripts/make-voice.py (TTS), src/timeline.ts (placement: 'at' is the second the line starts) and scripts/make-audio.ts (mix). 'phone' lines are heard through Rita's phone. Every product claim maps to app code: see STORYBOARD.md, Claims and evidence.",
+  "sentenceGap": 0.12,
+  "voices": {
+    "rita": {"voice": "af_nicole", "speed": 1.05, "pitchSemitones": -1.5},
+    "ai": {"voice": "af_heart", "speed": 1.0},
+    "gus": {"voice": "am_michael", "speed": 1.0}
+  },
+  "lines": [
+    {"id": "R01", "role": "rita", "at": 0.70, "sentences": [{"text": "Nobody works nights at the Starlite.", "chunks": ["Nobody works nights", "at the Starlite."]}]},
+    {"id": "R02", "role": "rita", "at": 3.90, "sentences": [{"text": "Twenty seconds.", "chunks": [["Twenty seconds.", "20 seconds."]]}]},
+    {"id": "R03", "role": "rita", "at": 5.60, "sentences": [{"text": "And nobody’s in there.", "chunks": ["And nobody’s", "in there."]}]},
+    {"id": "R04", "role": "rita", "at": 7.20, "sentences": [{"text": "Four nights I’ve watched.", "chunks": ["Four nights", "I’ve watched."]}]},
+    {"id": "R05", "role": "rita", "at": 9.07, "sentences": [{"text": "Gus can’t afford a night clerk.", "chunks": ["Gus can’t afford", "a night clerk."]}]},
+    {"id": "R06", "role": "rita", "at": 11.12, "sentences": [{"text": "Neither can I."}]},
+    {"id": "R07", "role": "rita", "at": 13.55, "sentences": [{"text": "Come on, Gus.", "gapAfter": 0.18}, {"text": "Pick up."}]},
+    {"id": "AI01", "role": "ai", "phone": true, "at": 15.75, "sentences": [
+      {"text": "Starlite Motor Court,", "gapAfter": 0.22},
+      {"text": "AI front desk.", "gapAfter": 0.15},
+      {"text": "How can I help?"}
+    ]},
+    {"id": "R08", "role": "rita", "at": 19.45, "sentences": [{"text": "Sure it is, Gus."}]},
+    {"id": "R09", "role": "rita", "at": 20.65, "sentences": [{"text": "Got a room Friday, for two?", "chunks": ["Got a room Friday,", "for two?"]}]},
+    {"id": "AI02", "role": "ai", "phone": true, "at": 22.60, "sentences": [
+      {"text": "We do.", "gapAfter": 0.15},
+      {"text": "Friday the twenty-third, a queen room is a hundred nineteen.", "chunks": [["Friday the twenty-third,", "Friday the 23rd,"], "a queen room", ["is a hundred nineteen.", "is $119."]]}
+    ]},
+    {"id": "R10", "role": "rita", "at": 26.66, "sentences": [{"text": "Just a few hours, cash?", "chunks": ["Just a few hours,", "cash?"]}]},
+    {"id": "AI03", "role": "ai", "phone": true, "at": 28.80, "sentences": [
+      {"text": "Sorry.", "chunks": [["Sorry.", "Sorry —"]], "gapAfter": 0.11},
+      {"text": "We don’t offer day-use rooms.", "chunks": [["We don’t offer", "we don’t offer"], "day-use rooms."]}
+    ]},
+    {"id": "R11", "role": "rita", "at": 31.70, "sentences": [{"text": "That’s Gus’s rule.", "chunks": [["That’s Gus’s rule.", "…That’s Gus’s rule."]]}]},
+    {"id": "R12", "role": "rita", "at": 33.10, "sentences": [{"text": "Rita says hi."}]},
+    {"id": "AI04", "role": "ai", "phone": true, "at": 34.25, "cutAfterWord": "they’ll", "cutInto": 0.135, "sentences": [
+      {"text": "I’ve passed that to the team — they’ll get back to you.", "chunks": ["I’ve passed that", "to the team —", ["they’ll get back to you.", "they’ll—"]]}
+    ]},
+    {"id": "R13", "role": "rita", "at": 36.25, "sentences": [{"text": "Show-off."}]},
+    {"id": "G01", "role": "gus", "at": 50.10, "sentences": [{"text": "Hi, Rita.", "chunks": [["Hi, Rita.", "Hi, Rita. 👋"]]}]},
+    {"id": "AI05", "role": "ai", "phone": true, "at": 54.98, "sentences": [
+      {"text": "If nobody picks up in twenty seconds…", "chunks": ["If nobody picks up", ["in twenty seconds…", "in 20 seconds…"]], "gapAfter": 0.22},
+      {"text": "I will."}
+    ]},
+    {"id": "G02", "role": "gus", "at": 60.55, "sentences": [{"text": "Who’s answering yours, Rita?", "chunks": ["Who’s answering", "yours, Rita?"]}]}
+  ]
+}
