@@ -169,6 +169,9 @@ export const useHO = (mode?: Mode): Tokens => {
   return HO[mode ?? ctx];
 };
 
+/** Inter with the app's stylistic sets: set on every top-level primitive so it renders right outside <Screen> too. */
+export const uiFont: React.CSSProperties = {fontFamily: INTER, fontFeatureSettings: INTER_FEATURES, WebkitFontSmoothing: 'antialiased'};
+
 /** Body text defaults (globals.css body): Inter with cv11/ss01/ss03, antialiased. */
 export const bodyStyle = (t: Tokens): React.CSSProperties => ({
   fontFamily: INTER,

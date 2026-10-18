@@ -5,7 +5,7 @@
 import React from 'react';
 import {Icon} from './icons.tsx';
 import {Card} from './primitives.tsx';
-import {alpha, RADIUS, shadow, useHO, type Mode} from './tokens.ts';
+import {alpha, RADIUS, shadow, uiFont, useHO, type Mode} from './tokens.ts';
 
 /** The House rules Gus typed. Lines 1-2 match the seed wording (prisma/seed.js L373); line 3 is the quiet-hours rule. */
 export const HOUSE_RULES = ['We don’t offer day-use rooms.', 'Dogs under 30 lb are welcome for $25 a night.', 'Quiet hours start at 10 PM.'] as const;
@@ -31,7 +31,7 @@ export type FieldProps = {
 export const Field: React.FC<FieldProps> = ({label, optional, hint, hintOpacity = 1, hintBlur = 0, labelStyle, mode, children}) => {
   const t = useHO(mode);
   return (
-    <div style={{display: 'grid', alignContent: 'start', gap: 8}}>
+    <div style={{...uiFont, display: 'grid', alignContent: 'start', gap: 8, color: t.foreground}}>
       <label style={{fontSize: 14, fontWeight: 500, lineHeight: '20px', color: t.foreground, ...labelStyle}}>
         {label}
         {optional ? <span style={{marginLeft: 4, fontWeight: 400, color: t.mutedForeground}}>(optional)</span> : null}

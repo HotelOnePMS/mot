@@ -4,7 +4,7 @@
 // occupancy bar (bg-primary/70, bg-success from 85%), "{sold}/{total} sold"
 // (text-2xs muted). The custom-price dot only appears when isCustom.
 import React from 'react';
-import {alpha, mix, RADIUS, TRACK_2XS, useHO, type Mode} from './tokens.ts';
+import {alpha, mix, RADIUS, TRACK_2XS, uiFont, useHO, type Mode} from './tokens.ts';
 
 export type RateCellProps = {
   day: number;
@@ -34,6 +34,7 @@ export const RateCell: React.FC<RateCellProps> = ({day, price, sold, total, isCu
   return (
     <div
       style={{
+        ...uiFont,
         position: 'relative',
         display: 'flex',
         flexDirection: 'column',

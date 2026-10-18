@@ -7,7 +7,7 @@
 import React from 'react';
 import {Easing, interpolate} from 'remotion';
 import {Icon, SonnerSuccessIcon} from './icons.tsx';
-import {RADIUS, shadow, useHO, type Mode} from './tokens.ts';
+import {RADIUS, shadow, uiFont, useHO, type Mode} from './tokens.ts';
 
 export const COPY_TOAST = 'Booking link copied — send it to the guest';
 export const SAVED_TOAST = 'Voice settings saved — new calls use them right away';
@@ -29,6 +29,7 @@ export const SonnerToast: React.FC<SonnerToastProps> = ({title, type = 'success'
   return (
     <div
       style={{
+        ...uiFont,
         position: 'relative',
         display: 'flex',
         alignItems: 'center',

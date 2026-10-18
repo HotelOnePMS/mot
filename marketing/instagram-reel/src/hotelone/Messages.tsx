@@ -41,8 +41,8 @@ export function formatPhone(raw: string | null | undefined, opts: {national?: bo
 /** page.tsx SOURCE labels and icons. */
 export const SOURCE: Record<string, {label: string; icon: IconName}> = {
   PHONE: {label: 'Phone call', icon: 'phone'},
-  WHATSAPP: {label: 'WhatsApp', icon: 'message-square'},
-  VOICE: {label: 'Booking page', icon: 'audio-lines'},
+  WHATSAPP: {label: 'WhatsApp', icon: 'message-circle'},
+  VOICE: {label: 'Booking page', icon: 'globe'},
   AGENT: {label: 'AI assistant', icon: 'sparkles'},
 };
 
@@ -95,24 +95,35 @@ export const inbox = (when: 'night' | 'morning'): GuestRequest[] =>
 
 // ─── Marker circle (hand-drawn, for the S20 detective board) ────────────────
 
-/** A wobbly hand-drawn ellipse around its parent, drawn on by `progress` (0..1). Coordinates are CSS px around the target box. */
+/**
+ * A wobbly hand-drawn ellipse around its parent, drawn on by `progress` (0..1): a little over one turn,
+ * so the pen overshoots its start like a real marker. The path lives on a stretched unit box; the visible
+ * stroke keeps an even width (non-scaling-stroke) and each part (the turn, then the overshoot) is revealed
+ * through its own mask stroke, whose dash runs in the unit box where pathLength is exact.
+ */
 export const MarkerCircle: React.FC<{progress: number; color: string; pad?: number; strokeWidth?: number; seed?: string}> = ({progress, color, pad = 7, strokeWidth = 2.5, seed = 'm'}) => {
+  const uid = `mc${React.useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const p = Math.max(0, Math.min(1, progress));
   if (p <= 0) return null;
-  // Path on a unit box [0,1]^2 with a little overshoot past a full turn, then stretched by
-  // vector-effect: non-scaling-stroke so the stroke stays even.
-  const n = 48;
   const turns = 1.12;
   const a0 = -2.2 + random(`${seed}a`) * 0.4;
-  const pts: string[] = [];
-  for (let i = 0; i <= n; i++) {
-    const k = i / n;
-    const a = a0 + k * turns * Math.PI * 2;
-    const wob = 1 + (random(`${seed}${Math.floor(k * 6)}`) - 0.5) * 0.05 + k * 0.035;
-    const x = 0.5 + 0.5 * Math.cos(a) * wob;
-    const y = 0.5 + 0.5 * Math.sin(a) * wob * (1 - 0.04 * Math.sin(k * 7));
-    pts.push(`${i === 0 ? 'M' : 'L'}${x.toFixed(4)} ${y.toFixed(4)}`);
-  }
+  const pathFor = (k0: number, k1: number, n: number) => {
+    const pts: string[] = [];
+    for (let i = 0; i <= n; i++) {
+      const k = k0 + ((k1 - k0) * i) / n;
+      const a = a0 + k * turns * Math.PI * 2;
+      const wob = 1 + (random(`${seed}${Math.floor(k * 6)}`) - 0.5) * 0.05 + k * 0.035;
+      const x = 0.5 + 0.5 * Math.cos(a) * wob;
+      const y = 0.5 + 0.5 * Math.sin(a) * wob * (1 - 0.04 * Math.sin(k * 7));
+      pts.push(`${i === 0 ? 'M' : 'L'}${x.toFixed(4)} ${y.toFixed(4)}`);
+    }
+    return pts.join(' ');
+  };
+  const split = 1 / turns;
+  const parts = [
+    {d: pathFor(0, split, 48), reveal: Math.min(1, p / split)},
+    {d: pathFor(split, 1, 8), reveal: Math.max(0, (p - split) / (1 - split))},
+  ];
   return (
     <svg
       viewBox="0 0 1 1"
@@ -120,7 +131,18 @@ export const MarkerCircle: React.FC<{progress: number; color: string; pad?: numb
       style={{position: 'absolute', left: -pad, top: -pad * 0.8, width: `calc(100% + ${pad * 2}px)`, height: `calc(100% + ${pad * 1.6}px)`, overflow: 'visible', pointerEvents: 'none', zIndex: 3}}
       aria-hidden
     >
-      <path d={pts.join(' ')} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" pathLength={1} strokeDasharray="1 1" strokeDashoffset={1 - p} />
+      <defs>
+        {parts.map((part, i) => (
+          <mask key={i} id={`${uid}${i}`} maskUnits="userSpaceOnUse" x={-1} y={-1} width={3} height={3}>
+            <path d={part.d} fill="none" stroke="#fff" strokeWidth={0.22} strokeLinecap="butt" pathLength={1} strokeDasharray={`${part.reveal} 2`} />
+          </mask>
+        ))}
+      </defs>
+      {parts.map((part, i) =>
+        part.reveal > 0 ? (
+          <path key={i} d={part.d} mask={`url(#${uid}${i})`} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        ) : null,
+      )}
     </svg>
   );
 };

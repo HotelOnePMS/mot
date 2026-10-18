@@ -4,7 +4,7 @@
 import React from 'react';
 import {Icon, type IconName} from './icons.tsx';
 import {LIGHT} from '../theme.ts';
-import {alpha, RADIUS, shadow, TRACK_2XS, useHO, type Mode, type Tokens} from './tokens.ts';
+import {alpha, RADIUS, shadow, TRACK_2XS, uiFont, useHO, type Mode, type Tokens} from './tokens.ts';
 
 /** .dark --info-soft / --info-soft-foreground (globals.css; not in theme.ts DARK). */
 const INFO_SOFT_DARK = '#132839';
@@ -60,6 +60,7 @@ export const Badge: React.FC<BadgeProps> = ({variant = 'default', size = 'defaul
   return (
     <span
       style={{
+        ...uiFont,
         display: 'inline-flex',
         maxWidth: '100%',
         alignItems: 'center',
@@ -149,6 +150,7 @@ export const Button: React.FC<ButtonProps> = ({variant = 'default', size = 'defa
   return (
     <span
       style={{
+        ...uiFont,
         position: 'relative',
         display: 'inline-flex',
         alignItems: 'center',
@@ -185,6 +187,7 @@ export const Card: React.FC<{mode?: Mode; style?: React.CSSProperties; shadowKin
   return (
     <div
       style={{
+        ...uiFont,
         borderRadius: RADIUS['2xl'],
         border: `1px solid ${t.border}`,
         background: t.card,
@@ -239,6 +242,13 @@ export const Avatar: React.FC<{name: string; size?: number; mode?: Mode; style?:
 };
 
 // ─── SegmentedControl ───────────────────────────────────────────────────────
+
+/**
+ * framer-motion's {type: 'spring', bounce: 0.18, duration: 0.45} (the SegmentedControl layoutId pill) as a
+ * Remotion spring config: damping ratio 1 - bounce = 0.82, natural frequency 2π / duration.
+ * Usage: spring({frame: frame - start, fps: 30, config: LAYOUT_SPRING}). Also fits the board's other "bounce .18" springs.
+ */
+export const LAYOUT_SPRING = {mass: 1, stiffness: Math.round((2 * Math.PI / 0.45) ** 2), damping: Math.round(((4 * Math.PI * 0.82) / 0.45) * 10) / 10} as const;
 
 export type SegmentedProps = {
   /** Option labels, e.g. ['To handle · 2', 'Done · 0']. */
@@ -323,6 +333,7 @@ export const SegmentedControl: React.FC<SegmentedProps> = ({options, value, size
   return (
     <div
       style={{
+        ...uiFont,
         position: 'relative',
         display: 'inline-flex',
         maxWidth: '100%',

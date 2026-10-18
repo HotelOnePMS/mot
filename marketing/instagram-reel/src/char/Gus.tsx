@@ -1,28 +1,36 @@
 // Gus (60s, owner of the Starlite Motor Court): broad, unhurried, salt-and-
-// pepper hair thinning on top, grey stubble, a Lagoon cardigan with the sleeves
-// shoved up over a chambray shirt, reading glasses on a cord. Teal is his world.
+// pepper hair thinning on the crown, grey stubble and a grey moustache, a Lagoon
+// cardigan with the sleeves shoved up over his forearms, a chambray collar,
+// reading glasses on a cord. Teal is his world.
 //
-//   GusDesk        the S22 desk rig, seen over his right shoulder: his phone up
-//                  in his right hand (screen toward him and us, so the camera can
-//                  push into it), a mug in his left hand. Drawn in S22 frame px
-//                  (Gus at x 120–620, y 700–1400; phone at x 520–760, y 820–1300).
-//                  Layers: 'back' (Gus, his palm and the phone body; draw the
-//                  HotelOne screen over GUS_PHONE.screen after it) and 'front'
-//                  (the thumb and fingertips that overlap the phone's edges).
+//   GusDesk        the S22 desk rig, over his right shoulder: he is turned away
+//                  from us toward the window (lost profile: ear, cheek, glasses,
+//                  moustache), his phone up in his right hand with the screen
+//                  toward him and us, so the camera can push into it; a mug in
+//                  his left hand. Drawn in S22 frame px (Gus at x 40–620,
+//                  y 640–1500; the phone rect is GUS_PHONE, inside the board's
+//                  x 520–760, y 820–1300). Layers: 'back' (Gus, the phone body
+//                  and a dark screen; draw the HotelOne screen over
+//                  GUS_DESK.screen after it) and 'front' (the thumb and the
+//                  fingertips that overlap the phone's edges). 'all' draws both,
+//                  with `screen` (SVG in frame px) in between.
 //   GusSilhouette  S23 (dawn): a dark backlit silhouette at his office window,
-//                  raising the mug toward Rita's car. Also 'night' + binoculars
-//                  for anything S27 needs from his side of the road.
+//                  raising the mug toward Rita's car. 'night' (Rita's red neon
+//                  across the road) and hold 'binoculars' are there for S27.
+//
+// Light: 'dawn' = the window ahead of him, so he is backlit: a warm rim round
+// his outline, the ear glowing, his back in soft room shade. 'night' = teal.
 // Every moving part is a number so scenes can interpolate() it.
 import React from 'react';
-import {AbsoluteFill, random} from 'remotion';
+import {AbsoluteFill} from 'remotion';
 import {LIGHT, NIGHT} from '../theme.ts';
 import {alpha, mix, useUid} from '../set/parts.tsx';
 import type {Crop} from '../set/Lobby.tsx';
-import {add, angle, arc, breath, clamp01, ik, lerp, lerpP, place, rot, shape, smoothstep, sub, type C, type P} from './rig.ts';
+import {add, angle, arc, breath, clamp01, ik, lerp, lerpP, norm, perp, place, rot, scaleP, shape, smoothstep, sub, tube, type C, type P} from './rig.ts';
 
 // ─── Palette ────────────────────────────────────────────────────────────────
 
-const SKIN = mix(mix(NIGHT.tape, NIGHT.redSoft, 0.3), LIGHT.highlightSoftForeground, 0.14);
+const SKIN = mix(mix(NIGHT.tape, NIGHT.redSoft, 0.32), LIGHT.highlightSoftForeground, 0.14);
 
 type Pal = ReturnType<typeof palette>;
 const palette = (dawn: number) => {
@@ -32,113 +40,181 @@ const palette = (dawn: number) => {
   return {
     d,
     n,
-    skin: m(mix(NIGHT.ink, SKIN, 0.3), mix(SKIN, LIGHT.highlightSoftForeground, 0.1)),
-    skinDeep: m(mix(NIGHT.ink, SKIN, 0.16), mix(SKIN, LIGHT.highlightSoftForeground, 0.42)),
-    skinLine: m(mix(NIGHT.ink, SKIN, 0.06), mix(SKIN, NIGHT.redDeep, 0.6)),
-    hair: m(mix(NIGHT.ink, NIGHT.grey, 0.4), mix(NIGHT.grey, NIGHT.ink, 0.18)),
-    hairDeep: m(mix(NIGHT.ink, NIGHT.grey, 0.18), mix(NIGHT.grey, NIGHT.ink, 0.55)),
+    skin: m(mix(NIGHT.ink, SKIN, 0.3), mix(SKIN, LIGHT.highlightSoftForeground, 0.12)),
+    skinDeep: m(mix(NIGHT.ink, SKIN, 0.16), mix(SKIN, LIGHT.highlightSoftForeground, 0.45)),
+    skinLine: m(mix(NIGHT.ink, SKIN, 0.06), mix(SKIN, NIGHT.redDeep, 0.62)),
+    /** the ear and the rim of skin with the window behind it (light through skin) */
+    skinGlow: m(mix(NIGHT.tealSoft, SKIN, 0.4), mix(SKIN, NIGHT.red, 0.28)),
+    hair: m(mix(NIGHT.ink, NIGHT.grey, 0.42), mix(NIGHT.grey, NIGHT.ivory, 0.2)),
+    hairDeep: m(mix(NIGHT.ink, NIGHT.grey, 0.18), mix(NIGHT.grey, NIGHT.ink, 0.5)),
     hairHi: m(mix(NIGHT.grey, NIGHT.tealSoft, 0.4), NIGHT.ivory),
-    knit: m(mix(NIGHT.ink, LIGHT.primary, 0.42), mix(LIGHT.primary, NIGHT.ink, 0.22)),
+    knit: m(mix(NIGHT.ink, LIGHT.primary, 0.42), mix(LIGHT.primary, NIGHT.ink, 0.2)),
     knitDeep: m(mix(NIGHT.ink, LIGHT.primary, 0.2), mix(LIGHT.primary, NIGHT.ink, 0.55)),
-    knitHi: m(mix(LIGHT.primary, NIGHT.tealSoft, 0.3), mix(LIGHT.primary, LIGHT.primarySoft, 0.45)),
-    shirt: m(mix(NIGHT.ink, LIGHT.primarySoft, 0.38), mix(LIGHT.primarySoft, LIGHT.primarySoftForeground, 0.18)),
-    shirtDeep: m(mix(NIGHT.ink, LIGHT.primarySoft, 0.2), mix(LIGHT.primarySoft, LIGHT.primarySoftForeground, 0.45)),
-    frame: m(mix(NIGHT.ink, LIGHT.highlightSoftForeground, 0.5), LIGHT.highlightSoftForeground),
-    cord: m(mix(NIGHT.ink, NIGHT.brass, 0.5), mix(NIGHT.brass, LIGHT.highlightSoftForeground, 0.4)),
+    knitHi: m(mix(LIGHT.primary, NIGHT.tealSoft, 0.3), mix(LIGHT.primary, LIGHT.primarySoft, 0.4)),
+    shirt: m(mix(NIGHT.ink, LIGHT.primarySoft, 0.38), mix(LIGHT.primarySoft, LIGHT.primarySoftForeground, 0.2)),
+    shirtDeep: m(mix(NIGHT.ink, LIGHT.primarySoft, 0.2), mix(LIGHT.primarySoft, LIGHT.primarySoftForeground, 0.5)),
+    frame: m(mix(NIGHT.ink, LIGHT.highlightSoftForeground, 0.5), mix(LIGHT.highlightSoftForeground, NIGHT.ink, 0.25)),
+    cord: m(mix(NIGHT.ink, NIGHT.brass, 0.5), mix(NIGHT.brass, LIGHT.highlightSoftForeground, 0.45)),
     mug: m(mix(NIGHT.ink, NIGHT.ivory, 0.45), NIGHT.ivory),
-    mugDeep: m(mix(NIGHT.ink, NIGHT.ivory, 0.22), mix(NIGHT.ivory, NIGHT.grey, 0.55)),
+    mugDeep: m(mix(NIGHT.ink, NIGHT.ivory, 0.22), mix(NIGHT.ivory, NIGHT.grey, 0.6)),
     mugBand: m(mix(NIGHT.ink, LIGHT.primary, 0.7), LIGHT.primary),
     phone: mix(NIGHT.ink, NIGHT.wallLow, 0.7),
-    /** light from the window ahead of him */
+    /** the window light ahead of him */
     rim: m(NIGHT.tealSoft, LIGHT.highlightSoft),
     rimHot: m(NIGHT.phoneGlowTeal, NIGHT.ivory),
-    rimAmt: 0.9,
-    /** the room behind us: a soft fill on his back */
-    shade: alpha(mix(NIGHT.ink, LIGHT.highlightSoftForeground, d), lerp(0.5, 0.2, d)),
+    rimAmt: 0.95,
+    /** the room behind us: soft shade on his back */
+    shade: m(NIGHT.ink, mix(LIGHT.highlightSoftForeground, NIGHT.ink, 0.35)),
+    shadeAmt: lerp(0.5, 0.3, d),
   };
 };
 
-// ─── Geometry (head-local: origin at the neck pivot; he faces away, turned right) ──
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+const f1 = (p: P) => `${p[0].toFixed(1)} ${p[1].toFixed(1)}`;
+
+/** A tapered capsule from a (width wa) to b (width wb), round both ends. */
+const capsule = (a: P, b: P, wa: number, wb: number) => {
+  const n = perp(norm(sub(b, a)));
+  const ra = wa / 2;
+  const rb = wb / 2;
+  return `M${f1(add(a, scaleP(n, ra)))} L${f1(add(b, scaleP(n, rb)))} A${rb} ${rb} 0 0 0 ${f1(add(b, scaleP(n, -rb)))} L${f1(add(a, scaleP(n, -ra)))} A${ra} ${ra} 0 0 0 ${f1(add(a, scaleP(n, ra)))} Z`;
+};
+/** The side normal of a→b facing the window (up and to the right). */
+const litNormal = (a: P, b: P): P => {
+  const n = perp(norm(sub(b, a)));
+  return n[0] - n[1] < 0 ? [-n[0], -n[1]] : n;
+};
+const litEdge = (a: P, b: P, wa: number, wb: number, inset = 0.44) => {
+  const n = litNormal(a, b);
+  return `M${f1(add(a, scaleP(n, wa * inset)))} L${f1(add(b, scaleP(n, wb * inset)))}`;
+};
+const strand = (pts: readonly P[], w: number) => shape(tube(pts, pts.map((_, i) => (i === 0 || i === pts.length - 1 ? 0.6 : w)), false));
+
+/** A limb segment with cylindrical shading across it (lit edge → mid → dark edge). */
+const Segment: React.FC<{a: P; b: P; wa: number; wb: number; lit: string; mid: string; dark: string; id: string}> = ({a, b, wa, wb, lit, mid, dark, id}) => {
+  const n = litNormal(a, b);
+  const m = lerpP(a, b, 0.5);
+  const w = (wa + wb) / 4;
+  const g1 = add(m, scaleP(n, w));
+  const g2 = add(m, scaleP(n, -w));
+  return (
+    <>
+      <defs>
+        <linearGradient id={id} x1={g1[0]} y1={g1[1]} x2={g2[0]} y2={g2[1]} gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor={lit} />
+          <stop offset="0.3" stopColor={mid} />
+          <stop offset="1" stopColor={dark} />
+        </linearGradient>
+      </defs>
+      <path d={capsule(a, b, wa, wb)} fill={`url(#${id})`} />
+    </>
+  );
+};
+
+// ─── Geometry (head-local: origin at the neck pivot; turned away, toward the right) ──
 
 const SKULL: C[] = [
-  [-6, -258],
-  [52, -246],
-  [96, -214],
-  [120, -178],
-  [130, -148],
-  [134, -126],
-  [141, -110], // nose tip peeking past the cheek
-  [134, -99],
-  [128, -90],
-  [124, -72],
-  [116, -56],
-  [100, -36],
-  [72, -22],
-  [30, -14],
-  [-30, -18],
-  [-74, -48],
-  [-102, -104],
-  [-110, -170],
-  [-90, -226],
-  [-52, -252],
+  [-92, -40],
+  [-118, -96],
+  [-134, -160],
+  [-126, -222],
+  [-96, -270],
+  [-46, -300],
+  [14, -310],
+  [72, -298],
+  [116, -266],
+  [140, -226], // forehead
+  [150, -196], // brow ridge
+  [146, -178],
+  [151, -160], // cheekbone
+  [160, -142], // nose tip, just past the cheek
+  [151, -130],
+  [148, -114], // cheek (lifts with the smile)
+  [152, -100], // moustache
+  [146, -86],
+  [138, -62], // jaw
+  [114, -38],
+  [80, -24],
+  [36, -18],
+  [-20, -22],
+  [-62, -28],
 ];
+/** Indices of SKULL that bulge and lift when he smiles (the cheek and moustache). */
+const SMILE_PTS = [14, 15, 16, 17];
 const HAIR: C[] = [
-  [-104, -196],
-  [-72, -228],
-  [-24, -240],
-  [28, -236],
-  [74, -218],
-  [104, -190],
-  [116, -164],
-  [112, -134],
-  [111, -104], // sideburn
-  [98, -100],
-  [86, -88],
-  [64, -72],
-  [44, -46],
-  [0, -32],
-  [-48, -36],
-  [-84, -62],
-  [-106, -118],
+  [-94, -44],
+  [-121, -98],
+  [-137, -160],
+  [-129, -224],
+  [-99, -270],
+  [-52, -293],
+  [0, -299],
+  [42, -293],
+  [84, -277],
+  [112, -253],
+  [126, -224], // temple hairline
+  [118, -198],
+  [114, -172],
+  [124, -146], // sideburn front edge
+  [124, -116],
+  [106, -112, 1],
+  [94, -136],
+  [80, -100],
+  [58, -68],
+  [20, -52], // nape hairline
+  [-36, -48],
 ];
-const EAR: C[] = [[60, -150], [76, -162], [92, -152], [97, -126], [91, -100], [79, -88], [66, -94], [60, -120]];
-const NECK: C[] = [[-60, -44], [58, -48], [66, 8], [62, 44], [-62, 44], [-66, 8]];
+const EAR: C[] = [[90, -184], [108, -194], [124, -186], [131, -162], [129, -134], [119, -114], [104, -110], [95, -126], [90, -156]];
+const NECK: C[] = [[-98, -50], [98, -42], [108, 10], [104, 60], [-108, 60], [-104, 10]];
+const HAIR_STRANDS: Array<{pts: P[]; w: number; hi?: boolean}> = [
+  {pts: [[-120, -110], [-128, -170], [-116, -230], [-84, -272]], w: 4},
+  {pts: [[-96, -70], [-110, -140], [-104, -210], [-70, -262]], w: 4},
+  {pts: [[-60, -56], [-80, -130], [-76, -200], [-44, -258]], w: 3.5},
+  {pts: [[-20, -54], [-36, -130], [-30, -200], [-6, -250]], w: 3.5},
+  {pts: [[30, -60], [12, -130], [20, -196], [44, -246]], w: 3.5},
+  {pts: [[70, -86], [62, -150], [80, -210], [104, -244]], w: 3.5},
+  {pts: [[-108, -90], [-122, -160], [-110, -228]], w: 2.5, hi: true},
+  {pts: [[-40, -60], [-58, -140], [-50, -214]], w: 2.5, hi: true},
+  {pts: [[48, -80], [36, -150], [52, -214]], w: 2.5, hi: true},
+  {pts: [[96, -150], [104, -200], [118, -232]], w: 2.5, hi: true},
+];
 
 // Body-local (origin at the neck pivot, untilted).
 const TORSO: C[] = [
-  [-70, 8],
-  [-140, 28],
-  [-196, 64],
-  [-228, 136],
-  [-238, 260],
-  [-242, 560, 1],
-  [300, 560, 1],
-  [292, 260],
-  [278, 150],
-  [242, 78],
-  [160, 28],
-  [70, 4],
+  [-80, 14],
+  [-170, 36],
+  [-238, 84],
+  [-266, 156],
+  [-274, 290],
+  [-284, 1000, 1],
+  [296, 1000, 1],
+  [286, 290],
+  [262, 170],
+  [224, 100],
+  [160, 46],
+  [86, 14],
 ];
 
 /** S22 rest placement and the phone's rect (frame px). Draw the HotelOne screen inside `screen`. */
 export const GUS_DESK = {
-  neck: [330, 950] as P,
-  phone: {x: 520, y: 820, w: 240, h: 480, r: 34},
-  screen: {x: 532, y: 832, w: 216, h: 456, r: 24},
+  neck: [300, 960] as P,
+  phone: {x: 536, y: 846, w: 212, h: 424, r: 32},
+  screen: {x: 546, y: 856, w: 192, h: 404, r: 24},
 } as const;
 export const GUS_PHONE = GUS_DESK.phone;
 
 // ─── Pose ───────────────────────────────────────────────────────────────────
 
 export type GusPose = {
-  /** 0..1 the mug in his left hand from the desk up to his mouth (it goes behind his head at the top). */
+  /** 0..1 the mug in his left hand from the desk up to his mouth (at the top it is in front of his face, so mostly hidden by his head). */
   mugRaise?: number;
-  /** 0..1 a smile: the cheek lifts, crinkles at the eye, the mustache corner rises. */
+  /** 0..1 a smile: the cheek rounds and lifts, the eye crinkles, the moustache corner rises. */
   smile?: number;
   /** 'dawn' (morning window light, default) or 'night'. `dawn` 0..1 overrides. */
   light?: 'dawn' | 'night';
   dawn?: number;
-  /** Head pitch toward the phone, degrees (default 5). */
+  /** Head pitch toward the phone, degrees (default 6). */
   lookDown?: number;
   /** Seconds, for breathing (0.2 Hz). */
   t?: number;
@@ -149,7 +225,7 @@ const dflt = (p: GusPose) => ({
   mugRaise: clamp01(p.mugRaise ?? 0),
   smile: clamp01(p.smile ?? 0),
   dawn: clamp01(p.dawn ?? (p.light === 'night' ? 0 : 1)),
-  lookDown: p.lookDown ?? 5,
+  lookDown: p.lookDown ?? 6,
   t: p.t ?? 0,
   thumb: clamp01(p.thumb ?? 0),
 });
@@ -157,111 +233,116 @@ type Pose = ReturnType<typeof dflt>;
 
 // ─── Parts ──────────────────────────────────────────────────────────────────
 
-/** A tapered capsule from a (width wa) to b (width wb), round both ends. */
-const capsule = (a: P, b: P, wa: number, wb: number) => {
-  const d = sub(b, a);
-  const l = Math.hypot(d[0], d[1]) || 1;
-  const n: P = [-d[1] / l, d[0] / l];
-  const ra = wa / 2;
-  const rb = wb / 2;
-  const f = (p: P) => `${p[0].toFixed(1)} ${p[1].toFixed(1)}`;
-  return `M${f(add(a, [n[0] * ra, n[1] * ra]))} L${f(add(b, [n[0] * rb, n[1] * rb]))} A${rb} ${rb} 0 0 0 ${f(add(b, [-n[0] * rb, -n[1] * rb]))} L${f(add(a, [-n[0] * ra, -n[1] * ra]))} A${ra} ${ra} 0 0 0 ${f(add(a, [n[0] * ra, n[1] * ra]))} Z`;
-};
-/** The edge of a capsule facing the window (up and right). */
-const litEdge = (a: P, b: P, wa: number, wb: number, inset = 0.44) => {
-  const d = sub(b, a);
-  const l = Math.hypot(d[0], d[1]) || 1;
-  let n: P = [-d[1] / l, d[0] / l];
-  if (n[0] - n[1] < 0) n = [-n[0], -n[1]];
-  const p1 = add(a, [n[0] * wa * inset, n[1] * wa * inset]);
-  const p2 = add(b, [n[0] * wb * inset, n[1] * wb * inset]);
-  return `M${p1[0].toFixed(1)} ${p1[1].toFixed(1)} L${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
-};
-
 /** A diner mug, local: base centre at 0,0, handle on the left. */
-const Mug: React.FC<{pal: Pal; steam?: number}> = ({pal}) => (
+const Mug: React.FC<{pal: Pal; rim?: string}> = ({pal, rim}) => (
   <g>
-    <path d="M-30 -2 L-34 -78 Q-34 -84 -28 -84 L28 -84 Q34 -84 34 -78 L30 -2 Q30 4 24 4 L-24 4 Q-30 4 -30 -2 Z" fill={pal.mug} />
-    <path d="M10 -84 L28 -84 Q34 -84 34 -78 L30 -2 Q30 4 24 4 L8 4 Z" fill={pal.mugDeep} opacity={0.5} />
-    <rect x={-33} y={-62} width={66} height={12} fill={pal.mugBand} />
-    <path d="M-33 -40 Q-58 -44 -56 -24 Q-54 -8 -30 -12" fill="none" stroke={pal.mug} strokeWidth={9} />
-    <ellipse cx={0} cy={-84} rx={32} ry={6} fill={pal.mugDeep} />
-    <path d="M30 -78 L27 -6" stroke={pal.rimHot} strokeWidth={2.4} opacity={0.8} strokeLinecap="round" />
+    <path d="M-30 -2 L-33 -80 Q-33 -86 -27 -86 L27 -86 Q33 -86 33 -80 L30 -2 Q30 4 24 4 L-24 4 Q-30 4 -30 -2 Z" fill={pal.mug} />
+    <path d="M8 -86 L27 -86 Q33 -86 33 -80 L30 -2 Q30 4 24 4 L6 4 Z" fill={pal.mugDeep} opacity={0.45} />
+    <rect x={-32.5} y={-64} width={65} height={11} fill={pal.mugBand} />
+    <path d="M-32 -64 L32 -64" stroke={alpha(NIGHT.ink, 0.2)} strokeWidth={1.5} />
+    <path d="M-32 -46 Q-60 -48 -58 -26 Q-56 -8 -30 -12" fill="none" stroke={pal.mug} strokeWidth={9} strokeLinecap="round" />
+    <ellipse cx={0} cy={-86} rx={31} ry={6} fill={pal.mugDeep} />
+    <ellipse cx={0} cy={-85} rx={26} ry={4} fill={mix(LIGHT.highlightSoftForeground, NIGHT.ink, 0.5)} />
+    <path d="M30 -80 L27 -6" stroke={rim ?? pal.rimHot} strokeWidth={2.6} opacity={0.85} strokeLinecap="round" />
   </g>
 );
 
-/** Short salt-and-pepper tufts across the back of his head (deterministic). */
-const TUFTS = Array.from({length: 46}, (_, i) => {
-  const r = (k: string) => random(`gus-tuft-${i}-${k}`);
-  const a = -Math.PI * (0.05 + r('a') * 0.9);
-  const rr = 0.35 + r('r') * 0.62;
-  const x = Math.cos(a) * 100 * rr - 2;
-  const y = -130 + Math.sin(a) * 100 * rr * 0.95 + r('y') * 40;
-  return {x, y, len: 7 + r('l') * 8, tilt: 70 + r('t') * 40, light: r('c') > 0.45};
-}).filter((t) => t.y > -222 && t.y < -44);
+/** His left hand round the mug (mug-local): four fingers through and round the handle side, the thumb on top. */
+const MugHand: React.FC<{pal: Pal; uid: string}> = ({pal, uid}) => {
+  const fingers: Array<[P, P, number]> = [
+    [[-60, -50], [-30, -54], 15],
+    [[-62, -36], [-30, -38], 16],
+    [[-60, -22], [-30, -22], 15],
+  ];
+  return (
+    <g>
+      <path d={shape([[-86, -66], [-62, -66], [-48, -56], [-50, -14], [-64, -6], [-88, -12], [-96, -40]])} fill={pal.skin} />
+      <path d={shape([[-86, -66], [-62, -66], [-48, -56], [-50, -14], [-64, -6], [-88, -12], [-96, -40]])} fill={`url(#${uid}hsh)`} />
+      {fingers.map(([a, b, w], i) => (
+        <path key={i} d={capsule(a, b, w, w * 0.9)} fill={mix(pal.skin, pal.skinDeep, 0.15 + i * 0.1)} stroke={pal.skinLine} strokeWidth={1.2} />
+      ))}
+      <path d={capsule([-70, -64], [-36, -76], 16, 13)} fill={pal.skin} stroke={pal.skinLine} strokeWidth={1.2} />
+      <path d="M-84 -68 Q-60 -72 -36 -82" fill="none" stroke={pal.rim} strokeWidth={2.2} opacity={pal.rimAmt * 0.7} strokeLinecap="round" />
+    </g>
+  );
+};
 
-const Head: React.FC<{q: Pose; pal: Pal; uid: string; dark?: number}> = ({q, pal, uid, dark = 0}) => {
+const Head: React.FC<{q: Pose; pal: Pal; uid: string}> = ({q, pal, uid}) => {
   const sm = q.smile;
-  const k = 1 - dark;
-  const skull = SKULL.map((p, i) => {
-    // the cheek rounds out and lifts with the smile (points 9–11)
-    if (i >= 8 && i <= 11) return [p[0] + sm * 4, p[1] - sm * 4] as C;
-    return p;
-  });
-  const sil = (c: string) => mix(c, NIGHT.ink, dark);
+  const skull = SKULL.map((p, i) => (SMILE_PTS.includes(i) ? ([p[0] + sm * (i === 16 ? 5 : 4), p[1] - sm * 5] as C) : p));
   return (
     <g>
       <defs>
-        <linearGradient id={`${uid}skin`} x1="-110" y1="0" x2="140" y2="0" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor={sil(pal.skinDeep)} />
-          <stop offset="0.72" stopColor={sil(pal.skin)} />
-          <stop offset="1" stopColor={sil(mix(pal.skin, pal.rim, 0.35))} />
+        <linearGradient id={`${uid}skin`} x1="-130" y1="0" x2="160" y2="0" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor={mix(pal.skinDeep, pal.shade, pal.shadeAmt)} />
+          <stop offset="0.65" stopColor={pal.skin} />
+          <stop offset="1" stopColor={mix(pal.skin, pal.rim, 0.3)} />
         </linearGradient>
-        <radialGradient id={`${uid}crown`} cx="-4" cy="-236" r="58" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor={sil(mix(pal.skin, pal.rim, 0.12))} />
-          <stop offset="0.55" stopColor={sil(pal.skin)} stopOpacity={0.75} />
-          <stop offset="1" stopColor={sil(pal.skin)} stopOpacity={0} />
+        <radialGradient id={`${uid}crown`}>
+          <stop offset="0" stopColor={mix(pal.skin, pal.rim, 0.25)} />
+          <stop offset="0.6" stopColor={pal.skin} stopOpacity={0.85} />
+          <stop offset="1" stopColor={pal.skin} stopOpacity={0} />
         </radialGradient>
-        <linearGradient id={`${uid}hair`} x1="0" y1="-240" x2="0" y2="-30" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor={sil(mix(pal.hair, pal.hairHi, 0.2))} />
-          <stop offset="0.6" stopColor={sil(pal.hair)} />
-          <stop offset="1" stopColor={sil(pal.hairDeep)} />
+        <linearGradient id={`${uid}hair`} x1="-130" y1="-280" x2="120" y2="-60" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor={mix(pal.hair, pal.shade, pal.shadeAmt * 0.6)} />
+          <stop offset="0.6" stopColor={pal.hair} />
+          <stop offset="1" stopColor={mix(pal.hair, pal.hairHi, 0.3)} />
         </linearGradient>
-        <linearGradient id={`${uid}stub`} x1="0" y1="-110" x2="0" y2="-30" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor={sil(pal.hair)} stopOpacity={0} />
-          <stop offset="1" stopColor={sil(pal.hairDeep)} stopOpacity={0.55} />
+        <linearGradient id={`${uid}nape`} x1="0" y1="-120" x2="0" y2="-40" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor={pal.hairDeep} stopOpacity={0} />
+          <stop offset="1" stopColor={pal.hairDeep} stopOpacity={0.55} />
         </linearGradient>
+        <linearGradient id={`${uid}stub`} x1="100" y1="-120" x2="150" y2="-30" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor={pal.hair} stopOpacity={0.15} />
+          <stop offset="1" stopColor={pal.hairDeep} stopOpacity={0.5} />
+        </linearGradient>
+        <clipPath id={`${uid}sk`}>
+          <path d={shape(skull)} />
+        </clipPath>
       </defs>
+      {/* the light wrapping round his head from the window ahead */}
+      <path d={shape(skull)} fill="none" stroke={pal.rim} strokeWidth={14} opacity={0.12 * pal.rimAmt} />
       <path d={shape(skull)} fill={`url(#${uid}skin)`} />
-      {/* grey stubble along the jaw he shows us */}
-      <path d={shape([[100, -112], [128 + sm * 4, -92 - sm * 4], [124 + sm * 4, -70 - sm * 4], [116, -56], [100, -36], [72, -22], [60, -40], [86, -70]])} fill={`url(#${uid}stub)`} />
-      <path d={`M126 ${-92 - sm * 3} Q136 ${-94 - sm * 4} 139 ${-86 - sm * 4}`} fill="none" stroke={sil(mix(pal.hair, pal.hairHi, 0.25))} strokeWidth={5} strokeLinecap="round" />
+      <g clipPath={`url(#${uid}sk)`}>
+        {/* grey stubble along the jaw and cheek */}
+        <path d={shape([[112, -120], [150, -116], [156, -98], [148, -82], [140, -58], [116, -34], [80, -20], [70, -44], [98, -76], [108, -100]])} fill={`url(#${uid}stub)`} />
+        {/* the cheek's roundness catching the window, more as he smiles */}
+        <ellipse cx={138 + sm * 3} cy={-118 - sm * 4} rx={16} ry={22} fill={pal.rim} opacity={0.12 + 0.16 * sm} />
+        {/* the shadow of the brow over the socket's edge */}
+        <path d="M128 -196 Q148 -192 150 -178 Q140 -176 128 -182 Z" fill={pal.skinLine} opacity={0.35} />
+      </g>
+      {/* moustache corner */}
+      <path d={`M140 ${-104 - sm * 4} Q154 ${-108 - sm * 6} ${160 + sm * 2} ${-98 - sm * 6} Q154 ${-92 - sm * 4} 142 ${-94 - sm * 3} Z`} fill={mix(pal.hair, pal.hairHi, 0.15)} />
+      <path d={`M146 ${-106 - sm * 5} Q156 ${-106 - sm * 6} ${160 + sm * 2} ${-99 - sm * 6}`} fill="none" stroke={pal.rimHot} strokeWidth={1.6} opacity={0.6 * pal.rimAmt} strokeLinecap="round" />
+      {/* hair: salt and pepper, close at the back and sides */}
       <path d={shape(HAIR)} fill={`url(#${uid}hair)`} />
-      {/* short salt-and-pepper tufts */}
-      {k > 0.2
-        ? TUFTS.map((t, i) => (
-            <path key={i} d={`M${t.x.toFixed(1)} ${t.y.toFixed(1)} l${(Math.cos((t.tilt * Math.PI) / 180) * t.len).toFixed(1)} ${(Math.sin((t.tilt * Math.PI) / 180) * t.len).toFixed(1)}`} stroke={t.light ? pal.hairHi : pal.hairDeep} strokeWidth={2} opacity={(t.light ? 0.35 : 0.5) * k} strokeLinecap="round" />
-          ))
-        : null}
-      {/* thinning crown */}
-      <ellipse cx={-4} cy={-234} rx={58} ry={24} fill={`url(#${uid}crown)`} />
-      {/* the far brow's tip and the smile's crinkles at the eye */}
-      <path d={`M112 -170 Q124 ${-176 - sm * 2} 134 -168`} fill="none" stroke={sil(pal.hairDeep)} strokeWidth={4.5} strokeLinecap="round" />
-      {sm > 0.02 ? <path d="M118 -150 l-11 -5 M118 -143 l-12 0 M119 -136 l-10 5" stroke={sil(pal.skinLine)} strokeWidth={1.8} opacity={sm} strokeLinecap="round" /> : null}
-      {sm > 0.02 ? <path d={`M124 -86 Q118 -74 ${110 - sm * 2} -64`} fill="none" stroke={sil(pal.skinLine)} strokeWidth={1.8} opacity={sm * 0.7} strokeLinecap="round" /> : null}
-      {/* ear, from behind */}
-      <path d={shape(EAR)} fill={sil(pal.skin)} />
-      <path d={shape(EAR)} fill={sil(pal.skinDeep)} opacity={0.35} />
-      <path d="M66 -144 Q78 -154 88 -146 Q92 -126 86 -104" fill="none" stroke={sil(pal.skinLine)} strokeWidth={2.4} opacity={0.5} strokeLinecap="round" />
-      <path d="M76 -162 Q92 -152 97 -126" fill="none" stroke={pal.rim} strokeWidth={2.6} opacity={pal.rimAmt * 0.8} strokeLinecap="round" />
-      {/* reading glasses: temple over the ear, the lens edge past his cheek, the cord down behind the ear and round his neck */}
-      <path d="M62 -154 L138 -156" stroke={sil(pal.frame)} strokeWidth={4} strokeLinecap="round" />
-      <path d="M137 -172 Q145 -153 139 -134" fill="none" stroke={sil(pal.frame)} strokeWidth={5} strokeLinecap="round" />
-      <path d="M139 -170 Q147 -153 141 -136" fill="none" stroke={pal.rimHot} strokeWidth={1.6} opacity={0.7 * pal.rimAmt} />
-      <path d="M62 -152 C56 -120 60 -60 54 -26 C40 -12 -40 -12 -58 -26" fill="none" stroke={sil(pal.cord)} strokeWidth={2.2} strokeLinecap="round" />
-      {/* the window light along his head and face */}
-      <path d="M-60 -250 Q20 -268 96 -214 Q124 -182 134 -128 Q143 -110 136 -96" fill="none" stroke={pal.rim} strokeWidth={3.4} opacity={pal.rimAmt} strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M-60 -250 Q20 -268 96 -214 Q124 -182 134 -128" fill="none" stroke={pal.rim} strokeWidth={12} opacity={0.12 * pal.rimAmt} strokeLinecap="round" />
+      <path d={shape(HAIR)} fill={`url(#${uid}nape)`} />
+      {HAIR_STRANDS.map((s, i) => (
+        <path key={i} d={strand(s.pts, s.w)} fill={s.hi ? pal.hairHi : pal.hairDeep} opacity={s.hi ? 0.4 : 0.45} />
+      ))}
+      {/* the thinning crown: scalp through sparse hair */}
+      <ellipse cx={8} cy={-284} rx={64} ry={28} fill={`url(#${uid}crown)`} />
+      <path d="M-30 -296 Q8 -286 46 -298 M-16 -284 Q18 -276 40 -288 M-40 -280 Q-6 -270 22 -276" fill="none" stroke={pal.hair} strokeWidth={2} opacity={0.55} strokeLinecap="round" />
+      {/* nape: the skin fold and the hairline */}
+      <path d="M-70 -40 Q0 -28 70 -44" fill="none" stroke={pal.skinLine} strokeWidth={2.4} opacity={0.4} strokeLinecap="round" />
+      {/* the far brow's tail and the eye's crinkle as he smiles */}
+      <path d={`M134 -204 Q146 ${-210 - sm * 2} 154 -202`} fill="none" stroke={pal.hairDeep} strokeWidth={5} strokeLinecap="round" />
+      {sm > 0.02 ? <path d={`M140 -176 l-12 -5 M141 -169 l-13 1 M142 -162 l-11 6`} stroke={pal.skinLine} strokeWidth={1.8} opacity={sm} strokeLinecap="round" /> : null}
+      {sm > 0.02 ? <path d={`M146 -122 Q140 -108 ${134 - sm * 2} -96`} fill="none" stroke={pal.skinLine} strokeWidth={1.8} opacity={sm * 0.7} strokeLinecap="round" /> : null}
+      {/* ear, from behind: lit through by the window */}
+      <path d={shape(EAR)} fill={pal.skin} />
+      <path d={shape(EAR)} fill={pal.skinGlow} opacity={0.45} />
+      <path d="M96 -176 Q112 -186 122 -174 Q128 -150 120 -124" fill="none" stroke={pal.skinLine} strokeWidth={2.4} opacity={0.5} strokeLinecap="round" />
+      <path d="M108 -194 Q126 -186 131 -162 Q131 -134 119 -114" fill="none" stroke={pal.rimHot} strokeWidth={2.6} opacity={0.7 * pal.rimAmt} strokeLinecap="round" />
+      {/* reading glasses: temple over the ear, the lens edge past his brow; the cord from behind the ear down round his neck */}
+      <path d="M94 -186 Q120 -192 156 -190" fill="none" stroke={pal.frame} strokeWidth={5} strokeLinecap="round" />
+      <path d="M94 -186 Q88 -176 92 -164" fill="none" stroke={pal.frame} strokeWidth={4.5} strokeLinecap="round" />
+      <path d="M154 -206 Q166 -190 160 -170" fill="none" stroke={pal.frame} strokeWidth={6} strokeLinecap="round" />
+      <path d="M156 -205 Q168 -190 162 -172" fill="none" stroke={pal.rimHot} strokeWidth={1.8} opacity={0.85 * pal.rimAmt} />
+      <path d="M92 -164 C84 -120 86 -70 74 -36 C56 -14 -40 -10 -70 -24" fill="none" stroke={pal.cord} strokeWidth={2.4} strokeLinecap="round" />
+      {/* the window light along the crown, the forehead, the brow, the nose tip, the cheek */}
+      <path d="M-96 -270 Q-46 -302 14 -312 Q74 -300 118 -267 Q142 -228 151 -196 Q148 -178 152 -160 Q162 -142 152 -130 Q149 -114 153 -100" fill="none" stroke={pal.rim} strokeWidth={3.6} opacity={pal.rimAmt} strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M-128 -224 Q-138 -170 -120 -100" fill="none" stroke={pal.rim} strokeWidth={2} opacity={0.3 * pal.rimAmt} strokeLinecap="round" />
     </g>
   );
 };
@@ -281,131 +362,138 @@ export const GusDeskArt: React.FC<GusPose & {layer?: GusLayer; screen?: React.Re
   const b = breath(q.t, 0.2, 2);
   const by = -b;
   const raise = smoothstep(q.mugRaise);
-  const headDeg = q.lookDown - 6 * raise;
+  const headDeg = q.lookDown - 4 * raise;
   const back = layer !== 'front';
   const front = layer !== 'back';
+  const NPl = (p: P): P => sub(p, NP); // frame → body-local
 
-  // right arm (frame right): upper arm hangs to the desk, the forearm comes forward to the phone (foreshortened)
-  const shR: P = [232, 98 + by];
-  const elR: P = [292, 372];
-  const wrR: P = [PH.x + PH.w - 56 - NP[0], PH.y + PH.h + 24 - NP[1]];
-  // left arm (frame left): the mug from the desk up to his mouth, behind his head at the top
-  const shL: P = [-196, 100 + by];
-  const mugRest: P = [-246, 318];
-  const mugUp: P = [70, -56];
-  const hand = arc(mugRest, mugUp, -70, raise);
-  const [elL, wrL] = ik(shL, add(hand, [10, 26]), 190, 150, -1);
-  const mugDeg = lerp(0, -10, raise);
+  // right arm (frame right): the upper arm down his side, the forearm forward and up to the phone (foreshortened)
+  const shR: P = [226, 118 + by];
+  const wrR: P = NPl([PH.x + PH.w * 0.42, PH.y + PH.h + 34]);
+  const elR: P = [276, 470];
+  // left arm (frame left): the mug from the desk up to his mouth (in front of his face, so behind his head)
+  const shL: P = [-226, 112 + by];
+  const mugRest: P = [-200, 372];
+  const mugUp: P = [150, -40];
+  const hand = arc(mugRest, mugUp, -110, raise);
+  const [elL, wrL] = ik(shL, add(hand, [-62, -30]), 210, 170, -1);
+  const mugDeg = lerp(0, -32, raise);
 
-  const knit = `url(#${uid}knit)`;
-  const sleeve = (a: P, c: P, wa: number, wc: number) => (
+  const knitLit = mix(pal.knit, pal.knitHi, 0.5);
+  const knitDark = mix(pal.knitDeep, pal.shade, pal.shadeAmt);
+  const skinDark = mix(pal.skinDeep, pal.shade, pal.shadeAmt * 0.6);
+  const forearm = (a: P, c: P, wa: number, wc: number, id: string) => (
     <>
-      <path d={capsule(a, c, wa, wc)} fill={knit} />
-      <path d={litEdge(a, c, wa, wc, 0.4)} stroke={pal.rim} strokeWidth={2.4} opacity={0.4 * pal.rimAmt} strokeLinecap="round" />
-    </>
-  );
-  const forearm = (a: P, c: P, wa: number, wc: number) => (
-    <>
-      <path d={capsule(a, c, wa, wc)} fill={pal.skin} />
-      <path d={capsule(a, c, wa, wc)} fill={pal.shade} />
-      <path d={litEdge(a, c, wa, wc)} stroke={pal.rim} strokeWidth={2.4} opacity={0.7 * pal.rimAmt} strokeLinecap="round" />
+      <Segment a={a} b={c} wa={wa} wb={wc} lit={mix(pal.skin, pal.rim, 0.3)} mid={pal.skin} dark={skinDark} id={id} />
+      <path d={litEdge(a, c, wa, wc)} stroke={pal.rim} strokeWidth={2.6} opacity={0.75 * pal.rimAmt} strokeLinecap="round" />
       {/* the shoved-up sleeve, bunched at the elbow */}
       <g transform={place(a, angle(sub(c, a)))}>
-        <path d={`M-4 ${-wa / 2 - 8} Q20 ${-wa / 2 - 12} 30 ${-wa / 2 - 2} L30 ${wa / 2 + 2} Q20 ${wa / 2 + 12} -4 ${wa / 2 + 8} Z`} fill={pal.knitHi} />
-        <path d={`M8 ${-wa / 2 - 8} L8 ${wa / 2 + 8} M18 ${-wa / 2 - 9} L18 ${wa / 2 + 9}`} stroke={pal.knitDeep} strokeWidth={2} opacity={0.5} />
+        <path d={`M-14 ${-wa / 2 - 10} Q8 ${-wa / 2 - 16} 26 ${-wa / 2 - 4} L26 ${wa / 2 + 4} Q8 ${wa / 2 + 16} -14 ${wa / 2 + 10} Z`} fill={pal.knit} />
+        <path d={`M-2 ${-wa / 2 - 12} Q2 0 -2 ${wa / 2 + 12} M12 ${-wa / 2 - 10} Q16 0 12 ${wa / 2 + 10}`} fill="none" stroke={knitDark} strokeWidth={2.4} opacity={0.7} />
+        <path d={`M-12 ${-wa / 2 - 10} Q8 ${-wa / 2 - 16} 26 ${-wa / 2 - 4}`} fill="none" stroke={pal.rim} strokeWidth={2.2} opacity={0.6 * pal.rimAmt} />
       </g>
     </>
   );
-  // phone in local frame px (absolute), the hand's parts around it
+  // the phone (frame px) and his right hand round it: palm and heel below it, fingertips at its left edge, thumb over its right edge
   const phoneBody = (
     <g>
-      <rect x={PH.x - 4} y={PH.y - 4} width={PH.w + 8} height={PH.h + 8} rx={PH.r + 4} fill={mix(pal.phone, pal.rim, 0.25)} />
+      <rect x={PH.x - 3} y={PH.y - 3} width={PH.w + 6} height={PH.h + 6} rx={PH.r + 3} fill={mix(pal.phone, pal.rim, 0.35)} />
       <rect x={PH.x} y={PH.y} width={PH.w} height={PH.h} rx={PH.r} fill={pal.phone} />
       <rect x={SC.x} y={SC.y} width={SC.w} height={SC.h} rx={SC.r} fill={NIGHT.ink} />
-      <rect x={PH.x + PH.w / 2 - 30} y={PH.y + 10} width={60} height={14} rx={7} fill={NIGHT.ink} />
+      <rect x={PH.x + PH.w / 2 - 26} y={PH.y + 14} width={52} height={14} rx={7} fill={NIGHT.ink} />
     </g>
   );
   const tx = PH.x + PH.w;
-  const ty = PH.y + PH.h * 0.66;
+  const ty = PH.y + PH.h * 0.7;
   const press = q.thumb;
-  const thumbTip: P = [tx - 16 - press * 30, ty - 30 + press * 6];
+  const thumbTip: P = [tx - 30 - press * 26, ty - 34 + press * 8];
+  const thumbRoot: P = [tx + 18, ty + 84];
+  const thumbMid: P = [tx + 8, ty + 8];
   const thumb = (
     <g>
-      {/* thumb: from its root at the right edge, over the screen edge */}
-      <path d={capsule([tx + 22, ty + 70], [tx + 4, ty + 6], 40, 32)} fill={pal.skin} />
-      <path d={capsule([tx + 4, ty + 6], thumbTip, 32, 24)} fill={pal.skin} />
-      <path d={capsule([tx + 4, ty + 6], thumbTip, 32, 24)} fill={pal.shade} opacity={0.6} />
-      <path d={`M${thumbTip[0] - 4} ${thumbTip[1] - 4} Q${thumbTip[0] + 4} ${thumbTip[1] - 12} ${thumbTip[0] + 12} ${thumbTip[1] - 8}`} fill="none" stroke={pal.mug} strokeWidth={2.4} opacity={0.7} strokeLinecap="round" />
-      <path d={`M${tx + 38} ${ty + 60} Q${tx + 26} ${ty} ${thumbTip[0] + 6} ${thumbTip[1] - 12}`} fill="none" stroke={pal.rim} strokeWidth={2.4} opacity={0.75 * pal.rimAmt} strokeLinecap="round" />
-      {/* fingertips curling round the left edge */}
+      <path d={capsule(thumbRoot, thumbMid, 44, 34)} fill={pal.skin} />
+      <path d={capsule(thumbMid, thumbTip, 34, 26)} fill={pal.skin} />
+      <path d={capsule(thumbMid, thumbTip, 34, 26)} fill={skinDark} opacity={0.35} />
+      {/* thumbnail */}
+      <path d={`M${thumbTip[0] - 6} ${thumbTip[1] - 2} Q${thumbTip[0] + 2} ${thumbTip[1] - 12} ${thumbTip[0] + 12} ${thumbTip[1] - 6} L${thumbTip[0] + 8} ${thumbTip[1] + 4} Z`} fill={mix(pal.skin, NIGHT.ivory, 0.35)} opacity={0.8} />
+      <path d={`M${tx + 40} ${ty + 70} Q${tx + 28} ${ty} ${thumbTip[0] + 8} ${thumbTip[1] - 12}`} fill="none" stroke={pal.rim} strokeWidth={2.6} opacity={0.8 * pal.rimAmt} strokeLinecap="round" />
+      {/* fingertips round the left edge */}
       {[0, 1, 2].map((i) => {
-        const y = PH.y + PH.h * 0.56 + i * 34;
+        const y = PH.y + PH.h * 0.5 + i * 38;
         return (
           <g key={i}>
-            <path d={capsule([PH.x + 4, y], [PH.x - 12, y + 6], 26, 22)} fill={mix(pal.skin, pal.skinDeep, 0.25 + i * 0.12)} />
-            <path d={`M${PH.x - 18} ${y + 2} q2 -8 10 -10`} fill="none" stroke={pal.rim} strokeWidth={1.6} opacity={0.4} strokeLinecap="round" />
+            <path d={capsule([PH.x + 10, y], [PH.x - 8, y + 6], 28, 24)} fill={mix(pal.skin, pal.skinDeep, 0.2 + i * 0.12)} stroke={pal.skinLine} strokeWidth={1.2} />
+            <path d={`M${PH.x - 16} ${y + 2} q2 -9 12 -11`} fill="none" stroke={pal.rim} strokeWidth={1.8} opacity={0.5 * pal.rimAmt} strokeLinecap="round" />
           </g>
         );
       })}
     </g>
   );
-  // the hand behind the phone: heel of the palm below it, the outer edge past its right side, the wrist
   const palm = (
     <g>
-      <path d={shape([[tx - 40, ty - 10], [tx + 20, ty + 4], [tx + 34, ty + 80], [tx + 22, PH.y + PH.h + 30], [tx - 30, PH.y + PH.h + 46], [tx - 110, PH.y + PH.h + 30], [tx - 120, PH.y + PH.h - 20]])} fill={pal.skinDeep} />
-      <path d={`M${tx + 20} ${ty + 4} Q${tx + 38} ${ty + 40} ${tx + 34} ${ty + 80}`} fill="none" stroke={pal.rim} strokeWidth={2.4} opacity={0.6 * pal.rimAmt} strokeLinecap="round" />
+      <path d={shape([[tx - 50, ty + 10], [tx + 22, ty + 14], [tx + 40, ty + 80], [tx + 26, PH.y + PH.h + 40], [tx - 40, PH.y + PH.h + 56], [tx - 130, PH.y + PH.h + 40], [tx - 150, PH.y + PH.h - 10], [tx - 110, ty + 40]])} fill={skinDark} />
+      <path d={`M${tx + 22} ${ty + 14} Q${tx + 42} ${ty + 46} ${tx + 40} ${ty + 80}`} fill="none" stroke={pal.rim} strokeWidth={2.4} opacity={0.6 * pal.rimAmt} strokeLinecap="round" />
     </g>
   );
 
   return (
     <g>
       <defs>
-        <linearGradient id={`${uid}knit`} x1="-280" y1="0" x2="300" y2="0" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor={pal.knitDeep} />
+        <linearGradient id={`${uid}knit`} x1="-290" y1="0" x2="300" y2="0" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor={knitDark} />
           <stop offset="0.55" stopColor={pal.knit} />
-          <stop offset="1" stopColor={mix(pal.knit, pal.knitHi, 0.35)} />
+          <stop offset="0.92" stopColor={mix(pal.knit, pal.knitHi, 0.3)} />
+          <stop offset="1" stopColor={mix(pal.knit, pal.rim, 0.25)} />
         </linearGradient>
-        <linearGradient id={`${uid}fall`} x1="0" y1="200" x2="0" y2="560" gradientUnits="userSpaceOnUse">
+        <linearGradient id={`${uid}fall`} x1="0" y1="200" x2="0" y2="640" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor={NIGHT.ink} stopOpacity={0} />
-          <stop offset="1" stopColor={NIGHT.ink} stopOpacity={0.35 + 0.4 * pal.n} />
+          <stop offset="1" stopColor={NIGHT.ink} stopOpacity={0.3 + 0.45 * pal.n} />
+        </linearGradient>
+        <linearGradient id={`${uid}hsh`} x1="0" y1="-70" x2="0" y2="0" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor={pal.rim} stopOpacity={0.2} />
+          <stop offset="1" stopColor={pal.shade} stopOpacity={0.35} />
         </linearGradient>
       </defs>
       {back ? (
         <g>
           <g transform={`translate(${NP[0]} ${NP[1]})`}>
-            {/* left upper arm, mostly behind his back */}
-            <path d={capsule(shL, elL, 104, 84)} fill={pal.knitDeep} />
-            {/* back of the cardigan */}
-            <g transform={`translate(0 ${by})`}>
-              <path d={shape(TORSO)} fill={knit} />
-              <path d={shape(TORSO)} fill={`url(#${uid}fall)`} />
-              <path d="M-150 60 Q-120 180 -136 320 M150 60 Q130 180 150 330" fill="none" stroke={pal.knitDeep} strokeWidth={4} opacity={0.6} strokeLinecap="round" />
-              <path d="M-40 120 Q0 140 40 120" fill="none" stroke={pal.knitDeep} strokeWidth={3} opacity={0.4} strokeLinecap="round" />
-              <path d="M70 4 Q160 26 242 78 Q280 120 292 220" fill="none" stroke={pal.rim} strokeWidth={3.4} opacity={pal.rimAmt} strokeLinecap="round" />
-              {/* neck, chambray collar, the cardigan's ribbed neckline */}
-              <path d={shape(NECK)} fill={pal.skinDeep} />
-              <path d="M-66 0 Q0 -14 66 -4 L70 22 Q0 10 -70 26 Z" fill={pal.shirt} />
-              <path d="M66 -4 L86 30 L60 26 Z" fill={pal.shirt} />
-              <path d="M-70 26 Q0 10 70 22 L74 36 Q0 26 -76 42 Z" fill={pal.knitHi} />
-              <path d="M-66 0 Q0 -14 66 -4 L86 30" fill="none" stroke={pal.rim} strokeWidth={2} opacity={0.6 * pal.rimAmt} />
-            </g>
-            {/* left arm with the mug (behind his head when it reaches his mouth) */}
-            {forearm(elL, wrL, 64, 50)}
+            {/* left arm and mug: behind his back (the forearm reaches forward to the desk, up to his mouth) */}
+            <Segment a={shL} b={elL} wa={110} wb={88} lit={knitLit} mid={pal.knit} dark={knitDark} id={`${uid}lu`} />
+            {forearm(elL, wrL, 70, 56, `${uid}lf`)}
             <g transform={place(hand, mugDeg)}>
               <Mug pal={pal} />
-              {/* fingers wrapped round the mug, the knuckles toward us */}
-              <path d={shape([[-40, -66], [-10, -70], [14, -64], [18, -22], [-6, -14], [-40, -20], [-50, -44]])} fill={pal.skin} />
-              <path d={shape([[-40, -66], [-10, -70], [14, -64], [18, -22], [-6, -14], [-40, -20], [-50, -44]])} fill={pal.shade} />
-              <path d="M-36 -54 L14 -52 M-38 -40 L16 -38 M-38 -27 L16 -26" stroke={pal.skinLine} strokeWidth={1.6} opacity={0.45} strokeLinecap="round" />
-              <path d="M-10 -70 Q10 -68 16 -50" fill="none" stroke={pal.rim} strokeWidth={2.2} opacity={0.7 * pal.rimAmt} strokeLinecap="round" />
+              <MugHand pal={pal} uid={uid} />
             </g>
-            {/* head, pitched toward the phone */}
+            {/* right upper arm down his side */}
+            <Segment a={shR} b={elR} wa={112} wb={90} lit={knitLit} mid={pal.knit} dark={knitDark} id={`${uid}ru`} />
+            {/* back of the cardigan */}
+            <g transform={`translate(0 ${by})`}>
+              <path d={shape(TORSO)} fill={`url(#${uid}knit)`} />
+              <path d={shape(TORSO)} fill={`url(#${uid}fall)`} />
+              {/* shoulder blades, the centre seam, folds pulled toward the raised right arm */}
+              <path d="M-170 120 Q-120 210 -150 340 M170 130 Q140 220 168 350" fill="none" stroke={knitDark} strokeWidth={4} opacity={0.5} strokeLinecap="round" />
+              <path d="M0 60 Q-6 300 4 700" fill="none" stroke={knitDark} strokeWidth={3} opacity={0.4} strokeLinecap="round" />
+              <path d="M60 160 Q150 170 230 140 M40 240 Q140 250 240 210" fill="none" stroke={knitDark} strokeWidth={3} opacity={0.35} strokeLinecap="round" />
+              <path d="M-200 520 Q-60 540 120 520" fill="none" stroke={knitDark} strokeWidth={3} opacity={0.25} strokeLinecap="round" />
+              {/* rim along the shoulders (the window ahead) */}
+              <path d="M86 14 Q160 46 224 100 Q262 170 286 290" fill="none" stroke={pal.rim} strokeWidth={3.6} opacity={pal.rimAmt} strokeLinecap="round" />
+              <path d="M-80 14 Q-170 36 -238 84 Q-266 156 -274 290" fill="none" stroke={pal.rim} strokeWidth={2.4} opacity={0.5 * pal.rimAmt} strokeLinecap="round" />
+              {/* neck, chambray collar, the cardigan's ribbed shawl collar */}
+              <path d={shape(NECK)} fill={mix(pal.skinDeep, pal.shade, pal.shadeAmt * 0.5)} />
+              <path d="M-70 -30 Q0 -20 76 -36" fill="none" stroke={pal.skinLine} strokeWidth={2} opacity={0.35} />
+              <path d="M-92 4 Q0 -12 96 0 L102 30 Q0 16 -98 34 Z" fill={pal.shirt} />
+              <path d="M96 0 L120 36 L94 32 Z" fill={pal.shirt} />
+              <path d="M-92 4 Q0 -12 96 0 L120 36" fill="none" stroke={pal.rim} strokeWidth={2} opacity={0.7 * pal.rimAmt} />
+              <path d="M-124 44 Q0 6 132 38 Q150 46 160 56 Q0 30 -136 70 Q-140 54 -124 44 Z" fill={pal.knitHi} />
+              <path d="M-112 50 Q0 18 140 46" fill="none" stroke={knitDark} strokeWidth={2} opacity={0.4} />
+              <path d="M-100 58 Q0 30 150 54" fill="none" stroke={knitDark} strokeWidth={2} opacity={0.3} />
+            </g>
+            {/* head, turned toward the phone and pitched down to it */}
             <g transform={`translate(0 ${by * 0.7}) rotate(${headDeg})`}>
               <Head q={q} pal={pal} uid={uid} />
             </g>
-            {/* right arm to the phone */}
-            {sleeve(shR, elR, 108, 88)}
-            {forearm(elR, wrR, 68, 56)}
+            {/* right forearm forward and up to the phone */}
+            {forearm(elR, wrR, 74, 62, `${uid}rf`)}
           </g>
           {palm}
           {phoneBody}
@@ -453,95 +541,120 @@ export type GusSilhouetteProps = {
   scale?: number;
 };
 
+const SIL_MUG_REST: P = [-150, 230];
+const SIL_MUG_UP: P = [-252, -176];
+const silMugAt = (raise: number) => arc(SIL_MUG_REST, SIL_MUG_UP, 60, raise);
+const silMugDeg = (raise: number) => lerp(8, -10, raise);
+
 /** The silhouette as an SVG <g> (neck pivot at 0,0). */
 export const GusSilhouetteArt: React.FC<Omit<GusSilhouetteProps, 'x' | 'y' | 'scale'>> = ({mugRaise = 0, light = 'dawn', hold = 'mug', smile = 0, t = 0}) => {
   const uid = useUid('gs');
   const dawn = light === 'dawn';
   const rim = dawn ? NIGHT.ivory : NIGHT.redSoft;
   const glow = dawn ? LIGHT.highlightSoft : NIGHT.red;
-  const body = dawn ? mix(NIGHT.ink, LIGHT.inverse, 0.6) : NIGHT.ink;
-  const edge = mix(body, rim, 0.18);
+  const body = dawn ? mix(NIGHT.ink, LIGHT.inverse, 0.55) : NIGHT.ink;
+  const edge = mix(body, rim, 0.14);
   const b = breath(t, 0.2, 2);
   const raise = smoothstep(clamp01(mugRaise));
   const bino = hold === 'binoculars';
   const sm = clamp01(smile);
-  const headDeg = bino ? -3 : -6;
+  const headDeg = bino ? -3 : -5 + 3 * raise;
   // left arm (frame left): a toast toward the window; with binoculars both elbows go out
-  const shL: P = [-238, 104 - b];
-  const handL = bino ? ([40, -110] as P) : lerpP([-150, 200], [-250, -150], raise);
-  const [elL, wrL] = ik(shL, handL, 190, 176, -1);
-  const shR: P = [232, 98 - b];
-  const handR: P = [150, -112];
-  const [elR, wrR] = ik(shR, handR, 190, 176, 1);
-  const limb = (a: P, c: P, wa: number, wc: number) => <path d={capsule(a, c, wa, wc)} fill={body} />;
-  const limbRim = (a: P, c: P, wa: number, wc: number) => <path d={litEdge(a, c, wa, wc, 0.47)} stroke={rim} strokeWidth={3} opacity={0.85} strokeLinecap="round" />;
-  const skull = SKULL.map((p, i) => (i >= 8 && i <= 11 ? ([p[0] + sm * 4, p[1] - sm * 4] as C) : p));
+  const shL: P = [-232, 108 - b];
+  const handL: P = bino ? [40, -120] : add(silMugAt(raise), [8, -30]);
+  const [elL, wrL] = ik(shL, handL, 200, 176, -1);
+  const shR: P = [232, 100 - b];
+  const handR: P = [150, -118];
+  const [elR, wrR] = ik(shR, handR, 200, 176, 1);
+  const skull = SKULL.map((p, i) => (SMILE_PTS.includes(i) ? ([p[0] + sm * 4, p[1] - sm * 5] as C) : p));
+  const limb = (a: P, c: P, wa: number, wc: number, key: string) => (
+    <g key={key}>
+      <path d={capsule(a, c, wa, wc)} fill={body} />
+      <path d={litEdge(a, c, wa, wc, 0.48)} stroke={rim} strokeWidth={3} opacity={0.85} strokeLinecap="round" />
+    </g>
+  );
   return (
     <g>
       <defs>
         <radialGradient id={`${uid}halo`}>
-          <stop offset="0" stopColor={glow} stopOpacity={0.35} />
+          <stop offset="0" stopColor={glow} stopOpacity={0.4} />
           <stop offset="1" stopColor={glow} stopOpacity={0} />
         </radialGradient>
+        <linearGradient id={`${uid}body`} x1="0" y1="-300" x2="0" y2="700" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor={mix(body, rim, 0.06)} />
+          <stop offset="0.5" stopColor={body} />
+          <stop offset="1" stopColor={mix(body, NIGHT.ink, 0.5)} />
+        </linearGradient>
       </defs>
       {/* window light wrapping round his head and shoulders */}
-      <ellipse cx={30} cy={-130} rx={250} ry={210} fill={`url(#${uid}halo)`} />
-      <ellipse cx={40} cy={-150} rx={170} ry={150} fill={`url(#${uid}halo)`} />
+      <ellipse cx={30} cy={-130} rx={280} ry={230} fill={`url(#${uid}halo)`} />
+      <ellipse cx={50} cy={-160} rx={180} ry={160} fill={`url(#${uid}halo)`} />
       {bino ? (
         <>
-          {limb(shR, elR, 108, 86)}
-          {limbRim(shR, elR, 108, 86)}
-          {limb(elR, wrR, 86, 60)}
+          {limb(shR, elR, 112, 90, 'ru')}
+          {limb(elR, wrR, 82, 62, 'rf')}
         </>
       ) : null}
       <g transform={`translate(0 ${-b})`}>
-        <path d={shape(TORSO)} fill={body} />
-        {/* the cardigan's shawl collar breaking the neckline */}
-        <path d="M-80 10 Q0 -8 80 6 L96 40 Q0 24 -96 44 Z" fill={edge} />
-        <path d="M70 4 Q160 26 242 78 Q280 120 292 220" fill="none" stroke={rim} strokeWidth={3.2} opacity={0.85} strokeLinecap="round" />
-        <path d="M-70 8 Q-150 28 -222 68 Q-262 110 -276 200" fill="none" stroke={rim} strokeWidth={2.2} opacity={0.45} strokeLinecap="round" />
+        <path d={shape(TORSO)} fill={`url(#${uid}body)`} />
+        {/* the cardigan's shawl collar and the shirt collar breaking the neckline */}
+        <path d="M-124 44 Q0 6 132 38 Q150 46 160 56 Q0 30 -136 70 Q-140 54 -124 44 Z" fill={edge} />
+        <path d="M96 0 L120 36 L94 32 Z" fill={edge} />
+        <path d="M86 14 Q160 46 224 100 Q262 170 286 290" fill="none" stroke={rim} strokeWidth={3.4} opacity={0.9} strokeLinecap="round" />
+        <path d="M-80 14 Q-170 36 -238 84 Q-266 156 -274 290" fill="none" stroke={rim} strokeWidth={2.4} opacity={0.5} strokeLinecap="round" />
         <path d={shape(NECK)} fill={body} />
       </g>
-      {limb(shL, elL, 104, 84)}
-      {limb(elL, wrL, 84, 60)}
-      {limbRim(elL, wrL, 84, 60)}
-      {/* head: solid, the window light along the crown, the brow, the nose tip, the glasses' edge */}
+      {limb(shL, elL, 110, 88, 'lu')}
+      {limb(elL, wrL, 80, 62, 'lf')}
+      {/* the shoved-up sleeve at the elbow */}
+      <path d={capsule(lerpP(elL, wrL, -0.05), lerpP(elL, wrL, 0.18), 96, 90)} fill={edge} />
+      {/* head: solid, the window light along the crown, brow, nose tip, cheek; the ear and glasses breaking the outline */}
       <g transform={`rotate(${headDeg})`}>
         <path d={shape(skull)} fill={body} />
-        <path d={shape(EAR)} fill={edge} opacity={0.6} />
-        <path d="M76 -162 Q92 -152 97 -126" fill="none" stroke={rim} strokeWidth={2} opacity={0.5} strokeLinecap="round" />
-        <path d="M-96 -214 Q-40 -262 20 -260 Q70 -250 100 -212 Q126 -180 132 -146 Q137 -128 141 -110 Q136 -98 128 -90 Q126 -76 118 -58" fill="none" stroke={rim} strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M-96 -214 Q-40 -262 20 -260 Q70 -250 100 -212 Q126 -180 132 -146" fill="none" stroke={rim} strokeWidth={14} opacity={0.14} strokeLinecap="round" />
-        <path d="M-104 -150 Q-108 -100 -84 -60" fill="none" stroke={rim} strokeWidth={2} opacity={0.35} strokeLinecap="round" />
-        <path d="M137 -172 Q146 -153 140 -134" fill="none" stroke={body} strokeWidth={6} strokeLinecap="round" />
-        <path d="M139 -170 Q148 -153 142 -136" fill="none" stroke={rim} strokeWidth={1.8} opacity={0.9} />
-        <path d="M60 -152 L138 -156" stroke={edge} strokeWidth={3} strokeLinecap="round" />
+        <path d={shape(skull)} fill="none" stroke={rim} strokeWidth={16} opacity={0.1} />
+        <path d={shape(EAR)} fill={edge} />
+        <path d="M108 -194 Q126 -186 131 -162 Q131 -134 119 -114" fill="none" stroke={dawn ? mix(SKIN, NIGHT.red, 0.3) : rim} strokeWidth={3} opacity={0.6} strokeLinecap="round" />
+        <path d="M-96 -270 Q-46 -302 14 -312 Q74 -300 118 -267 Q142 -228 151 -196 Q148 -178 152 -160 Q162 -142 152 -130 Q149 -114 153 -100 Q150 -86 140 -62" fill="none" stroke={rim} strokeWidth={3.4} strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M-128 -224 Q-138 -170 -120 -100" fill="none" stroke={rim} strokeWidth={2} opacity={0.35} strokeLinecap="round" />
+        {/* stubble and moustache roughen the jaw's edge */}
+        <path d={`M140 ${-104 - sm * 4} Q154 ${-108 - sm * 6} ${160 + sm * 2} ${-98 - sm * 6} Q154 ${-92 - sm * 4} 142 ${-94 - sm * 3} Z`} fill={body} />
+        <path d={`M146 ${-106 - sm * 5} Q156 ${-106 - sm * 6} ${160 + sm * 2} ${-99 - sm * 6}`} fill="none" stroke={rim} strokeWidth={1.8} opacity={0.7} strokeLinecap="round" />
+        {/* glasses: temple over the ear, the lens edge past the brow */}
+        <path d="M94 -186 Q120 -192 156 -190" fill="none" stroke={edge} strokeWidth={4} strokeLinecap="round" />
+        <path d="M154 -206 Q166 -190 160 -170" fill="none" stroke={body} strokeWidth={7} strokeLinecap="round" />
+        <path d="M156 -205 Q168 -190 162 -172" fill="none" stroke={rim} strokeWidth={1.8} opacity={0.9} />
         {bino ? (
           // the binoculars' far ends showing past his face
           <g>
-            <path d="M126 -184 L176 -190 Q186 -190 186 -180 L186 -136 Q186 -126 176 -126 L126 -132 Z" fill={body} />
-            <path d="M128 -184 L176 -190 Q186 -190 186 -180" fill="none" stroke={rim} strokeWidth={2.6} opacity={0.9} />
-            <ellipse cx={186} cy={-158} rx={5} ry={26} fill={mix(body, rim, 0.3)} />
+            <path d="M136 -214 L188 -220 Q198 -220 198 -210 L198 -164 Q198 -154 188 -154 L136 -160 Z" fill={body} />
+            <path d="M138 -214 L188 -220 Q198 -220 198 -210" fill="none" stroke={rim} strokeWidth={2.6} opacity={0.9} />
+            <ellipse cx={198} cy={-187} rx={5} ry={26} fill={mix(body, rim, 0.3)} />
           </g>
         ) : null}
       </g>
       {bino ? null : (
-        <g transform={place(wrL, lerp(10, -18, raise))}>
-          <g transform="translate(14 -10)">
-            <path d="M-30 -2 L-34 -78 Q-34 -84 -28 -84 L28 -84 Q34 -84 34 -78 L30 -2 Q30 4 24 4 L-24 4 Q-30 4 -30 -2 Z" fill={body} />
-            <path d="M-33 -40 Q-58 -44 -56 -24 Q-54 -8 -30 -12" fill="none" stroke={body} strokeWidth={9} />
-            <path d="M-28 -84 L28 -84 Q34 -84 34 -78 L30 -2" fill="none" stroke={rim} strokeWidth={2.6} opacity={0.9} strokeLinejoin="round" />
-            {/* a wisp of steam lit by the window */}
-            <path d="M4 -96 Q-6 -116 6 -134 Q16 -150 4 -166" fill="none" stroke={rim} strokeWidth={2.4} opacity={0.35 * raise} strokeLinecap="round" />
-          </g>
-          <path d={shape([[-30, -20], [-10, -40], [16, -36], [24, -8], [8, 12], [-24, 10]])} fill={body} />
+        <g transform={place(silMugAt(raise), silMugDeg(raise))}>
+          <path d="M-30 -2 L-33 -80 Q-33 -86 -27 -86 L27 -86 Q33 -86 33 -80 L30 -2 Q30 4 24 4 L-24 4 Q-30 4 -30 -2 Z" fill={body} />
+          <path d="M-32 -46 Q-60 -48 -58 -26 Q-56 -8 -30 -12" fill="none" stroke={body} strokeWidth={9} strokeLinecap="round" />
+          <path d="M-27 -86 L27 -86 Q33 -86 33 -80 L30 -2" fill="none" stroke={rim} strokeWidth={2.8} opacity={0.9} strokeLinejoin="round" />
+          <path d="M-58 -30 Q-60 -44 -36 -48" fill="none" stroke={rim} strokeWidth={1.8} opacity={0.5} strokeLinecap="round" />
+          {/* his fingers through the handle and round the mug, the thumb on top */}
+          <path d={shape([[-86, -66], [-62, -66], [-48, -56], [-50, -14], [-64, -6], [-88, -12], [-96, -40]])} fill={body} />
+          {[-54, -38, -22].map((y, i) => (
+            <path key={i} d={capsule([-60, y], [-28, y - 2], 15, 13)} fill={body} />
+          ))}
+          <path d={capsule([-70, -64], [-34, -76], 16, 13)} fill={body} />
+          <path d="M-84 -68 Q-60 -72 -34 -82" fill="none" stroke={rim} strokeWidth={2.2} opacity={0.75} strokeLinecap="round" />
+          {/* a wisp of steam lit by the window */}
+          <path d="M4 -98 Q-8 -120 6 -140 Q18 -156 4 -174" fill="none" stroke={rim} strokeWidth={3} opacity={0.4 * (0.4 + 0.6 * raise)} strokeLinecap="round" />
+          <path d="M-10 -100 Q-18 -116 -8 -130" fill="none" stroke={rim} strokeWidth={2} opacity={0.25 * (0.4 + 0.6 * raise)} strokeLinecap="round" />
         </g>
       )}
     </g>
   );
 };
 
-/** The silhouette as a full-frame layer. Default: neck at (790, 1330), scale 1.45 (head ≈ y 950–1330, shoulders off the bottom right). */
+/** The silhouette as a full-frame layer. Default: neck at (790, 1330), scale 1.45 (head ≈ y 880–1330, shoulders off the bottom right). */
 export const GusSilhouette: React.FC<GusSilhouetteProps & {style?: React.CSSProperties}> = ({x = 790, y = 1330, scale = 1.45, style, ...rest}) => (
   <AbsoluteFill style={{pointerEvents: 'none', ...style}}>
     <svg width={1080} height={1920} viewBox="0 0 1080 1920" style={{position: 'absolute', inset: 0}}>
@@ -552,13 +665,12 @@ export const GusSilhouette: React.FC<GusSilhouetteProps & {style?: React.CSSProp
   </AbsoluteFill>
 );
 
-/** Where the mug is on the silhouette (frame px) for a raise, e.g. to time the S23 clink against the glass. */
+/** Where the mug's rim is on the silhouette (frame px) for a raise, e.g. to time the S23 clink against the glass. */
 export const gusSilhouetteMug = (mugRaise: number, at: {x?: number; y?: number; scale?: number} = {}) => {
   const x = at.x ?? 790;
   const y = at.y ?? 1330;
   const s = at.scale ?? 1.45;
   const raise = smoothstep(clamp01(mugRaise));
-  const p = lerpP([-150, 200], [-250, -150], raise);
-  const top = add(p, rot([14, -94], lerp(10, -18, raise)));
+  const top = add(silMugAt(raise), rot([0, -86], silMugDeg(raise)));
   return {x: x + top[0] * s, y: y + top[1] * s};
 };

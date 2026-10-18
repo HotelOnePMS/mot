@@ -89,13 +89,17 @@ export type LogoProps = {
   color?: string;
   mode?: Mode;
   threshold?: number;
+  /** Mark colour overrides (S14's dark lockup asks for keyhole #0c1017). */
+  tile?: string;
+  keyhole?: string;
+  sill?: string;
   style?: React.CSSProperties;
 };
 
 /** Mark + wordmark (inline-flex items-center gap-2.5). End card: markSize 64, wordSize 56, gap 20. S14: 40 / 30. */
-export const Logo: React.FC<LogoProps> = ({markSize = 32, wordSize = 20, gap = 10, compact, color, mode, threshold, style}) => (
+export const Logo: React.FC<LogoProps> = ({markSize = 32, wordSize = 20, gap = 10, compact, color, mode, threshold, tile, keyhole, sill, style}) => (
   <span style={{display: 'inline-flex', alignItems: 'center', gap, ...style}}>
-    <LogoMark size={markSize} mode={mode} threshold={threshold} />
+    <LogoMark size={markSize} mode={mode} threshold={threshold} tile={tile} keyhole={keyhole} sill={sill} />
     {compact ? null : <Wordmark size={wordSize} color={color} mode={mode} />}
   </span>
 );
