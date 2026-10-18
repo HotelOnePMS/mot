@@ -409,7 +409,7 @@ const HomeScreen: React.FC<HomeProps & {p: Palette}> = ({time, date, banner, wal
   return (
     <>
       <WallpaperBg w={wallpaper} />
-      <Centered top={banner && k > 0 ? 160 : 96}>
+      <Centered top={96 + (banner ? 64 * k : 0)}>
         <div style={{fontSize: 64, lineHeight: 1, fontWeight: 500, letterSpacing: '-0.04em', color: NIGHT.ivory, fontVariantNumeric: 'tabular-nums'}}>{time}</div>
         {date ? <div style={{marginTop: 8, fontSize: 16, fontWeight: 500, color: rgba(NIGHT.ivory, 0.75)}}>{date}</div> : null}
       </Centered>
@@ -428,7 +428,8 @@ const HomeScreen: React.FC<HomeProps & {p: Palette}> = ({time, date, banner, wal
         ))}
       </div>
       {banner && k > 0 ? (
-        <div style={{position: 'absolute', inset: 0, transform: `translateY(${(1 - k) * -120}px)`, opacity: k}}>
+        // Banners slide down over the status bar, as on a real phone (zIndex above the StatusBar drawn after the content).
+        <div style={{position: 'absolute', inset: 0, zIndex: 2, transform: `translateY(${(1 - k) * -120}px)`, opacity: k}}>
           <NotificationCard n={banner} top={58} />
         </div>
       ) : null}

@@ -32,6 +32,7 @@ import {
   VoiceOrb,
 } from '../hotelone/index.ts';
 import {DARK, FONT, LIGHT, NIGHT} from '../theme.ts';
+import {GenericPhone} from '../ui/GenericPhone.tsx';
 
 loadFonts();
 
@@ -115,8 +116,8 @@ const S22: React.FC<{lf: number}> = ({lf}) => {
   return (
     <AbsoluteFill style={{background: LIGHT.background}}>
       <div style={{position: 'absolute', left: 0, top: 300}}>
-        <Screen mode="light" zoom={3} width={360} height={1300 / 3} scrollY={198}>
-          <VoiceMessagesPage mode="light" requests={inbox('morning')} fx={{rita: {focus}}} />
+        <Screen mode="light" zoom={3} width={360} height={1300 / 3}>
+          <VoiceMessagesPage mode="light" requests={inbox('morning')} fx={{rita: {focus}}} scrollY={150} />
         </Screen>
       </div>
       <Tag light text={`S22 · light · 3x · 360 CSS px · lf ${lf}`} />
@@ -137,10 +138,12 @@ const S24: React.FC<{lf: number}> = ({lf}) => {
   return (
     <AbsoluteFill style={{background: LIGHT.background}}>
       <div style={{position: 'absolute', left: 72, top: 330}}>
-        <Screen mode="light" zoom={2.4} width={390} height={1150 / 2.4} scrollY={226}>
+        <Screen mode="light" zoom={2.4} width={390} height={1150 / 2.4}>
           <VoiceMessagesPage
             mode="light"
             requests={reqs}
+            scrollY={178}
+            openCount={2}
             clip
             segment={{
               options: updated ? ['To handle · 1', 'Done · 1'] : ['To handle · 2', 'Done · 0'],
@@ -156,26 +159,30 @@ const S24: React.FC<{lf: number}> = ({lf}) => {
   );
 };
 
-// ─── S25 ────────────────────────────────────────────────────────────────────
+// ─── S25 ─────────────────────────────────────────────────────────────────────
 const S25: React.FC<{lf: number}> = ({lf}) => {
+  // lf 0 = 51.5 s (the preview compresses the shot: marker 0-12, tap 14, toast 16-28)
   const marker = interpolate(lf, [0, 12], [0, 1], {...clamp, easing: Easing.inOut(Easing.cubic)});
   const press = interpolate(lf, [14, 15, 17], [0, 1, 0], clamp);
   const toast = interpolate(lf, [16, 28], [0, 1], clamp);
-  const zoom = 2.6;
-  const sam = {...inbox('morning')[1]};
+  // GenericPhone 1040 px wide = 2.6 frame px per CSS px; its 380 x 800 screen hosts the console at 380 CSS px.
+  const W = 1040;
+  const reqs = inbox('morning').map((r) => (r.id === 'rita' ? {...r, status: 'DONE' as const} : r));
   return (
     <AbsoluteFill style={{background: LIGHT.background}}>
-      <div style={{position: 'absolute', left: 33, top: 380}}>
-        <Screen mode="light" zoom={zoom} width={390} height={1100 / zoom} scrollY={0}>
-          <div style={{padding: '20px 16px'}}>
-            <MessagesList mode="light" requests={[sam]} fx={{sam: {total: {marker}, copy: {pressed: press}}}} />
+      <div style={{position: 'absolute', left: 20, top: 380}}>
+        <GenericPhone width={W} screen="custom" theme="light" time="6:53" screenBg={LIGHT.background}>
+          <div style={{position: 'absolute', top: 52, left: 0}}>
+            <Screen mode="light" width={380} height={748}>
+              <VoiceMessagesPage mode="light" requests={reqs} openCount={2} scrollY={150} fx={{sam: {total: {marker}, copy: {pressed: press}}}} />
+              <ToastViewport enter={toast}>
+                <SonnerToast title={COPY_TOAST} />
+              </ToastViewport>
+            </Screen>
           </div>
-          <ToastViewport enter={toast}>
-            <SonnerToast title={COPY_TOAST} />
-          </ToastViewport>
-        </Screen>
+        </GenericPhone>
       </div>
-      <Tag light text={`S25 · light · 2.6x · lf ${lf}`} />
+      <Tag light text={`S25 · phone 2.6x · sticky header · lf ${lf}`} />
     </AbsoluteFill>
   );
 };

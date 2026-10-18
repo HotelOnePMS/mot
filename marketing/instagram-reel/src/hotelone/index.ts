@@ -34,7 +34,7 @@ export {
   type MessagesListProps,
   type MessageRowProps,
 } from './Messages.tsx';
-export {ConsoleHeader, PageHeader, VoiceMessagesPage, STARLITE, type ConsoleHeaderProps, type VoiceMessagesPageProps} from './ConsolePage.tsx';
+export {ConsoleHeader, PageHeader, VoiceMessagesPage, STARLITE, HEADER_H, type ConsoleHeaderProps, type VoiceMessagesPageProps} from './ConsolePage.tsx';
 export {SonnerToast, ToastViewport, COPY_TOAST, SAVED_TOAST, type SonnerToastProps} from './SonnerToast.tsx';
 export {VoiceOrb, type VoiceOrbProps} from './VoiceOrb.tsx';
 export {Icon, SonnerSuccessIcon, type IconName} from './icons.tsx';

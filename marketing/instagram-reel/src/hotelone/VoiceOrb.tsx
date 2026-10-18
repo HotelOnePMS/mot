@@ -40,7 +40,8 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({size = 56, mode, level = 0, p
     <span style={{position: 'relative', display: 'inline-flex', flexShrink: 0, alignItems: 'center', justifyContent: 'center', width: size, height: size, opacity, ...style}}>
       {speaking ? <span style={{position: 'absolute', inset: 0, borderRadius: '50%', background: t.agent, opacity: 0.3 * (1 - k), transform: `scale(${1 + k})`}} /> : null}
       <span style={{position: 'absolute', inset: 0, borderRadius: '50%', ...aurora(t, phase), boxShadow: shadow(t, 'glow'), transform: `scale(${scale})`}} />
-      <span style={{position: 'absolute', inset: 0, borderRadius: '50%', transform: `scale(${scale})`, background: `radial-gradient(circle at 32% 26%, ${alpha(ON_AURORA, 0.32)}, transparent 62%)`}} />
+      {/* the sheen sits on the unscaled box (only the fill breathes), as in the app */}
+      <span style={{position: 'absolute', inset: 0, borderRadius: '50%', background: `radial-gradient(circle at 32% 26%, ${alpha(ON_AURORA, 0.32)}, transparent 62%)`}} />
       <span style={{position: 'relative', color: ON_AURORA, display: 'flex'}}>
         <Icon name="mic" size={icon} />
       </span>

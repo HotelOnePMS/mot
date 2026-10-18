@@ -13,12 +13,21 @@ import {alpha, RADIUS, shadow, uiFont, useHO, type Mode} from './tokens.ts';
 /** The story's property and user. */
 export const STARLITE = 'Starlite Motor Court';
 
+/** The phone header's height in CSS px: h-14 + the 1px border-b. */
+export const HEADER_H = 57;
+
 // ─── Console header (phones) ────────────────────────────────────────────────
 
 export type ConsoleHeaderProps = {
   property?: string;
   /** The signed-in staff member (Avatar initials and tone come from the name). */
   user?: string;
+  /**
+   * Content scrolls beneath the pinned header. The app's .glass is surface/72% + backdrop saturate(180%) blur(14px);
+   * the renderer's headless Chrome does not paint backdrop-filter (the text beneath showed through sharp), so this
+   * stands in for the blurred wash with the surface at 96%. With nothing beneath (default), the 72% tint is exact.
+   */
+  blur?: boolean;
   mode?: Mode;
   style?: React.CSSProperties;
 };
@@ -29,7 +38,7 @@ export type ConsoleHeaderProps = {
  * then ml-auto the UserMenu (size-10 round button around an md Avatar). The Starlite is a voice-only setup, so there
  * is no "Ask the agent" button (showAsk is false when setupPath is VOICE) and no ModeSwitch (hidden below sm).
  */
-export const ConsoleHeader: React.FC<ConsoleHeaderProps> = ({property = STARLITE, user = 'Gus', mode, style}) => {
+export const ConsoleHeader: React.FC<ConsoleHeaderProps> = ({property = STARLITE, user = 'Gus', blur = false, mode, style}) => {
   const t = useHO(mode);
   return (
     <header
@@ -38,8 +47,8 @@ export const ConsoleHeader: React.FC<ConsoleHeaderProps> = ({property = STARLITE
         color: t.foreground,
         position: 'relative',
         zIndex: 40,
-        // .glass = surface at 72% with a backdrop blur; nothing scrolls under it here, so the tint alone is exact.
-        background: alpha(t.surface, 0.72),
+        // .glass = surface at 72% + saturate(180%) blur(14px) of whatever scrolls beneath (see `blur`).
+        background: alpha(t.surface, blur ? 0.96 : 0.72),
         borderBottom: `1px solid ${t.border}`,
         ...style,
       }}
@@ -111,10 +120,20 @@ export type VoiceMessagesPageProps = {
    * Pass labels/value/from to animate S24's layoutId spring.
    */
   segment?: Partial<Pick<SegmentedProps, 'options' | 'value' | 'from'>>;
-  /** Count shown on the section tab ("Messages · N"). Default: open requests. */
+  /**
+   * Count shown on the section tab ("Messages · N"). Default: open requests. Note the app reads it from the voice
+   * overview, which Mark done does not refetch, so after S24's tap the real tab still says "Messages · 2" (pass 2).
+   */
   openCount?: number;
   /** Show the console header bar (default true). */
   header?: boolean;
+  /**
+   * Page scroll in CSS px. The console header is `sticky top-0`, so it stays pinned at the top of the viewport while
+   * the page scrolls beneath its glass (use this rather than Screen's scrollY, which moves everything).
+   */
+  scrollY?: number;
+  /** The header's glass-over-content state (default: on while scrollY > 0). */
+  headerBlur?: boolean;
   /** Show the page title, description and section tabs (default true). */
   pageHeader?: boolean;
   property?: string;
@@ -130,7 +149,7 @@ export type VoiceMessagesPageProps = {
  * "Messages" and fades its start edge), then Requests (`space-y-4`: sm SegmentedControl + the inbox Card).
  * Render inside <Screen> (width < 640). Rows the fx collapses still count until the scene passes new labels.
  */
-export const VoiceMessagesPage: React.FC<VoiceMessagesPageProps> = ({requests, fx, segment, openCount, header = true, pageHeader = true, property = STARLITE, user, clip, mode}) => {
+export const VoiceMessagesPage: React.FC<VoiceMessagesPageProps> = ({requests, fx, segment, openCount, header = true, scrollY = 0, headerBlur, pageHeader = true, property = STARLITE, user, clip, mode}) => {
   const open = requests.filter((r) => r.status === 'NEW');
   const done = requests.filter((r) => r.status === 'DONE');
   const options = segment?.options ?? [`To handle · ${open.length}`, `Done · ${done.length}`];
@@ -139,9 +158,12 @@ export const VoiceMessagesPage: React.FC<VoiceMessagesPageProps> = ({requests, f
   const n = openCount ?? open.length;
   const t = useHO(mode);
   return (
-    <div style={{...uiFont, color: t.foreground}}>
-      {header ? <ConsoleHeader property={property} user={user} mode={mode} /> : null}
-      <div style={{width: '100%', padding: '20px 16px 48px', boxSizing: 'border-box'}}>
+    <div style={{...uiFont, position: 'relative', paddingTop: header ? HEADER_H : 0, color: t.foreground}}>
+      {header ? (
+        <ConsoleHeader property={property} user={user} blur={headerBlur ?? scrollY > 0} mode={mode} style={{position: 'absolute', top: 0, left: 0, right: 0}} />
+      ) : null}
+      {/* FRAME, below the 57px header (h-14 + border-b), scrolled under it */}
+      <div style={{width: '100%', padding: '20px 16px 48px', boxSizing: 'border-box', transform: scrollY ? `translateY(${-scrollY}px)` : undefined}}>
         <div style={{display: 'flex', flexDirection: 'column', gap: 24}}>
           {pageHeader ? (
             <PageHeader

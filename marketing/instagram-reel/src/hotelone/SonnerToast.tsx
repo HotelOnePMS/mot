@@ -23,7 +23,7 @@ export type SonnerToastProps = {
   style?: React.CSSProperties;
 };
 
-/** One toast: padding 16, gap 6, items-center, 13px base, [data-icon] 16x16 (-3px / 4px margins), title 14/20 500. */
+/** One toast: padding 16, gap 6, items-center, 13px base, overflow-wrap anywhere, [data-icon] 16x16 (-3px / 4px margins), title 14px/1.5 500. */
 export const SonnerToast: React.FC<SonnerToastProps> = ({title, type = 'success', closeButton = true, width = '100%', mode, style}) => {
   const t = useHO(mode);
   return (
@@ -42,6 +42,7 @@ export const SonnerToast: React.FC<SonnerToastProps> = ({title, type = 'success'
         borderRadius: RADIUS.xl,
         boxShadow: shadow(t, 'lifted'),
         fontSize: 13,
+        overflowWrap: 'anywhere',
         boxSizing: 'border-box',
         ...style,
       }}
@@ -52,7 +53,8 @@ export const SonnerToast: React.FC<SonnerToastProps> = ({title, type = 'success'
         </span>
       ) : null}
       <div style={{display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0}}>
-        <div style={{fontSize: 14, lineHeight: '20px', fontWeight: 500, color: 'inherit'}}>{title}</div>
+        {/* text-sm sets 14px; sonner's [data-styled] [data-title] rule (higher specificity) keeps line-height 1.5 */}
+        <div style={{fontSize: 14, lineHeight: 1.5, fontWeight: 500, color: 'inherit'}}>{title}</div>
       </div>
       {closeButton ? (
         <span

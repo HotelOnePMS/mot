@@ -370,14 +370,16 @@ export const GusDeskArt: React.FC<GusPose & {layer?: GusLayer; screen?: React.Re
   // right arm (frame right): the upper arm down his side, the forearm forward and up to the phone (foreshortened)
   const shR: P = [226, 118 + by];
   const wrR: P = NPl([PH.x + PH.w * 0.42, PH.y + PH.h + 34]);
-  const elR: P = [276, 470];
+  const elR: P = [318, 492];
   // left arm (frame left): the mug from the desk up to his mouth (in front of his face, so behind his head)
   const shL: P = [-226, 112 + by];
-  const mugRest: P = [-200, 372];
-  const mugUp: P = [150, -40];
+  const mugRest: P = [-150, 384];
+  // at the top the rim is at his lips and the mug tips up past his jaw: its base, band
+  // and his fingers round the handle show between his cheek and the phone (x < GUS_PHONE.x)
+  const mugUp: P = [218, -60];
   const hand = arc(mugRest, mugUp, -110, raise);
-  const [elL, wrL] = ik(shL, add(hand, [-62, -30]), 210, 170, -1);
-  const mugDeg = lerp(0, -32, raise);
+  const mugDeg = lerp(0, -60, raise);
+  const [elL, wrL] = ik(shL, add(hand, rot([-92, -30], mugDeg)), 216, 182, -1);
 
   const knitLit = mix(pal.knit, pal.knitHi, 0.5);
   const knitDark = mix(pal.knitDeep, pal.shade, pal.shadeAmt);
@@ -464,17 +466,18 @@ export const GusDeskArt: React.FC<GusPose & {layer?: GusLayer; screen?: React.Re
               <Mug pal={pal} />
               <MugHand pal={pal} uid={uid} />
             </g>
-            {/* right upper arm down his side */}
-            <Segment a={shR} b={elR} wa={112} wb={90} lit={knitLit} mid={pal.knit} dark={knitDark} id={`${uid}ru`} />
             {/* back of the cardigan */}
             <g transform={`translate(0 ${by})`}>
               <path d={shape(TORSO)} fill={`url(#${uid}knit)`} />
               <path d={shape(TORSO)} fill={`url(#${uid}fall)`} />
-              {/* shoulder blades, the centre seam, folds pulled toward the raised right arm */}
-              <path d="M-170 120 Q-120 210 -150 340 M170 130 Q140 220 168 350" fill="none" stroke={knitDark} strokeWidth={4} opacity={0.5} strokeLinecap="round" />
-              <path d="M0 60 Q-6 300 4 700" fill="none" stroke={knitDark} strokeWidth={3} opacity={0.4} strokeLinecap="round" />
-              <path d="M60 160 Q150 170 230 140 M40 240 Q140 250 240 210" fill="none" stroke={knitDark} strokeWidth={3} opacity={0.35} strokeLinecap="round" />
-              <path d="M-200 520 Q-60 540 120 520" fill="none" stroke={knitDark} strokeWidth={3} opacity={0.25} strokeLinecap="round" />
+              {/* soft folds: the shoulder blades, the pull toward the raised right arm, the centre seam, the sag at the waist */}
+              <path d={strand([[-150, 96], [-182, 150], [-178, 250], [-150, 350]], 22)} fill={knitDark} opacity={0.2} />
+              <path d={strand([[-140, 120], [-160, 190], [-146, 300]], 8)} fill={knitLit} opacity={0.12} />
+              <path d={strand([[60, 168], [150, 178], [238, 140]], 16)} fill={knitDark} opacity={0.2} />
+              <path d={strand([[40, 252], [140, 262], [248, 214]], 18)} fill={knitDark} opacity={0.16} />
+              <path d={strand([[70, 206], [160, 214], [240, 180]], 6)} fill={knitLit} opacity={0.14} />
+              <path d={strand([[2, 70], [-4, 300], [4, 700]], 5)} fill={knitDark} opacity={0.28} />
+              <path d={strand([[-230, 540], [-60, 560], [140, 536]], 26)} fill={knitDark} opacity={0.14} />
               {/* rim along the shoulders (the window ahead) */}
               <path d="M86 14 Q160 46 224 100 Q262 170 286 290" fill="none" stroke={pal.rim} strokeWidth={3.6} opacity={pal.rimAmt} strokeLinecap="round" />
               <path d="M-80 14 Q-170 36 -238 84 Q-266 156 -274 290" fill="none" stroke={pal.rim} strokeWidth={2.4} opacity={0.5 * pal.rimAmt} strokeLinecap="round" />
@@ -487,7 +490,13 @@ export const GusDeskArt: React.FC<GusPose & {layer?: GusLayer; screen?: React.Re
               <path d="M-124 44 Q0 6 132 38 Q150 46 160 56 Q0 30 -136 70 Q-140 54 -124 44 Z" fill={pal.knitHi} />
               <path d="M-112 50 Q0 18 140 46" fill="none" stroke={knitDark} strokeWidth={2} opacity={0.4} />
               <path d="M-100 58 Q0 30 150 54" fill="none" stroke={knitDark} strokeWidth={2} opacity={0.3} />
+              {/* his head's shadow on the collar and the top of his back */}
+              <ellipse cx={-10} cy={40} rx={150} ry={34} fill={pal.shade} opacity={0.22} />
             </g>
+            {/* right upper arm hanging at his side, over the cardigan's edge */}
+            <Segment a={[238, 168 + by]} b={elR} wa={104} wb={90} lit={knitLit} mid={pal.knit} dark={knitDark} id={`${uid}ru`} />
+            <path d={litEdge([238, 168 + by], elR, 104, 90, 0.46)} stroke={pal.rim} strokeWidth={3} opacity={0.8 * pal.rimAmt} strokeLinecap="round" />
+            <path d={strand([[250, 250], [262, 330], [282, 420]], 10)} fill={knitDark} opacity={0.25} />
             {/* head, turned toward the phone and pitched down to it */}
             <g transform={`translate(0 ${by * 0.7}) rotate(${headDeg})`}>
               <Head q={q} pal={pal} uid={uid} />
@@ -534,6 +543,8 @@ export type GusSilhouetteProps = {
   hold?: 'mug' | 'binoculars';
   /** 0..1 a smile on the sliver of face we see. */
   smile?: number;
+  /** Which way his lost profile turns: 'left' (default, toward the window's centre and the raised mug) or 'right'. */
+  face?: 'left' | 'right';
   t?: number;
   /** Neck pivot in frame px and scale. Default: bottom right, leaving the window's centre clear. */
   x?: number;
@@ -541,38 +552,112 @@ export type GusSilhouetteProps = {
   scale?: number;
 };
 
-const SIL_MUG_REST: P = [-150, 230];
+const SIL_MUG_REST: P = [-120, 420];
 const SIL_MUG_UP: P = [-252, -176];
 const silMugAt = (raise: number) => arc(SIL_MUG_REST, SIL_MUG_UP, 60, raise);
 const silMugDeg = (raise: number) => lerp(8, -10, raise);
 
+/** The silhouette's head: the desk rig's skull with a narrower back and a lost profile that breaks the outline (brow, nose tip, moustache). */
+const SIL_SKULL: C[] = SKULL.map((p, i) => {
+  const o: Record<number, P> = {1: [-112, -96], 2: [-126, -160], 3: [-119, -224], 4: [-90, -270], 10: [156, -198], 11: [148, -178], 12: [153, -162], 13: [172, -140], 14: [154, -128]};
+  return o[i] ?? p;
+});
+/** The silhouette's torso: the trapezius slopes from a thick neck to his shoulders (a big man, a little hunched). */
+const SIL_TORSO: C[] = [
+  [-72, 0],
+  [-150, 28],
+  [-232, 80],
+  [-266, 156],
+  [-274, 290],
+  [-284, 1000, 1],
+  [296, 1000, 1],
+  [286, 290],
+  [262, 170],
+  [224, 100],
+  [152, 36],
+  [92, 2],
+];
+const SIL_NECK: C[] = [[-74, -44], [86, -40], [96, 12], [-80, 12]];
+/** The cardigan's rolled shawl collar round the back of his neck. */
+const SIL_COLLAR = 'M-156 52 Q-140 10 -76 0 Q0 -8 90 0 Q144 12 162 50 Q0 24 -156 52 Z';
+/** Backlit flyaway hairs over the thinning crown. */
+const SIL_FLY = 'M-70 -280 q22 -26 58 -30 M-34 -300 q26 -16 58 -14 M10 -308 q30 -6 56 8 M40 -300 q28 2 48 20 M-96 -258 q8 -22 30 -36';
+/** The far lens, past his brow: its frame, and the window light through the glass. */
+const SIL_LENS: C[] = [[150, -210], [178, -209], [183, -188], [176, -170], [156, -172], [152, -192]];
+
 /** The silhouette as an SVG <g> (neck pivot at 0,0). */
-export const GusSilhouetteArt: React.FC<Omit<GusSilhouetteProps, 'x' | 'y' | 'scale'>> = ({mugRaise = 0, light = 'dawn', hold = 'mug', smile = 0, t = 0}) => {
+export const GusSilhouetteArt: React.FC<Omit<GusSilhouetteProps, 'x' | 'y' | 'scale'>> = ({mugRaise = 0, light = 'dawn', hold = 'mug', smile = 0, t = 0, face = 'left'}) => {
   const uid = useUid('gs');
   const dawn = light === 'dawn';
   const rim = dawn ? NIGHT.ivory : NIGHT.redSoft;
   const glow = dawn ? LIGHT.highlightSoft : NIGHT.red;
   const body = dawn ? mix(NIGHT.ink, LIGHT.inverse, 0.55) : NIGHT.ink;
-  const edge = mix(body, rim, 0.14);
+  const inner = mix(body, rim, dawn ? 0.2 : 0.28);
+  const ear = dawn ? mix(SKIN, NIGHT.red, 0.3) : NIGHT.red;
   const b = breath(t, 0.2, 2);
   const raise = smoothstep(clamp01(mugRaise));
   const bino = hold === 'binoculars';
   const sm = clamp01(smile);
   const headDeg = bino ? -3 : -5 + 3 * raise;
+  const fx = face === 'left' ? -1 : 1;
+  const HS = 0.92; // the head a touch smaller than the desk rig's: he is further away and backlit
   // left arm (frame left): a toast toward the window; with binoculars both elbows go out
-  const shL: P = [-232, 108 - b];
-  const handL: P = bino ? [40, -120] : add(silMugAt(raise), [8, -30]);
-  const [elL, wrL] = ik(shL, handL, 200, 176, -1);
-  const shR: P = [232, 100 - b];
-  const handR: P = [150, -118];
-  const [elR, wrR] = ik(shR, handR, 200, 176, 1);
-  const skull = SKULL.map((p, i) => (SMILE_PTS.includes(i) ? ([p[0] + sm * 4, p[1] - sm * 5] as C) : p));
-  const limb = (a: P, c: P, wa: number, wc: number, key: string) => (
-    <g key={key}>
-      <path d={capsule(a, c, wa, wc)} fill={body} />
-      <path d={litEdge(a, c, wa, wc, 0.48)} stroke={rim} strokeWidth={3} opacity={0.85} strokeLinecap="round" />
-    </g>
-  );
+  const shL: P = [-212, 128 - b]; // low and inside the shoulder line, so the arm comes from behind it
+  const mugDeg = silMugDeg(raise);
+  const handL: P = bino ? (fx < 0 ? [-150, -118] : [40, -120]) : add(silMugAt(raise), rot([-92, -30], mugDeg));
+  const [elL, wrL] = ik(shL, handL, 206, 184, -1);
+  const shR: P = [226, 92 - b];
+  const handR: P = fx < 0 ? [-40, -120] : [150, -118];
+  const [elR, wrR] = ik(shR, handR, 206, 184, 1);
+  const skull = SIL_SKULL.map((p, i) => (SMILE_PTS.includes(i) ? ([p[0] + sm * 4, p[1] - sm * 5] as C) : p));
+  const head = `rotate(${headDeg * fx}) scale(${HS * fx} ${HS})`;
+  const out = smoothstep((raise - 0.35) / 0.35); // the mug and forearm clear his shoulder
+
+  // Everything solid, in one fill: drawn once in the rim colour (a hair larger), then
+  // again in the body colour nudged down, so the window light wraps the outline (most
+  // along the tops) without touching the inner edges.
+  const mug = (fill: string, st: React.SVGProps<SVGPathElement>, grow: number) =>
+    bino ? null : (
+      <g transform={place(silMugAt(raise), mugDeg)}>
+        <path d="M-30 -2 L-33 -80 Q-33 -86 -27 -86 L27 -86 Q33 -86 33 -80 L30 -2 Q30 4 24 4 L-24 4 Q-30 4 -30 -2 Z" fill={fill} {...st} />
+        <path d="M-32 -46 Q-60 -48 -58 -26 Q-56 -8 -30 -12" fill="none" stroke={fill} strokeWidth={9 + grow} strokeLinecap="round" />
+        <path d={shape([[-86, -66], [-62, -66], [-48, -56], [-50, -14], [-64, -6], [-88, -12], [-96, -40]])} fill={fill} {...st} />
+        {[-54, -38, -22].map((y) => (
+          <path key={y} d={capsule([-60, y], [-28, y - 2], 15, 13)} fill={fill} {...st} />
+        ))}
+        <path d={capsule([-70, -64], [-34, -76], 16, 13)} fill={fill} {...st} />
+      </g>
+    );
+  const solid = (fill: string, grow: number) => {
+    const st = grow > 0 ? {stroke: fill, strokeWidth: grow, strokeLinejoin: 'round' as const} : {};
+    return (
+      <g>
+        {bino ? (
+          <>
+            <path d={capsule(shR, elR, 112, 92)} fill={fill} {...st} />
+            <path d={capsule(elR, wrR, 84, 64)} fill={fill} {...st} />
+          </>
+        ) : null}
+        <path d={capsule(shL, elL, 112, 92)} fill={fill} {...st} />
+        <path d={capsule(elL, wrL, 84, 64)} fill={fill} {...st} />
+        {mug(fill, st, grow)}
+        <g transform={`translate(0 ${-b})`}>
+          <path d={shape(SIL_TORSO)} fill={fill} {...st} />
+          <path d={shape(SIL_NECK)} fill={fill} {...st} />
+          <path d={SIL_COLLAR} fill={fill} {...st} />
+        </g>
+        <g transform={head}>
+          <path d={shape(skull)} fill={fill} {...st} />
+          <path d={shape(EAR)} fill={fill} {...st} />
+          <path d={`M140 ${-104 - sm * 4} Q154 ${-108 - sm * 6} ${162 + sm * 2} ${-98 - sm * 6} Q154 ${-90 - sm * 4} 142 ${-92 - sm * 3} Z`} fill={fill} {...st} />
+          <path d="M92 -186 Q120 -194 152 -196" fill="none" stroke={fill} strokeWidth={5 + grow} strokeLinecap="round" />
+          <path d={shape(SIL_LENS)} fill="none" stroke={fill} strokeWidth={5 + grow} strokeLinejoin="round" />
+          {bino ? <path d="M136 -214 L188 -220 Q198 -220 198 -210 L198 -164 Q198 -154 188 -154 L136 -160 Z" fill={fill} {...st} /> : null}
+        </g>
+      </g>
+    );
+  };
+
   return (
     <g>
       <defs>
@@ -581,75 +666,52 @@ export const GusSilhouetteArt: React.FC<Omit<GusSilhouetteProps, 'x' | 'y' | 'sc
           <stop offset="1" stopColor={glow} stopOpacity={0} />
         </radialGradient>
         <linearGradient id={`${uid}body`} x1="0" y1="-300" x2="0" y2="700" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor={mix(body, rim, 0.06)} />
-          <stop offset="0.5" stopColor={body} />
+          <stop offset="0" stopColor={mix(body, rim, 0.07)} />
+          <stop offset="0.45" stopColor={body} />
           <stop offset="1" stopColor={mix(body, NIGHT.ink, 0.5)} />
         </linearGradient>
+        <linearGradient id={`${uid}glass`} x1="150" y1="-208" x2="180" y2="-170" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor={rim} stopOpacity={0.75} />
+          <stop offset="1" stopColor={rim} stopOpacity={0.35} />
+        </linearGradient>
       </defs>
-      {/* window light wrapping round his head and shoulders */}
-      <ellipse cx={30} cy={-130} rx={280} ry={230} fill={`url(#${uid}halo)`} />
-      <ellipse cx={50} cy={-160} rx={180} ry={160} fill={`url(#${uid}halo)`} />
-      {bino ? (
-        <>
-          {limb(shR, elR, 112, 90, 'ru')}
-          {limb(elR, wrR, 82, 62, 'rf')}
-        </>
-      ) : null}
-      <g transform={`translate(0 ${-b})`}>
-        <path d={shape(TORSO)} fill={`url(#${uid}body)`} />
-        {/* the cardigan's shawl collar and the shirt collar breaking the neckline */}
-        <path d="M-124 44 Q0 6 132 38 Q150 46 160 56 Q0 30 -136 70 Q-140 54 -124 44 Z" fill={edge} />
-        <path d="M96 0 L120 36 L94 32 Z" fill={edge} />
-        <path d="M86 14 Q160 46 224 100 Q262 170 286 290" fill="none" stroke={rim} strokeWidth={3.4} opacity={0.9} strokeLinecap="round" />
-        <path d="M-80 14 Q-170 36 -238 84 Q-266 156 -274 290" fill="none" stroke={rim} strokeWidth={2.4} opacity={0.5} strokeLinecap="round" />
-        <path d={shape(NECK)} fill={body} />
+      {/* window light blooming round his head and shoulders */}
+      <ellipse cx={20} cy={-120} rx={330} ry={260} fill={`url(#${uid}halo)`} />
+      <ellipse cx={40} cy={-170} rx={200} ry={170} fill={`url(#${uid}halo)`} />
+      {/* through the far lens (behind the frame, outside his face) */}
+      <g transform={head}>
+        <path d={shape(SIL_LENS)} fill={`url(#${uid}glass)`} />
       </g>
-      {limb(shL, elL, 110, 88, 'lu')}
-      {limb(elL, wrL, 80, 62, 'lf')}
-      {/* the shoved-up sleeve at the elbow */}
-      <path d={capsule(lerpP(elL, wrL, -0.05), lerpP(elL, wrL, 0.18), 96, 90)} fill={edge} />
-      {/* head: solid, the window light along the crown, brow, nose tip, cheek; the ear and glasses breaking the outline */}
-      <g transform={`rotate(${headDeg})`}>
-        <path d={shape(skull)} fill={body} />
-        <path d={shape(skull)} fill="none" stroke={rim} strokeWidth={16} opacity={0.1} />
-        <path d={shape(EAR)} fill={edge} />
-        <path d="M108 -194 Q126 -186 131 -162 Q131 -134 119 -114" fill="none" stroke={dawn ? mix(SKIN, NIGHT.red, 0.3) : rim} strokeWidth={3} opacity={0.6} strokeLinecap="round" />
-        <path d="M-96 -270 Q-46 -302 14 -312 Q74 -300 118 -267 Q142 -228 151 -196 Q148 -178 152 -160 Q162 -142 152 -130 Q149 -114 153 -100 Q150 -86 140 -62" fill="none" stroke={rim} strokeWidth={3.4} strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M-128 -224 Q-138 -170 -120 -100" fill="none" stroke={rim} strokeWidth={2} opacity={0.35} strokeLinecap="round" />
-        {/* stubble and moustache roughen the jaw's edge */}
-        <path d={`M140 ${-104 - sm * 4} Q154 ${-108 - sm * 6} ${160 + sm * 2} ${-98 - sm * 6} Q154 ${-92 - sm * 4} 142 ${-94 - sm * 3} Z`} fill={body} />
-        <path d={`M146 ${-106 - sm * 5} Q156 ${-106 - sm * 6} ${160 + sm * 2} ${-99 - sm * 6}`} fill="none" stroke={rim} strokeWidth={1.8} opacity={0.7} strokeLinecap="round" />
-        {/* glasses: temple over the ear, the lens edge past the brow */}
-        <path d="M94 -186 Q120 -192 156 -190" fill="none" stroke={edge} strokeWidth={4} strokeLinecap="round" />
-        <path d="M154 -206 Q166 -190 160 -170" fill="none" stroke={body} strokeWidth={7} strokeLinecap="round" />
-        <path d="M156 -205 Q168 -190 162 -172" fill="none" stroke={rim} strokeWidth={1.8} opacity={0.9} />
-        {bino ? (
-          // the binoculars' far ends showing past his face
-          <g>
-            <path d="M136 -214 L188 -220 Q198 -220 198 -210 L198 -164 Q198 -154 188 -154 L136 -160 Z" fill={body} />
-            <path d="M138 -214 L188 -220 Q198 -220 198 -210" fill="none" stroke={rim} strokeWidth={2.6} opacity={0.9} />
-            <ellipse cx={198} cy={-187} rx={5} ry={26} fill={mix(body, rim, 0.3)} />
-          </g>
-        ) : null}
-      </g>
-      {bino ? null : (
-        <g transform={place(silMugAt(raise), silMugDeg(raise))}>
-          <path d="M-30 -2 L-33 -80 Q-33 -86 -27 -86 L27 -86 Q33 -86 33 -80 L30 -2 Q30 4 24 4 L-24 4 Q-30 4 -30 -2 Z" fill={body} />
-          <path d="M-32 -46 Q-60 -48 -58 -26 Q-56 -8 -30 -12" fill="none" stroke={body} strokeWidth={9} strokeLinecap="round" />
-          <path d="M-27 -86 L27 -86 Q33 -86 33 -80 L30 -2" fill="none" stroke={rim} strokeWidth={2.8} opacity={0.9} strokeLinejoin="round" />
-          <path d="M-58 -30 Q-60 -44 -36 -48" fill="none" stroke={rim} strokeWidth={1.8} opacity={0.5} strokeLinecap="round" />
-          {/* his fingers through the handle and round the mug, the thumb on top */}
-          <path d={shape([[-86, -66], [-62, -66], [-48, -56], [-50, -14], [-64, -6], [-88, -12], [-96, -40]])} fill={body} />
-          {[-54, -38, -22].map((y, i) => (
-            <path key={i} d={capsule([-60, y], [-28, y - 2], 15, 13)} fill={body} />
-          ))}
-          <path d={capsule([-70, -64], [-34, -76], 16, 13)} fill={body} />
-          <path d="M-84 -68 Q-60 -72 -34 -82" fill="none" stroke={rim} strokeWidth={2.2} opacity={0.75} strokeLinecap="round" />
-          {/* a wisp of steam lit by the window */}
-          <path d="M4 -98 Q-8 -120 6 -140 Q18 -156 4 -174" fill="none" stroke={rim} strokeWidth={3} opacity={0.4 * (0.4 + 0.6 * raise)} strokeLinecap="round" />
-          <path d="M-10 -100 Q-18 -116 -8 -130" fill="none" stroke={rim} strokeWidth={2} opacity={0.25 * (0.4 + 0.6 * raise)} strokeLinecap="round" />
+      {solid(rim, 3)}
+      <g transform="translate(1.5 4)">
+        {solid(`url(#${uid}body)`, 0)}
+        {/* the inner edges catching a little light: the raised arm against his back, the collar roll */}
+        <path d={litEdge(elL, wrL, 84, 64, 0.4)} stroke={inner} strokeWidth={2.2} opacity={0.8 * out} strokeLinecap="round" />
+        <g transform={`translate(0 ${-b})`}>
+          <path d="M-150 46 Q0 18 158 44" fill="none" stroke={inner} strokeWidth={2.4} opacity={0.7} strokeLinecap="round" />
         </g>
-      )}
+        <g transform={head}>
+          {/* the window wrapping the profile: forehead, brow, nose tip, cheek, moustache, jaw */}
+          <path d="M118 -267 Q142 -228 151 -196 Q148 -178 152 -160 Q162 -142 152 -130 Q149 -114 153 -100 Q150 -86 140 -62" fill="none" stroke={rim} strokeWidth={3.4} strokeLinecap="round" strokeLinejoin="round" />
+          {/* light through the ear's rim */}
+          <path d="M106 -193 Q125 -187 131 -162 Q132 -136 120 -115" fill="none" stroke={ear} strokeWidth={4} opacity={0.75} strokeLinecap="round" />
+          <path d="M110 -190 Q124 -182 127 -162" fill="none" stroke={rim} strokeWidth={1.6} opacity={0.7} strokeLinecap="round" />
+          {/* flyaways over the crown */}
+          <path d={SIL_FLY} fill="none" stroke={rim} strokeWidth={1.3} opacity={0.55} strokeLinecap="round" />
+          {/* the glasses' far rim catching the light */}
+          <path d="M176 -207 Q183 -190 176 -170" fill="none" stroke={rim} strokeWidth={1.6} opacity={0.9} strokeLinecap="round" />
+          {bino ? <path d="M138 -214 L188 -220 Q198 -220 198 -210" fill="none" stroke={rim} strokeWidth={2.6} opacity={0.9} /> : null}
+        </g>
+        {bino ? null : (
+          <g transform={place(silMugAt(raise), mugDeg)} opacity={out}>
+            <path d="M30 -80 L27 -6" fill="none" stroke={rim} strokeWidth={2.4} opacity={0.6} strokeLinecap="round" />
+            <path d="M-84 -68 Q-60 -72 -34 -82" fill="none" stroke={inner} strokeWidth={2.2} opacity={0.9} strokeLinecap="round" />
+            {/* a wisp of steam lit by the window */}
+            <path d="M4 -98 Q-8 -120 6 -140 Q18 -156 4 -174" fill="none" stroke={rim} strokeWidth={3} opacity={0.4 * (0.4 + 0.6 * raise)} strokeLinecap="round" />
+            <path d="M-10 -100 Q-18 -116 -8 -130" fill="none" stroke={rim} strokeWidth={2} opacity={0.25 * (0.4 + 0.6 * raise)} strokeLinecap="round" />
+          </g>
+        )}
+      </g>
     </g>
   );
 };
