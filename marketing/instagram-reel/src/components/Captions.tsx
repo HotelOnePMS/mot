@@ -5,7 +5,7 @@
 // chunk sits at 70%. Chunk times come from the measured clips (src/vo.ts).
 import React from 'react';
 import {interpolate, Easing, useCurrentFrame} from 'remotion';
-import {CUES, FPS, type Cue, type Role, type Timed} from '../timeline.ts';
+import {CUES, FPS, SHOTS, type Cue, type Role, type Timed} from '../timeline.ts';
 import {CAPTION_BAND, COLUMN_X, EASE_POP, FONT, INTER_FEATURES, LIGHT, NIGHT} from '../theme.ts';
 
 /** Lines whose caption is drawn by the scene itself (S01: the headline is the caption). */
@@ -35,13 +35,19 @@ type Active = {cue: Cue; chunk: Timed; index: number};
 
 /** Every chunk start across all lines, to know when the next caption takes over. */
 const STARTS = CUES.flatMap((c) => c.chunks.map((k) => k.start)).sort((a, b) => a - b);
+const CUTS = SHOTS.map((x) => x.start).filter((t) => t > 0);
+/** A caption never lingers across a cut: the hold stops at the first cut after the last word (or right at the word, if it runs over the cut). */
+const holdUntil = (end: number) => {
+  const cut = CUTS.find((c) => c > end - 0.1 && c < end + HOLD);
+  return cut === undefined ? end + HOLD : Math.max(end, cut);
+};
 
 export const activeChunk = (t: number): Active | null => {
   for (const cue of CUES) {
     for (let i = 0; i < cue.chunks.length; i++) {
       const chunk = cue.chunks[i];
       const next = STARTS.find((x) => x > chunk.start + 1e-6) ?? Infinity;
-      const until = Math.min(cue.cut ?? Infinity, Math.max(chunk.end + HOLD, chunk.end), next);
+      const until = Math.min(cue.cut ?? Infinity, holdUntil(chunk.end), next);
       if (t >= chunk.start - 0.03 && t < until) return {cue, chunk, index: i};
     }
   }
