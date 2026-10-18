@@ -2,7 +2,8 @@
 
 import * as React from 'react';
 import Navigation from '@/components/Navigation';
-import { SiteFooter } from '@/components/guest/SiteFooter';
+import { SiteFooter, type FooterHotel } from '@/components/guest/SiteFooter';
+import { DemoBanner } from '@/components/guest/DemoBanner';
 import { brandScope } from '@/components/guest/brand';
 import { cn } from '@/lib/utils';
 
@@ -14,6 +15,8 @@ import { cn } from '@/lib/utils';
 export function GuestShell({
   brandColor,
   brand,
+  hotel,
+  demo,
   children,
   className,
   mainClassName,
@@ -24,6 +27,10 @@ export function GuestShell({
   brandColor?: string | null;
   /** White-label header: the hotel's name instead of the platform logo. */
   brand?: { name: string; href: string };
+  /** On a hotel's own pages the footer offers the hotel's contact details instead of platform links. */
+  hotel?: FooterHotel;
+  /** A demo hotel: a slim banner explains what the visitor is looking at. */
+  demo?: boolean;
   children: React.ReactNode;
   className?: string;
   mainClassName?: string;
@@ -34,11 +41,12 @@ export function GuestShell({
   const scope = brandScope(brandColor);
   return (
     <div style={scope.style} className={cn('flex min-h-dvh flex-col bg-background', scope.className, className)}>
+      {demo && <DemoBanner />}
       <Navigation variant="guest" brand={brand} />
       <main id="main" className={cn('flex-1', mainClassName)}>
         {children}
       </main>
-      {footer && <SiteFooter variant="guest" />}
+      {footer && <SiteFooter variant="guest" hotel={hotel} />}
       {after}
     </div>
   );

@@ -48,7 +48,10 @@ const linkClass =
  * Site footer. `platform` (default) is the full product footer; `guest` is a
  * slim traveller footer for booking pages, with a small "Powered by" line.
  */
-export function SiteFooter({ variant = 'platform', className }: { variant?: 'platform' | 'guest'; className?: string }) {
+/** A hotel's contact details, for the footer of its own booking pages. */
+export type FooterHotel = { name: string; phone?: string | null; email?: string | null };
+
+export function SiteFooter({ variant = 'platform', className, hotel }: { variant?: 'platform' | 'guest'; className?: string; hotel?: FooterHotel }) {
   const year = new Date().getFullYear();
 
   if (variant === 'guest') {
