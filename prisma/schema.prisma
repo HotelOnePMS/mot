@@ -49,6 +49,8 @@ model User {
   housekeepingTasks  RoomHousekeeping[]
   // Agentic-mode audit trail entries created by this user
   agentAuditLogs     AgentAuditLog[]
+  // Channel agent chat sessions started by this user
+  channelAgentConversations ChannelAgentConversation[]
   // Pending password-reset links (only a hash of each token is stored)
 
   @@unique([ssoIssuer, ssoSubject])
@@ -120,6 +122,8 @@ model Property {
   agentApiKeys           AgentApiKey[]
   charges                PropertyCharge[]
   nightAudits            NightAudit[]
+  // OTA connections (Expedia, Booking.com)
+  channelConnections     ChannelConnection[]
 
   @@index([organizationId])
   @@map("properties")
@@ -154,6 +158,8 @@ model RoomType {
   photos           RoomTypePhoto[]
   dailyRates       RoomTypeRate[]
   rooms            Room[]
+  channelMappings      ChannelRoomMapping[]
+  channelRateOverrides ChannelRateOverride[]
   property         Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
   @@map("room_types")
@@ -202,7 +208,7 @@ model Booking {
   subtotalPrice           Decimal?                 @db.Decimal(10, 2)
   /// Taxes and fees: [{ name, kind, rate, amount }], summing to totalPrice - subtotalPrice.
   charges                 Json?
-  /// Where the booking came from: WEB | FRONT_DESK | AGENT_API | VOICE.
+  /// Where the booking came from: WEB | FRONT_DESK | AGENT_API | VOICE, or the OTA (EXPEDIA | BOOKING_COM).
   source                  String?
   /// Staff member who took the reservation at the desk.
   createdById             String?
@@ -235,6 +241,7 @@ model Booking {
   policyAcceptance        BookingPolicyAcceptance?
   checklist               BookingChecklist?
   statusHistory           BookingStatusHistory[]
+  channelReservation      ChannelReservation?
   property                Property                 @relation(fields: [propertyId], references: [id])
   roomType                RoomType                 @relation(fields: [roomTypeId], references: [id])
   user                    User                     @relation(fields: [userId], references: [id])
@@ -617,6 +624,241 @@ model AgentApiKey {
   property    Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
   @@map("agent_api_keys")
+}
+
+// =====================================================================}
+
+// Channel Manager - OTA connectivity (Expedia, Booking.com)
+// ============================================================================
+
+enum OtaChannel {
+  EXPEDIA
+  BOOKING_COM
+}
+
+// SANDBOX simulates the OTA locally so onboarding can be tested without
+// certified partner credentials. LIVE talks to the real OTA endpoints.
+enum ChannelMode {
+  SANDBOX
+  LIVE
+}
+
+enum ChannelConnectionStatus {
+  DRAFT // onboarding started, credentials not verified yet
+  CONNECTED // credentials verified, room mapping in progress
+  ACTIVE // mapped and syncing
+  PAUSED // syncing suspended by an admin
+  ERROR // last sync failed
+}
+
+// One property's connection to one OTA
+model ChannelConnection {
+  id                    String                  @id @default(cuid())
+  propertyId            String
+  channel               OtaChannel
+  mode                  ChannelMode             @default(SANDBOX)
+  status                ChannelConnectionStatus @default(DRAFT)
+  // Expedia Hotel ID / Booking.com hotel_id
+  otaPropertyId         String?
+  otaPropertyName       String?
+  // EQC username / Booking.com machine account
+  username              String?
+  /// Vault-sealed OTA password (src/server/vault.ts), bound to this connection. Never returned to clients.
+  passwordCipher        String?
+  currency              String                  @default("USD")
+  // Added on top of the PMS rate before it is pushed (covers OTA commission)
+  defaultMarkupPercent  Decimal                 @default(0) @db.Decimal(5, 2)
+  syncRates             Boolean                 @default(true)
+  syncAvailability      Boolean                 @default(true)
+  importReservations    Boolean                 @default(true)
+  syncWindowDays        Int                     @default(365)
+  lastAriSyncAt         DateTime?
+  lastReservationPullAt DateTime?
+  lastError             String?
+  activatedAt           DateTime?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  property              Property                @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  roomMappings          ChannelRoomMapping[]
+  rateOverrides         ChannelRateOverride[]
+  promotions            ChannelPromotion[]
+  reservations          ChannelReservation[]
+  syncLogs              ChannelSyncLog[]
+
+  @@unique([propertyId, channel])
+  @@map("channel_connections")
+}
+
+// PMS room type <-> OTA room type + rate plan
+model ChannelRoomMapping {
+  id                  String            @id @default(cuid())
+  connectionId        String
+  roomTypeId          String
+  otaRoomTypeId       String
+  otaRoomTypeName     String?
+  otaRatePlanId       String
+  otaRatePlanName     String?
+  // Overrides the connection's default markup when set
+  markupPercent       Decimal?          @db.Decimal(5, 2)
+  // Max rooms offered on this channel per night (null = everything available)
+  inventoryAllocation Int?
+  isActive            Boolean           @default(true)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  connection          ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  roomType            RoomType          @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, roomTypeId])
+  @@map("channel_room_mappings")
+}
+
+// Channel-specific price / restrictions for a date. Wins over PMS rate + markup.
+model ChannelRateOverride {
+  id           String            @id @default(cuid())
+  connectionId String
+  roomTypeId   String
+  date         DateTime          @db.Date
+  price        Decimal?          @db.Decimal(10, 2)
+  closed       Boolean           @default(false)
+  minStay      Int?
+  updatedBy    String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  connection   ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  roomType     RoomType          @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, roomTypeId, date])
+  @@index([date])
+  @@map("channel_rate_overrides")
+}
+
+enum PromotionType {
+  BASIC
+  EARLY_BOOKER
+  LAST_MINUTE
+  MULTI_NIGHT
+}
+
+enum PromotionStatus {
+  ACTIVE
+  INACTIVE
+  FAILED
+}
+
+model ChannelPromotion {
+  id               String            @id @default(cuid())
+  connectionId     String
+  // ID assigned by the OTA once the promotion is pushed
+  externalId       String?
+  name             String
+  type             PromotionType
+  discountPercent  Decimal           @db.Decimal(5, 2)
+  stayStart        DateTime          @db.Date
+  stayEnd          DateTime          @db.Date
+  bookStart        DateTime?         @db.Date
+  bookEnd          DateTime?         @db.Date
+  minStay          Int?
+  minDaysInAdvance Int? // EARLY_BOOKER
+  maxDaysInAdvance Int? // LAST_MINUTE
+  // PMS room types the promotion applies to (empty = every mapped room type)
+  roomTypeIds      String[]
+  status           PromotionStatus   @default(ACTIVE)
+  lastError        String?
+  createdBy        String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  connection       ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, status])
+  @@map("channel_promotions")
+}
+
+enum ChannelReservationStatus {
+  BOOKED
+  MODIFIED
+  CANCELLED
+}
+
+// Reservation received from an OTA and the PMS booking created for it
+model ChannelReservation {
+  id           String                   @id @default(cuid())
+  connectionId String
+  externalId   String
+  bookingId    String?                  @unique
+  status       ChannelReservationStatus @default(BOOKED)
+  guestName    String?
+  totalAmount  Decimal?                 @db.Decimal(10, 2)
+  currency     String?
+  rawPayload   Json?
+  receivedAt   DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  connection   ChannelConnection        @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  booking      Booking?                 @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@unique([connectionId, externalId])
+  @@map("channel_reservations")
+}
+
+enum SyncLogStatus {
+  SUCCESS
+  FAILED
+}
+
+model ChannelSyncLog {
+  id           String            @id @default(cuid())
+  connectionId String
+  action       String // CONNECTION_TEST, ROOM_FETCH, ARI_PUSH, RESERVATION_PULL, PROMOTION, ...
+  status       SyncLogStatus
+  message      String
+  details      Json?
+  createdAt    DateTime          @default(now())
+  connection   ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, createdAt])
+  @@map("channel_sync_logs")
+}
+
+// ============================================================================
+// Channel Agent - AI assistant that manages OTA rates and promotions
+// ============================================================================
+
+model ChannelAgentConversation {
+  id        String               @id @default(cuid())
+  userId    String
+  title     String?
+  // Model input items (OpenAI Responses API), append-only, replayed each turn.
+  messages  String               @default("[]")
+  // Write actions waiting for the person's approval
+  pending   Json?
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  actions   ChannelAgentAction[]
+
+  @@index([userId, updatedAt])
+  @@map("channel_agent_conversations")
+}
+
+enum ChannelAgentActionStatus {
+  EXECUTED
+  REJECTED
+  FAILED
+}
+
+// Audit trail of every change the channel agent proposed
+model ChannelAgentAction {
+  id             String                   @id @default(cuid())
+  conversationId String
+  userId         String
+  toolName       String
+  input          Json
+  result         Json?
+  status         ChannelAgentActionStatus
+  createdAt      DateTime                 @default(now())
+  conversation   ChannelAgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@map("channel_agent_actions")
 }
 
 /// One card payment collected through Stripe on the hotel's connected account. No card data is stored:

@@ -6,6 +6,7 @@
  *  - an optional cron calls /api/cron/expire-bookings.
  */
 import { prisma } from '@/lib/prisma';
+import { scheduleInventorySync } from '@/server/channels/sync';
 
 const RELEASE_NOTE = 'Online payment not completed — rooms released';
 
@@ -15,7 +16,12 @@ export async function expireUnpaidBooking(bookingId: string): Promise<boolean> {
     where: { id: bookingId, status: 'PENDING', paymentStatus: 'AWAITING_PAYMENT' },
     data: { status: 'CANCELLED', paymentStatus: 'EXPIRED' },
   });
-  if (count) await prisma.bookingStatusHistory.create({ data: { bookingId, status: 'CANCELLED', notes: RELEASE_NOTE } });
+  if (count) {
+    await prisma.bookingStatusHistory.create({ data: { bookingId, status: 'CANCELLED', notes: RELEASE_NOTE } });
+    // The released rooms go back on sale at the OTAs too.
+    const released = await prisma.booking.findUnique({ where: { id: bookingId }, select: { roomTypeId: true, checkIn: true, checkOut: true } });
+    if (released) scheduleInventorySync(released.roomTypeId, released.checkIn, released.checkOut);
+  }
   return count > 0;
 }
 

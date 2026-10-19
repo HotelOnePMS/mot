@@ -13,6 +13,7 @@ import { releaseExpiredHolds } from '../payments/expiry';
 import { assertPropertyAccess, can, requirePermission, scopeByProperty, type Actor, type Permission } from '../authz';
 import { addDaysISO, atNoonUTC, dayBounds, diffDays, eachNight, formatDay, hotelToday, isISODate, toISODate } from '../dates';
 import { badRequest, conflict, DomainError, notFound } from '../errors';
+import { scheduleInventorySync } from '../channels/sync';
 import { recordAudit, type OpContext } from './audit';
 import { localeOf, todayAt } from './hotels';
 import { nightlyInventory, quoteStay } from './inventory';
@@ -178,7 +179,7 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, Math.random() * 40 * attempt));
     try {
-      return await prisma.$transaction(
+      const booking = await prisma.$transaction(
         async (tx) => {
           const same = await tx.booking.findFirst({
             where: {
@@ -255,6 +256,9 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
       );
+      // OTAs see one room fewer on these nights.
+      scheduleInventorySync(booking.roomTypeId, booking.checkIn, booking.checkOut);
+      return booking;
     } catch (e) {
       const retryable =
         e instanceof Prisma.PrismaClientKnownRequestError &&
@@ -425,6 +429,12 @@ export async function transitionBooking(
     }
     return b;
   });
+
+  // Cancellations, no-shows, reinstatements and early departures change what OTAs can sell.
+  const occupying = (s: BookingStatus) => !['CANCELLED', 'NO_SHOW'].includes(s);
+  if (occupying(from) !== occupying(to) || data.checkOut) {
+    scheduleInventorySync(booking.roomTypeId, booking.checkIn, booking.checkOut);
+  }
 
   if (to === 'CHECKED_OUT' && updated.room) effects.push(`Room ${updated.room.roomNumber} marked dirty and queued for housekeeping`);
 

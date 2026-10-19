@@ -6,6 +6,7 @@ import { badRequest, notFound } from '@/server/errors';
 import { handleRoute, json, parseJson } from '@/server/http';
 import { recordAudit } from '@/server/services/audit';
 import { scheduleConfigSkillSync } from '@/server/skills';
+import { schedulePropertySync } from '@/server/channels/sync';
 
 type Params = { params: Promise<{ roomTypeId: string }> };
 
@@ -60,6 +61,8 @@ async function update(request: NextRequest, { params }: Params) {
   });
   await recordAudit({ actor, source: 'classic' }, roomType.propertyId, 'ROOM_TYPE_UPDATE', `Updated room type ${updated.name}`, { roomTypeId });
   scheduleConfigSkillSync(roomType.propertyId);
+  // Room count and base price feed what OTAs are sent.
+  if (body.totalRooms !== undefined || body.basePrice !== undefined) schedulePropertySync(roomType.propertyId);
   return json({ ...updated, basePrice: Number(updated.basePrice) });
 }
 

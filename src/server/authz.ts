@@ -94,6 +94,9 @@ export const PERMISSIONS = {
   'charges.manage': ['ADMIN', 'OWNER', 'MANAGER'],
   // Hotel groups: owners who administer an organization (see canManageOrg), and platform admins.
   'org.manage': ['ADMIN', 'OWNER'],
+  // OTA channel manager: managers see channels and change channel prices (rates.write); connecting an OTA needs channels.manage.
+  'channels.view': ['ADMIN', 'OWNER', 'MANAGER'],
+  'channels.manage': ['ADMIN', 'OWNER'],
 } as const satisfies Record<string, readonly StaffRole[]>;
 
 export type Permission = keyof typeof PERMISSIONS;
