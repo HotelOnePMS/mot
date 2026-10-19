@@ -4,7 +4,7 @@ The repo deploys as-is: `vercel.json` runs `scripts/vercel-build.mjs`, which
 
 1. maps whatever connection-string names the Postgres integration injected (Neon: `DATABASE_URL` + `DATABASE_URL_UNPOOLED`; Supabase: `POSTGRES_PRISMA_URL` / `POSTGRES_URL_NON_POOLING`; Prisma Postgres: `DATABASE_URL` / `POSTGRES_URL`) onto the `DATABASE_URL` / `DIRECT_URL` Prisma reads;
 2. with a database: runs `prisma migrate deploy`, then — when `SEED_DEMO=true` — creates the demo hotels once (the seed never wipes on Vercel and skips itself when the demo already exists);
-3. without one: still builds, so the first deploy never blocks; `/api/health` reports `not_configured` until a database is connected;
+3. without one: still builds, so the first deploy never blocks; `/api/health` returns 503 `{"ok":false}` until a database is connected;
 4. `prisma generate` + `next build`.
 
 ## One-time setup
@@ -27,7 +27,7 @@ The repo deploys as-is: `vercel.json` runs `scripts/vercel-build.mjs`, which
 
    Leave `NEXTAUTH_URL` unset: auth trusts the request host, which keeps preview URLs working. `NEXT_PUBLIC_SITE_URL` and `HOTELONE_PUBLIC_URL` are covered under *Custom domain* below.
 4. **Deploy** → *Deployments* → *Redeploy* (env and database changes only apply to new builds).
-5. **Check** → `https://hotelone.site/api/health` (or the project's `*.vercel.app` address) should return `{"ok":true,"database":"up","seeded":true}`.
+5. **Check** → `https://hotelone.site/api/health` (or the project's `*.vercel.app` address) should return `{"ok":true}` (HTTP 503 `{"ok":false}` means the database is missing, unreachable or not migrated — check the build log).
 
 ## Custom domain (hotelone.site)
 

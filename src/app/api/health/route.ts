@@ -4,15 +4,14 @@ import { databaseConfigured } from '@/lib/db-url';
 
 export const dynamic = 'force-dynamic';
 
-/** Deploy check: is the database connected and migrated? No details beyond that. */
+/** Deploy check: `{ ok: true }` when the database answers, 503 `{ ok: false }` otherwise. No internals are exposed. */
 export async function GET() {
-  if (!databaseConfigured()) {
-    return NextResponse.json({ ok: false, database: 'not_configured' }, { status: 503 });
-  }
+  const headers = { 'Cache-Control': 'no-store' };
+  if (!databaseConfigured()) return NextResponse.json({ ok: false }, { status: 503, headers });
   try {
-    const properties = await prisma.property.count();
-    return NextResponse.json({ ok: true, database: 'up', seeded: properties > 0 });
+    await prisma.$queryRaw`SELECT 1`;
+    return NextResponse.json({ ok: true }, { headers });
   } catch {
-    return NextResponse.json({ ok: false, database: 'unreachable_or_not_migrated' }, { status: 503 });
+    return NextResponse.json({ ok: false }, { status: 503, headers });
   }
 }
