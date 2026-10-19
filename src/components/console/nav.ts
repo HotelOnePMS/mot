@@ -10,6 +10,7 @@ import {
   History,
   LayoutDashboard,
   Settings2,
+  ShieldAlert,
   Sparkles,
   BrushCleaning,
   Users,
@@ -55,6 +56,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { label: 'Rates', href: '/admin/rate-calendar', icon: BadgeDollarSign, paths: ['FULL', 'VOICE'] },
       { label: 'Analytics', href: '/admin/analytics', icon: ChartLine },
+      { label: 'Disputes', href: '/admin/disputes', icon: ShieldAlert },
     ],
   },
   {

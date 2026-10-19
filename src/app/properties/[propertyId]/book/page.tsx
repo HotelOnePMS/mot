@@ -10,6 +10,7 @@ import { ArrowLeft, Building2, CalendarDays, Check, CreditCard, Lock, ShieldChec
 import type { StayQuote } from '@/lib/dto';
 import { api, fetcher } from '@/lib/fetcher';
 import { fmtDay, fmtRange } from '@/lib/format';
+import { fromCents, paymentAmountDue, toCents, type PaymentPolicy } from '@/lib/payments';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,7 +35,14 @@ interface PublicProperty {
   roomTypes: { id: string; name: string; capacity: number; photos: { url: string }[] }[];
 }
 
-type PaymentMethod = 'pay_at_property' | 'stripe';
+/** How the guest pays at this hotel and the policy they accept (GET /api/properties/:id/payment-terms). */
+interface PaymentTerms {
+  policy: PaymentPolicy;
+  depositNights: number;
+  onlinePayment: boolean;
+  policyText: string;
+  policyHash: string;
+}
 
 /** The new-guest form; lives in Checkout so links (guestName/guestEmail/guestPhone) and the voice agent can fill it. */
 interface GuestForm {
@@ -245,8 +253,11 @@ function Checkout() {
     roomTypeId && checkIn && checkOut ? `/api/quote?roomTypeId=${roomTypeId}&checkIn=${checkIn}&checkOut=${checkOut}&guests=${guests}&rooms=${rooms}` : null,
     fetcher
   );
-  const { data: config } = useSWR<{ stripeEnabled: boolean; emailEnabled?: boolean }>('/api/config', fetcher);
-  const [payment, setPayment] = React.useState<PaymentMethod>('pay_at_property');
+  const { data: config } = useSWR<{ emailEnabled?: boolean }>('/api/config', fetcher);
+  const { data: terms } = useSWR<PaymentTerms>(`/api/properties/${propertyId}/payment-terms`, fetcher);
+  const [accepted, setAccepted] = React.useState(false);
+  const [needAccept, setNeedAccept] = React.useState(false);
+  const acceptRef = React.useRef<HTMLInputElement>(null);
   const [notes, setNotes] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -264,8 +275,13 @@ function Checkout() {
   const signedIn = status === 'authenticated';
   const back = `/properties/${propertyId}?checkIn=${checkIn}&checkOut=${checkOut}&guests=${guests}&rooms=${rooms}`;
   const unavailable = !!quote && quote.available < rooms;
-  const stripe = !!config?.stripeEnabled;
-  const method: PaymentMethod = stripe ? payment : 'pay_at_property';
+  // What is charged now (a deposit or the whole stay) follows the hotel's payment policy, never the guest's choice.
+  const due =
+    terms && quote
+      ? paymentAmountDue({ policy: terms.policy, depositNights: terms.depositNights, nightlyCents: quote.nights.map((n) => toCents(n.price)), rooms, totalCents: toCents(quote.total) })
+      : null;
+  const payNow = !!terms?.onlinePayment && !!due && due.dueNowCents > 0;
+  const method = payNow ? 'stripe' : 'pay_at_property';
   const name = p?.name ?? shell?.name;
 
   React.useEffect(() => {
@@ -281,12 +297,18 @@ function Checkout() {
 
   /** Book it (the guest is signed in). Pay-at-hotel bookings go to the booking page; card payments to Stripe. */
   async function submit(): Promise<{ ok: true; id: string; code: string | null } | { ok: false; error: string }> {
+    if (!terms) return { ok: false, error: 'The booking terms are still loading — try again in a moment.' };
+    if (!accepted) {
+      setNeedAccept(true);
+      acceptRef.current?.focus();
+      return { ok: false, error: 'Please accept the cancellation policy to book.' };
+    }
     setBusy(true);
     setError('');
     try {
       const r = await api<{ requiresPayment: boolean; checkoutUrl?: string; booking: { id: string; code?: string | null } }>('/api/bookings', {
         method: 'POST',
-        json: { propertyId, roomTypeId, checkIn, checkOut, guests, rooms, notes: notes.trim() || null, paymentMethod: method },
+        json: { propertyId, roomTypeId, checkIn, checkOut, guests, rooms, notes: notes.trim() || null, acceptPolicy: true, policyHash: terms.policyHash },
       });
       if (r.requiresPayment && r.checkoutUrl) {
         window.location.href = r.checkoutUrl;
@@ -322,7 +344,7 @@ function Checkout() {
             `checkout for ${roomName ? `the ${roomName}` : 'a room'}${name ? ` at ${name}` : ''}, ${fmtRange(checkIn, checkOut)}, ${plural(guests, 'guest')}${rooms > 1 ? `, ${plural(rooms, 'room')}` : ''}${total ? `, total ${total}` : ''}`,
             unavailable ? 'this room just sold out for these dates' : '',
             status === 'loading' ? '' : signedIn ? `signed in as ${session?.user?.name ?? session?.user?.email}` : 'not signed in yet',
-            method === 'stripe' ? 'card payment selected' : 'paying at the hotel',
+            method === 'stripe' ? 'card payment required to confirm' : 'paying at the hotel',
           ]
             .filter(Boolean)
             .join('; ')
@@ -357,8 +379,12 @@ function Checkout() {
         if (quoteError) return { ok: false, error: `The price couldn’t be checked: ${(quoteError as Error).message}` };
         if (!quote) return { ok: false, error: 'The price is still loading — try again in a moment.' };
         if (unavailable) return { ok: false, error: 'This room just sold out for these dates — offer to check other rooms or dates.' };
+        if (!accepted) {
+          setNeedAccept(true);
+          return { ok: false, error: 'The guest needs to tick the box accepting the cancellation policy on screen first. Never accept it on their behalf.' };
+        }
         if (method === 'stripe') {
-          return { ok: false, error: 'Card payment is selected. Ask the guest to tap “Continue to payment” on screen, or to choose “Pay at the hotel” so you can book it. Never take card details by voice.' };
+          return { ok: false, error: 'Card payment is selected. Ask the guest to tap “Continue to payment” on screen. Never take card details by voice.' };
         }
         if (!signedIn) {
           askForDetails();
@@ -459,37 +485,23 @@ function Checkout() {
             </Section>
 
             <Section id="payment" title="Payment">
-              {stripe ? (
-                <fieldset>
-                  <legend className="sr-only">How would you like to pay?</legend>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {(
-                      [
-                        { value: 'pay_at_property', title: 'Pay at the hotel', text: 'Nothing is charged today. Pay when you arrive.', icon: Building2 },
-                        { value: 'stripe', title: 'Pay now by card', text: 'Secure card payment by Stripe.', icon: CreditCard },
-                      ] as const
-                    ).map((o) => (
-                      <label
-                        key={o.value}
-                        className="relative flex cursor-pointer items-start gap-3 rounded-xl border border-input p-4 transition-colors hover:bg-accent/60 has-[:checked]:border-brand has-[:checked]:bg-brand-soft has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2"
-                      >
-                        <input
-                          type="radio"
-                          name="payment"
-                          value={o.value}
-                          checked={payment === o.value}
-                          onChange={() => setPayment(o.value)}
-                          className="mt-0.5 h-5 w-5 shrink-0 accent-brand focus-visible:outline-none"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-semibold">{o.title}</span>
-                          <span className="mt-0.5 block text-sm text-muted-foreground">{o.text}</span>
-                        </span>
-                        <o.icon className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
-                      </label>
-                    ))}
+              {payNow && due ? (
+                <div className="flex items-start gap-3 rounded-xl border bg-surface-sunken p-4">
+                  <CreditCard className="mt-0.5 h-5 w-5 shrink-0 text-brand" aria-hidden />
+                  <div>
+                    <p className="text-sm font-semibold">
+                      {due.kind === 'DEPOSIT'
+                        ? `Pay a deposit of ${price(fromCents(due.dueNowCents), cur)} now by card`
+                        : `Pay ${price(fromCents(due.dueNowCents), cur)} now by card`}
+                    </p>
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      {due.kind === 'DEPOSIT'
+                        ? `The balance of ${price(fromCents(due.balanceCents), cur)} is paid at the hotel. `
+                        : ''}
+                      You’ll pay on a secure Stripe page, straight to the hotel. Your bank may ask you to verify the payment (3D Secure). Your booking is confirmed once the payment goes through.
+                    </p>
                   </div>
-                </fieldset>
+                </div>
               ) : (
                 <div className="flex items-start gap-3 rounded-xl border bg-surface-sunken p-4">
                   <Building2 className="mt-0.5 h-5 w-5 shrink-0 text-brand" aria-hidden />
@@ -509,6 +521,34 @@ function Checkout() {
                   that, contact the hotel.
                 </span>
               </p>
+              {terms && (
+                <div className="mt-4 rounded-xl border bg-surface-sunken p-4">
+                  <p className="text-sm font-semibold">Cancellation and refund policy</p>
+                  <p className="mt-1 text-sm text-muted-foreground" id="policy-text">
+                    {terms.policyText}
+                  </p>
+                  <label className="mt-3 flex min-h-10 cursor-pointer items-start gap-3 text-sm">
+                    <input
+                      ref={acceptRef}
+                      type="checkbox"
+                      checked={accepted}
+                      onChange={(e) => {
+                        setAccepted(e.target.checked);
+                        if (e.target.checked) setNeedAccept(false);
+                      }}
+                      aria-describedby="policy-text"
+                      aria-invalid={needAccept && !accepted}
+                      className="mt-0.5 h-5 w-5 shrink-0 accent-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    />
+                    <span className="font-medium">I have read and accept this cancellation and refund policy.</span>
+                  </label>
+                  {needAccept && !accepted && (
+                    <p className="mt-2 text-sm text-destructive" role="alert">
+                      Please tick the box to accept the policy and book.
+                    </p>
+                  )}
+                </div>
+              )}
               {error && (
                 <Callout tone="danger" className="mt-4" role="alert">
                   {error}
@@ -530,11 +570,11 @@ function Checkout() {
                 onClick={confirm}
                 loading={busy}
                 loadingText={method === 'stripe' ? 'Opening secure payment…' : 'Booking your room…'}
-                disabled={!quote || unavailable}
+                disabled={!quote || !terms || unavailable}
               >
                 <Lock aria-hidden />
                 {method === 'stripe' ? 'Continue to payment' : 'Confirm booking'}
-                {totalLabel && <span className="tabular">· {totalLabel}</span>}
+                {due && payNow ? <span className="tabular">· {price(fromCents(due.dueNowCents), cur)} today</span> : totalLabel && <span className="tabular">· {totalLabel}</span>}
               </Button>
               <p className="mt-3 text-center text-xs text-muted-foreground">
                 {(p?.isDemo ?? shell?.isDemo) ? 'This is a demo hotel — book freely, nothing is charged.' : method === 'stripe' ? 'You’ll pay on the next screen.' : 'You won’t be charged today.'}

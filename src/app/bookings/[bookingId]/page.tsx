@@ -269,7 +269,7 @@ function CancelDialog({ b, open, onOpenChange, onDone }: { b: GuestBooking; open
           <p className="font-semibold">This can’t be undone.</p>
           <p>
             Your room is released to other guests. Cancelling is free —{' '}
-            {b.paymentStatus === 'PAID' ? 'you paid online, so the hotel will arrange your refund.' : 'nothing has been charged.'}
+            {b.paymentStatus === 'PAID' || b.paymentStatus === 'DEPOSIT_PAID' ? 'you paid online, so the hotel will arrange your refund according to its policy.' : 'nothing has been charged.'}
           </p>
         </Callout>
         <Field label="Reason" optional htmlFor="cancel-reason" hint="Helps the hotel — only they can see it.">
@@ -316,7 +316,11 @@ function BookingPage() {
   const router = useRouter();
   const reduce = useReducedMotion();
   const { status } = useSession();
-  const { data: b, error, mutate } = useSWR<GuestBooking>(status === 'authenticated' ? `/api/bookings/${bookingId}` : null, fetcher);
+  // Back from Stripe, the payment can take a few seconds to be confirmed by Stripe's webhook: keep checking until it is.
+  const returnedFromPayment = params.get('payment') === 'success';
+  const { data: b, error, mutate } = useSWR<GuestBooking>(status === 'authenticated' ? `/api/bookings/${bookingId}` : null, fetcher, {
+    refreshInterval: (latest) => (returnedFromPayment && latest?.paymentStatus === 'AWAITING_PAYMENT' ? 2000 : 0),
+  });
   const { data: config } = useSWR<{ emailEnabled: boolean }>('/api/config', fetcher);
   const [changeOpen, setChangeOpen] = React.useState(false);
   const [cancelOpen, setCancelOpen] = React.useState(params.get('action') === 'cancel');
@@ -372,7 +376,8 @@ function BookingPage() {
   const daysToGo = nightsBetween(today, b.checkIn);
   const pay = paymentLabel(b.paymentStatus);
   const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${b.property.name}, ${b.property.address}, ${b.property.city}, ${b.property.state}`)}`;
-  const justBooked = !cancelled && (isNew || payment === 'success');
+  const confirmingPayment = payment === 'success' && b.paymentStatus === 'AWAITING_PAYMENT';
+  const justBooked = !cancelled && !confirmingPayment && (isNew || payment === 'success');
   const cancelBlocked = params.get('action') === 'cancel' && !b.canCancel && !cancelled;
   const countdown =
     b.status === 'CHECKED_IN'
@@ -442,9 +447,14 @@ function BookingPage() {
             </div>
           </motion.div>
         )}
+        {confirmingPayment && !cancelled && (
+          <Callout tone="info" className="mt-3" role="status">
+            We’re waiting for your bank to confirm the payment. This usually takes a few seconds; this page updates by itself.
+          </Callout>
+        )}
         {payment === 'cancelled' && b.paymentStatus === 'AWAITING_PAYMENT' && (
           <Callout tone="warning" className="mt-3" role="alert">
-            Payment wasn’t completed, so this booking isn’t confirmed yet. Book again and choose “Pay at the hotel”, or contact {b.property.name}.
+            Payment wasn’t completed, so this booking isn’t confirmed yet. The rooms are held for a short time. Book again to try another card, or contact {b.property.name}.
           </Callout>
         )}
 

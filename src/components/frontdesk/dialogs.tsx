@@ -2,11 +2,12 @@
 
 import * as React from 'react';
 import useSWR from 'swr';
-import { BedDouble, CheckCircle2, LogOut, MessageSquareText, Moon } from 'lucide-react';
+import { BedDouble, CheckCircle2, LogOut, MessageSquareText, Moon, ShieldAlert } from 'lucide-react';
 import type { RoomOption } from '@/lib/agent/blocks';
 import type { BookingSummary } from '@/lib/dto';
 import { fetcher } from '@/lib/fetcher';
 import { fmtRange } from '@/lib/format';
+import { RISK_FLAG_INFO } from '@/lib/risk';
 import { money } from '@/lib/status';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -162,6 +163,18 @@ export function CheckInDialog({ booking, open, onOpenChange }: { booking: Bookin
             </span>
           </p>
         )}
+        {booking.riskFlags.length > 0 && (
+          <Callout tone="warning" icon={ShieldAlert}>
+            <p className="font-semibold">Flagged booking: {booking.riskFlags.map((f) => RISK_FLAG_INFO[f]?.label ?? f).join(', ')}</p>
+            <p>
+              Before handing over the key, complete the check-in checklist (ID, card, registration) on the{' '}
+              <a href={`/admin/bookings/${booking.id}`} className="font-medium underline underline-offset-2">
+                reservation page
+              </a>
+              .
+            </p>
+          </Callout>
+        )}
         <RoomPicker booking={booking} value={roomId} onChange={onChange} readyOnly={!showAll} />
         <label className="flex min-h-10 cursor-pointer items-center gap-2.5 text-sm text-muted-foreground">
           <input
@@ -256,7 +269,8 @@ export function CheckOutDialog({ booking, open, onOpenChange, today }: { booking
   const { transition, pending } = useBookingActions();
   if (!booking) return null;
   const early = booking.checkOut > today;
-  const unpaid = booking.paymentStatus !== 'PAID';
+  const balance = Math.max(0, booking.totalPrice - booking.amountPaid);
+  const unpaid = balance > 0.004;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -269,7 +283,7 @@ export function CheckOutDialog({ booking, open, onOpenChange, today }: { booking
         {(early || unpaid) && (
           <div className="space-y-2">
             {early && <Callout tone="info">Early departure — the unused nights go back on sale.</Callout>}
-            {unpaid && <Callout tone="warning">Balance of {money(booking.totalPrice)} to settle before the guest leaves.</Callout>}
+            {unpaid && <Callout tone="warning">Balance of {money(balance)} to settle before the guest leaves.</Callout>}
           </div>
         )}
         <DialogFooter>

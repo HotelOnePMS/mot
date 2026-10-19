@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/primitives';
 import { useConsole } from '@/components/console/ConsoleProvider';
+import { PaymentSettings } from '@/components/payments/PaymentSettings';
 
 const FRAME = 'mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8';
 
@@ -229,6 +230,12 @@ export default function SettingsPage() {
                   </div>
                 </div>
               </div>
+            </Section>
+          )}
+
+          {can('payments.view') && property && (
+            <Section title="Online payments" description="Let guests pay a deposit or the full stay by card, straight to your Stripe account.">
+              <PaymentSettings propertyId={property.id} />
             </Section>
           )}
 
