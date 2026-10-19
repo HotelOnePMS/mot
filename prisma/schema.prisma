@@ -92,6 +92,12 @@ model Property {
   paymentPolicy          PaymentPolicy            @default(PAY_AT_PROPERTY)
   /// Nights charged at booking when paymentPolicy is DEPOSIT.
   depositNights          Int                      @default(1)
+  /// Default booking page address: "oceanview-resort" serves oceanview-resort.hotelone.site
+  subdomain              String?                  @unique
+  /// Property's own domain for its booking page, e.g. "book.mymotel.com"
+  customDomain           String?                  @unique
+  customDomainVerified   Boolean                  @default(false)
+  customDomainVerifiedAt DateTime?
   createdAt              DateTime                 @default(now())
   updatedAt              DateTime                 @updatedAt
   bookings               Booking[]
