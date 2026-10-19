@@ -12,6 +12,7 @@ import { PRODUCT_URL, isDemoEmail } from '@/config/product';
 import { publicSiteUrl } from '@/server/public-url';
 import { sendPasswordResetEmail } from '@/server/email';
 import { badRequest } from '@/server/errors';
+import { recordTeamAudit } from './team-audit';
 
 export const RESET_TTL_MINUTES = 60;
 
@@ -56,7 +57,7 @@ export async function resetPassword(token: string, newPassword: string): Promise
   const invalid = () => badRequest('This reset link is invalid or has expired. Request a new one.');
   const row = await prisma.passwordResetToken.findUnique({
     where: { tokenHash: hashToken(token) },
-    select: { id: true, userId: true, expiresAt: true, usedAt: true, user: { select: { isActive: true, email: true } } },
+    select: { id: true, userId: true, expiresAt: true, usedAt: true, user: { select: { isActive: true, email: true, role: true, firstName: true, lastName: true, assignedProperties: { select: { propertyId: true } } } } },
   });
   if (!row || row.usedAt || row.expiresAt.getTime() < Date.now() || !row.user.isActive || isDemoEmail(row.user.email)) throw invalid();
 
@@ -65,7 +66,15 @@ export async function resetPassword(token: string, newPassword: string): Promise
   const claimed = await prisma.passwordResetToken.updateMany({ where: { id: row.id, usedAt: null }, data: { usedAt: new Date() } });
   if (claimed.count !== 1) throw invalid();
   await prisma.$transaction([
-    prisma.user.update({ where: { id: row.userId }, data: { password: passwordHash } }),
+    // A new password ends every existing session (sessionVersion) and clears any "must change" flag.
+    prisma.user.update({ where: { id: row.userId }, data: { password: passwordHash, mustChangePassword: false, sessionVersion: { increment: 1 } } }),
     prisma.passwordResetToken.deleteMany({ where: { userId: row.userId, id: { not: row.id } } }),
   ]);
+  if (row.user.role !== 'CUSTOMER') {
+    const who = `${row.user.firstName} ${row.user.lastName}`.trim() || row.user.email;
+    await recordTeamAudit(
+      { actorUserId: row.userId, source: 'system', targetUserId: row.userId, propertyIds: row.user.assignedProperties.map((a) => a.propertyId) },
+      [{ action: 'TEAM_PASSWORD_RESET', summary: `${who}: reset their own password from an emailed link`, before: {}, after: { passwordChanged: true } }],
+    );
+  }
 }

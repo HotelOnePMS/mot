@@ -22,6 +22,10 @@ model User {
   country           String?
   role              UserRole            @default(CUSTOMER)
   isActive          Boolean             @default(true)
+  // Bumped whenever sign-in-relevant data changes (role, active flag, password, email); sessions carry the value they were issued with.
+  sessionVersion    Int                 @default(0)
+  // True for a password set by someone else (team invite / owner-set temporary password): must be changed at first sign-in.
+  mustChangePassword Boolean            @default(false)
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
   bookings          Booking[]

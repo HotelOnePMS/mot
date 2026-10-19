@@ -98,6 +98,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           email: user.email,
           name: `${user.firstName} ${user.lastName}`,
           role: user.role,
+          sv: user.sessionVersion,
         }
       }
     })
@@ -132,6 +133,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         } else if (existingUser.role === "ADMIN") {
           // Prevent admins from logging in with Google
           return false
+        } else if (!existingUser.isActive) {
+          // Deactivated accounts can't get back in through Google either
+          return false
         }
         return true
       }
@@ -146,16 +150,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.id = user.id
       }
 
-      // Fetch fresh user data to ensure role is up-to-date
-      if (token.email) {
-        const dbUser = await prisma.user.findUnique({
-          where: { email: token.email as string }
-        })
-        if (dbUser) {
-          token.role = dbUser.role
-          token.id = dbUser.id
-        }
+      // Re-read the account on every use so a changed role is picked up and a
+      // deactivated, deleted, or password-reset account loses its session.
+      // At sign-in look up by email (Google's user id is not our id); afterwards by id.
+      const dbUser = user || !token.id
+        ? await prisma.user.findUnique({ where: { email: token.email as string } })
+        : await prisma.user.findUnique({ where: { id: token.id as string } })
+      if (!dbUser || !dbUser.isActive) return null
+      if (user) {
+        token.sv = dbUser.sessionVersion
+      } else if ((token.sv ?? 0) !== dbUser.sessionVersion) {
+        // Sessions issued before a role/status/password/email change are ended.
+        return null
       }
+      token.role = dbUser.role
+      token.id = dbUser.id
+      token.email = dbUser.email
 
       return token
     },

@@ -5,7 +5,9 @@ import { prisma } from '@/lib/prisma';
 import { requireStaff, type Actor } from '@/server/authz';
 import { badRequest, forbidden, notFound } from '@/server/errors';
 import { handleRoute, json, parseJson } from '@/server/http';
-import { assertAssignable, assertCanGrant, assertDemoLoginUnchanged, userSelect, visibleUsersWhere } from '@/server/services/users';
+import { describeTeamChange, shouldEndSessions } from '@/lib/team-rules';
+import { recordTeamAudit } from '@/server/services/team-audit';
+import { assertAssignable, assertCanGrant, assertDemoLoginUnchanged, assertKeepsAnOwner, assertMayEdit, duplicateEmailError, userSelect, visibleUsersWhere } from '@/server/services/users';
 
 type Params = { params: Promise<{ userId: string }> };
 
@@ -17,9 +19,9 @@ async function loadVisible(actor: Actor, userId: string) {
 
 /** Non-admins may only edit staff who work exclusively at their properties. */
 function assertEditable(actor: Actor, user: Awaited<ReturnType<typeof loadVisible>>) {
+  // Admins, guests and other owners are off limits to non-admins (only an owner themselves or an admin changes an owner).
+  assertMayEdit(actor, user);
   if (actor.role === 'ADMIN') return;
-  if (user.role === 'ADMIN') throw forbidden('Platform admins can only be changed by another admin.');
-  if (user.role === 'CUSTOMER') throw forbidden('Guest accounts are managed by the guest.');
   const own = actor.propertyIds === 'ALL' ? [] : actor.propertyIds;
   if (user.assignedProperties.some((a) => !own.includes(a.property.id))) {
     throw forbidden('This person also works at a property you do not manage.');
@@ -55,9 +57,37 @@ export const PATCH = handleRoute(async (request: NextRequest, { params }: Params
   if (userId === actor.userId && (body.role || body.isActive === false)) {
     throw badRequest("You can't change your own role or deactivate yourself.");
   }
-  if (body.email && body.email !== user.email && (await prisma.user.findUnique({ where: { email: body.email } }))) {
-    throw badRequest('That email is already in use.');
+  if (body.email && body.email.toLowerCase() !== user.email.toLowerCase() && (await prisma.user.findUnique({ where: { email: body.email } }))) {
+    throw duplicateEmailError(actor);
   }
+
+  // The property list the person ends up with (non-admins only replace assignments inside their own properties).
+  const currentIds = user.assignedProperties.map((a) => a.property.id);
+  const effectiveIds = body.assignedPropertyIds
+    ? actor.propertyIds === 'ALL'
+      ? [...new Set(body.assignedPropertyIds)]
+      : [...currentIds.filter((id) => !(actor.propertyIds as string[]).includes(id)), ...new Set(body.assignedPropertyIds)]
+    : undefined;
+  const target = { id: user.id, role: user.role as string, isActive: user.isActive, email: user.email, propertyIds: currentIds };
+  await assertKeepsAnOwner(actor, target, { ...body, assignedPropertyIds: effectiveIds });
+
+  const entries = describeTeamChange(
+    {
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      role: user.role,
+      isActive: user.isActive,
+      phone: user.phone,
+      propertyIds: currentIds,
+      propertyNames: Object.fromEntries(user.assignedProperties.map((a) => [a.property.id, a.property.name])),
+    },
+    { ...body, assignedPropertyIds: effectiveIds },
+  );
+  const endSessions = shouldEndSessions(user, body);
+  // A password chosen by someone else is temporary: the person must replace it at next sign-in.
+  const passwordChosenByOther = !!body.password && userId !== actor.userId;
+
   const updated = await prisma.$transaction(async (tx) => {
     const u = await tx.user.update({
       where: { id: userId },
@@ -68,7 +98,9 @@ export const PATCH = handleRoute(async (request: NextRequest, { params }: Params
         ...(body.phone !== undefined ? { phone: body.phone || null } : {}),
         ...(body.role !== undefined ? { role: body.role } : {}),
         ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
-        ...(body.password ? { password: await bcrypt.hash(body.password, 12) } : {}),
+        ...(body.password ? { password: await bcrypt.hash(body.password, 12), mustChangePassword: passwordChosenByOther } : {}),
+        // Ends every existing session of this person (see the jwt callback in src/lib/auth.ts).
+        ...(endSessions ? { sessionVersion: { increment: 1 } } : {}),
       },
     });
     if (body.assignedPropertyIds) {
@@ -84,6 +116,10 @@ export const PATCH = handleRoute(async (request: NextRequest, { params }: Params
     }
     return u;
   });
+  await recordTeamAudit(
+    { actorUserId: actor.userId, source: 'classic', targetUserId: userId, propertyIds: [...currentIds, ...(effectiveIds ?? [])] },
+    entries,
+  );
   return json({ id: updated.id, email: updated.email, firstName: updated.firstName, lastName: updated.lastName, role: updated.role });
 });
 
@@ -94,11 +130,23 @@ export const DELETE = handleRoute(async (_req: NextRequest, { params }: Params) 
   const user = await loadVisible(actor, userId);
   assertEditable(actor, user);
   assertDemoLoginUnchanged(user, { remove: true });
+  const propertyIds = user.assignedProperties.map((a) => a.property.id);
+  await assertKeepsAnOwner(actor, { id: user.id, role: user.role, isActive: user.isActive, email: user.email, propertyIds }, { remove: true });
+  const who = `${user.firstName} ${user.lastName}`.trim() || user.email;
+  const before = { email: user.email, role: user.role, isActive: user.isActive, propertyIds };
   const history = (await prisma.booking.count({ where: { userId } })) + (await prisma.agentAuditLog.count({ where: { userId } }));
   if (history > 0) {
-    await prisma.user.update({ where: { id: userId }, data: { isActive: false } });
+    await prisma.user.update({ where: { id: userId }, data: { isActive: false, sessionVersion: { increment: 1 } } });
+    await recordTeamAudit(
+      { actorUserId: actor.userId, source: 'classic', targetUserId: userId, propertyIds },
+      [{ action: 'TEAM_DELETE', summary: `${who}: removed (kept deactivated for booking and audit history)`, before, after: { isActive: false, deactivatedInsteadOfDeleted: true } }],
+    );
     return json({ message: 'User deactivated (kept for booking and audit history).' });
   }
   await prisma.user.delete({ where: { id: userId } });
+  await recordTeamAudit(
+    { actorUserId: actor.userId, source: 'classic', targetUserId: userId, propertyIds },
+    [{ action: 'TEAM_DELETE', summary: `${who}: deleted`, before, after: { deleted: true } }],
+  );
   return json({ message: 'User deleted successfully' });
 });
