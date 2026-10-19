@@ -10,6 +10,7 @@ declare namespace NodeJS {
     CLOUDINARY_CLOUD_NAME?: string
     CLOUDINARY_API_KEY?: string
     CLOUDINARY_API_SECRET?: string
+    ANTHROPIC_API_KEY?: string
     // Hotel booking page domains (see DEPLOYMENT.md)
     PROPERTY_DOMAIN_BASE?: string
     PROPERTY_DOMAIN_WILDCARD?: string
