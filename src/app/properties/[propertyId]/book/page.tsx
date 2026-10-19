@@ -276,6 +276,12 @@ function Checkout() {
   const shortName = shortLine >= 0 ? (p?.roomTypes.find((r) => r.id === lines[shortLine].roomTypeId)?.name ?? quotes?.[shortLine]?.roomTypeName) : null;
   const lineName = (i: number) => p?.roomTypes.find((r) => r.id === lines[i].roomTypeId)?.name ?? quotes?.[i]?.roomTypeName ?? 'Room';
   const roomsLabel = multi ? lines.map((l, i) => `${l.rooms} × ${lineName(i)}`).join(', ') : null;
+  const shortLeft = shortLine >= 0 ? (quotes?.[shortLine]?.available ?? 0) : 0;
+  const soldOutText = multi && shortLine >= 0 ? (shortLeft ? `Only ${shortLeft} ${shortName ?? 'room'} left for these dates.` : `The ${shortName ?? 'room'} just sold out for these dates.`) : 'This room just sold out for these dates.';
+  // Several room types: the party must fit them, with at least one guest per type (the server refuses otherwise).
+  const sleeps = p ? lines.reduce((s, l) => s + l.rooms * (p.roomTypes.find((r) => r.id === l.roomTypeId)?.capacity ?? 0), 0) : null;
+  const tooSmall = multi && sleeps !== null && (sleeps < guests || guests < lines.length);
+  const tooSmallText = guests < lines.length ? 'Each room type needs at least one guest.' : `These rooms don’t sleep ${plural(guests, 'guest')}.`;
   const stripe = !!config?.stripeEnabled;
   const method: PaymentMethod = stripe ? payment : 'pay_at_property';
   const name = p?.name ?? shell?.name;
@@ -332,7 +338,8 @@ function Checkout() {
       lines.length && checkIn && checkOut
         ? [
             `checkout for ${roomName ? (multi ? `${roomName} booked together` : `the ${roomName}`) : 'a room'}${name ? ` at ${name}` : ''}, ${fmtRange(checkIn, checkOut)}, ${plural(guests, 'guest')}${rooms > 1 ? `, ${plural(rooms, 'room')}` : ''}${totalText ? `, total ${totalText}` : ''}`,
-            unavailable ? `the ${shortName ?? 'room'} just sold out for these dates` : '',
+            unavailable ? soldOutText.replace(/\.$/, '') : '',
+            tooSmall ? `${tooSmallText.replace(/\.$/, '')} — they need to add a room` : '',
             status === 'loading' ? '' : signedIn ? `signed in as ${session?.user?.name ?? session?.user?.email}` : 'not signed in yet',
             method === 'stripe' ? 'card payment selected' : 'paying at the hotel',
           ]
@@ -368,7 +375,8 @@ function Checkout() {
         if (busy) return { ok: false, error: 'It’s already booking — wait a moment.' };
         if (quoteError) return { ok: false, error: `The price couldn’t be checked: ${(quoteError as Error).message}` };
         if (!quote) return { ok: false, error: 'The price is still loading — try again in a moment.' };
-        if (unavailable) return { ok: false, error: `The ${shortName ?? 'room'} just sold out for these dates — offer to check other rooms or dates.` };
+        if (unavailable) return { ok: false, error: `${soldOutText} Offer to check other rooms or dates.` };
+        if (tooSmall) return { ok: false, error: `${tooSmallText} Offer to add a room.` };
         if (method === 'stripe') {
           return { ok: false, error: 'Card payment is selected. Ask the guest to tap “Continue to payment” on screen, or to choose “Pay at the hotel” so you can book it. Never take card details by voice.' };
         }
@@ -528,7 +536,12 @@ function Checkout() {
               )}
               {unavailable && (
                 <Callout tone="danger" className="mt-4" role="alert" action={<Button asChild variant="outline" size="sm"><Link href={back}>Choose another room</Link></Button>}>
-                  {multi ? `The ${shortName ?? 'room'} just sold out for these dates.` : 'This room just sold out for these dates.'}
+                  {soldOutText}
+                </Callout>
+              )}
+              {tooSmall && (
+                <Callout tone="danger" className="mt-4" role="alert" action={<Button asChild variant="outline" size="sm"><Link href={back}>Add a room</Link></Button>}>
+                  {tooSmallText}
                 </Callout>
               )}
               <Button
@@ -542,7 +555,7 @@ function Checkout() {
                 onClick={confirm}
                 loading={busy}
                 loadingText={method === 'stripe' ? 'Opening secure payment…' : rooms > 1 ? 'Booking your rooms…' : 'Booking your room…'}
-                disabled={!quote || unavailable}
+                disabled={!quote || unavailable || tooSmall}
               >
                 <Lock aria-hidden />
                 {method === 'stripe' ? 'Continue to payment' : 'Confirm booking'}

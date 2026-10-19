@@ -334,8 +334,8 @@ function RoomCard({
             ) : (
               <div className="flex flex-wrap items-center gap-2">
                 {combinable && state !== 'sold-out' && (
-                  <Button variant="ghost" className="h-11" onClick={() => onCombine(1)}>
-                    <Plus aria-hidden /> Add with another room<span className="sr-only">: {rt.name}</span>
+                  <Button variant="outline" className="h-11" onClick={() => onCombine(1)}>
+                    <Plus aria-hidden /> Add<span className="sr-only"> a {rt.name} to a booking with other room types</span>
                   </Button>
                 )}
                 {state === 'bookable' ? (
@@ -550,7 +550,7 @@ function PropertyPage() {
         </p>
       )}
       <Button variant="brand" className="mt-4 h-11 w-full" onClick={bookSelection} disabled={!!pickedProblem || !picked.length}>
-        Continue to book
+        Book {plural(pickedRooms, 'room')}
       </Button>
     </div>
   );
@@ -595,8 +595,8 @@ function PropertyPage() {
                   </p>
                 </div>
                 {combining ? (
-                  <Button variant="brand" className="h-11 shrink-0 px-5" onClick={bookSelection} disabled={!!pickedProblem || !picked.length}>
-                    Continue
+                  <Button variant="brand" className="h-11 shrink-0 px-5" onClick={pickedProblem || !picked.length ? () => scrollTo(roomsRef.current) : bookSelection}>
+                    {pickedProblem || !picked.length ? 'Add rooms' : `Book ${plural(pickedRooms, 'room')}`}
                   </Button>
                 ) : (
                   <Button variant="brand" className="h-11 shrink-0 px-5" onClick={() => (cheapest ? scrollTo(roomsRef.current) : otherDates())}>
@@ -686,9 +686,17 @@ function PropertyPage() {
               <div ref={searchRef} data-stay-search className="mt-5 scroll-mt-24 lg:hidden">
                 <StaySearch value={stay} onSubmit={(v) => setStay(v)} showDestination={false} showRooms submitLabel="Update" compact pending={isValidating && !!avail} />
               </div>
-              {combining ? (
-                <p className="mt-3 text-sm text-muted-foreground">Add each room type you want for this stay, then continue to book them together.</p>
-              ) : null}
+              {p && roomTypes.length > 1 && (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  {combining ? (
+                    'Add each room type you want for this stay, then book them together.'
+                  ) : (
+                    <>
+                      Need different rooms, like a king and two doubles? Press <span className="font-medium text-foreground">Add</span> on each room type, then book them together.
+                    </>
+                  )}
+                </p>
+              )}
               {combining && <div className="mt-5 lg:hidden">{selectionCard}</div>}
               {availError && (
                 <Callout tone="warning" className="mt-5" role="alert">

@@ -275,8 +275,8 @@ const REQUEST_BOOKING: FunctionToolSpec = {
       room_type_id: { type: ['string', 'null'], description: 'id from check_availability (null when items lists several room types)' },
       check_in: date('Arrival date'),
       check_out: date('Departure date'),
-      guests: { type: 'integer', minimum: 1, maximum: 16 },
-      rooms: { type: 'integer', minimum: 1, maximum: 9 },
+      guests: { type: 'integer', minimum: 1, maximum: 16, description: 'Total guests in the party' },
+      rooms: { type: 'integer', minimum: 1, maximum: 9, description: 'Rooms of the single room type (ignored with items)' },
       items: roomItems,
       name: { type: 'string', description: 'Guest’s full name' },
       email: { type: ['string', 'null'], description: 'Email for the booking link, if the guest gives one' },
@@ -388,8 +388,8 @@ const WEB_START_BOOKING: FunctionToolSpec = {
       room_type_id: { type: ['string', 'null'], description: 'room_type_id from check_availability (null when items lists several room types)' },
       check_in: date('Arrival date'),
       check_out: date('Departure date'),
-      guests,
-      rooms,
+      guests: { ...guests, description: 'Total guests in the party' },
+      rooms: { ...rooms, description: 'Rooms of the single room type (ignored with items)' },
       items: roomItems,
     },
     ['property_id', 'room_type_id', 'check_in', 'check_out', 'guests', 'rooms', 'items']
@@ -630,7 +630,7 @@ const WEB_CHECKOUT_RULES = [
 
 /** Booking different room types together (start_booking and request_booking take `items`). */
 const MULTI_ROOM_RULE =
-  '- Different room types in one booking (for example a King for the parents and a Twin for the kids): check_availability for the whole party, then pass items with each room_type_id and its room count (room_type_id null). Read back each room type, the dates and the combined total first.';
+  '- Different room types in one booking (for example a King for the parents and a Twin for the kids): check_availability for the whole party, then pass items with each room_type_id and its room count (room_type_id null); guests is the whole party. Read back every room type, the dates and the combined total first. It is one booking with one confirmation code.';
 
 /** Page updates the browser sends while the guest moves around the site. */
 const PAGE_UPDATE_RULE = '- Messages starting with [Page] say what is on the guest’s screen right now. Use them to stay in step; don’t read them out.';
