@@ -7,20 +7,29 @@ import { isStripeConfigured, getStripe } from '@/lib/stripe';
 import { sendBookingConfirmation } from '@/server/email';
 import { handleRoute, parseJson } from '@/server/http';
 import { badRequest, unauthorized } from '@/server/errors';
-import { confirmationEmailAllowed, confirmPayAtProperty, createBooking } from '@/server/services/bookings';
+import { MAX_RESERVATION_LINES, MAX_RESERVATION_ROOMS } from '@/lib/booking-lines';
+import { confirmationEmailAllowed, confirmReservationPayAtProperty, createReservation } from '@/server/services/bookings';
 
-const createBookingSchema = z.object({
-  propertyId: z.string().min(1),
-  roomTypeId: z.string().min(1),
-  checkIn: z.string().transform((v) => toDateString(v)),
-  checkOut: z.string().transform((v) => toDateString(v)),
-  guests: z.coerce.number().int().min(1).max(40),
-  rooms: z.coerce.number().int().min(1).max(9).default(1),
-  notes: z.string().max(1000).optional().nullable(),
-  // 'pay_at_property' (default) or 'stripe'. Any client-sent price is ignored:
-  // the total is always computed on the server from the rate calendar.
-  paymentMethod: z.enum(['pay_at_property', 'stripe']).default('pay_at_property'),
-});
+const createBookingSchema = z
+  .object({
+    propertyId: z.string().min(1),
+    // One room type (roomTypeId + rooms), or several for the same stay (lines).
+    roomTypeId: z.string().min(1).optional(),
+    rooms: z.coerce.number().int().min(1).max(MAX_RESERVATION_ROOMS).default(1),
+    lines: z
+      .array(z.object({ roomTypeId: z.string().min(1), rooms: z.coerce.number().int().min(1).max(MAX_RESERVATION_ROOMS) }))
+      .min(1)
+      .max(MAX_RESERVATION_LINES)
+      .optional(),
+    checkIn: z.string().transform((v) => toDateString(v)),
+    checkOut: z.string().transform((v) => toDateString(v)),
+    guests: z.coerce.number().int().min(1).max(40),
+    notes: z.string().max(1000).optional().nullable(),
+    // 'pay_at_property' (default) or 'stripe'. Any client-sent price is ignored:
+    // the total is always computed on the server from the rate calendar.
+    paymentMethod: z.enum(['pay_at_property', 'stripe']).default('pay_at_property'),
+  })
+  .refine((v) => v.lines || v.roomTypeId, { message: 'Choose a room.', path: ['roomTypeId'] });
 
 export const POST = handleRoute(async (request: NextRequest) => {
   const session = await auth();
@@ -38,18 +47,21 @@ export const POST = handleRoute(async (request: NextRequest) => {
   }
 
   const isStripe = input.paymentMethod === 'stripe';
-  const booking = await createBooking({
+  const bookings = await createReservation({
     userId: user.id,
     propertyId: input.propertyId,
-    roomTypeId: input.roomTypeId,
+    lines: input.lines ?? [{ roomTypeId: input.roomTypeId!, rooms: input.rooms }],
     checkIn: input.checkIn,
     checkOut: input.checkOut,
     guests: input.guests,
-    rooms: input.rooms,
     notes: input.notes,
     paymentStatus: isStripe ? 'AWAITING_PAYMENT' : 'PAY_AT_PROPERTY',
     createdVia: isStripe ? 'Booked online — awaiting card payment' : 'Booked online — pay at property',
   });
+  const [lead] = bookings;
+  const rooms = bookings.reduce((s, b) => s + b.rooms, 0);
+  const total = bookings.reduce((s, b) => s + Number(b.totalPrice), 0);
+  const lineSummary = bookings.map((b) => ({ id: b.id, code: b.code, roomTypeId: b.roomTypeId, roomTypeName: b.roomType.name, rooms: b.rooms, guests: b.guests, totalPrice: Number(b.totalPrice) }));
 
   if (isStripe) {
     const stripe = getStripe();
@@ -59,47 +71,49 @@ export const POST = handleRoute(async (request: NextRequest) => {
       mode: 'payment',
       payment_method_types: ['card'],
       customer_email: user.email,
-      line_items: [
-        {
-          price_data: {
-            currency: 'usd',
-            product_data: {
-              name: `${booking.property.name} — ${booking.roomType.name}`,
-              description: `${input.checkIn} → ${input.checkOut}, ${input.rooms} room(s), ${input.guests} guest(s)`,
-            },
-            unit_amount: Math.round(Number(booking.totalPrice) * 100),
+      // One line per room type; the guest pays for the whole reservation at once.
+      line_items: bookings.map((b) => ({
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: `${b.property.name} — ${b.roomType.name}`,
+            description: `${input.checkIn} → ${input.checkOut}, ${b.rooms} room(s), ${b.guests} guest(s)`,
           },
-          quantity: 1,
+          unit_amount: Math.round(Number(b.totalPrice) * 100),
         },
-      ],
-      metadata: { bookingId: booking.id },
-      success_url: `${siteUrl}/bookings/${booking.id}?payment=success`,
-      cancel_url: `${siteUrl}/bookings/${booking.id}?payment=cancelled`,
+        quantity: 1,
+      })),
+      // bookingId is the lead booking; bookingIds lists every line of the reservation.
+      metadata: { bookingId: lead.id, bookingIds: bookings.map((b) => b.id).join(',') },
+      success_url: `${siteUrl}/bookings/${lead.id}?payment=success`,
+      cancel_url: `${siteUrl}/bookings/${lead.id}?payment=cancelled`,
     });
-    await prisma.booking.update({ where: { id: booking.id }, data: { stripeCheckoutSessionId: checkoutSession.id } });
+    await prisma.booking.updateMany({ where: { id: { in: bookings.map((b) => b.id) } }, data: { stripeCheckoutSessionId: checkoutSession.id } });
     return NextResponse.json({
       success: true,
       requiresPayment: true,
       checkoutUrl: checkoutSession.url,
-      booking: { id: booking.id, code: booking.code, status: booking.status },
+      booking: { id: lead.id, code: lead.code, status: lead.status },
+      lines: lineSummary,
     });
   }
 
   // Pay-at-property bookings are confirmed instantly — the guest is told so.
-  const confirmed = await confirmPayAtProperty(booking.id);
+  const [confirmed] = await confirmReservationPayAtProperty(bookings.map((b) => b.id));
 
   // Accounts aren't email-verified: a handful of confirmations per hour is plenty for a real guest.
   if (await confirmationEmailAllowed(user.id)) await sendBookingConfirmation({
     to: user.email,
     guestName: `${user.firstName} ${user.lastName}`.trim() || user.email,
-    propertyName: booking.property.name,
-    roomTypeName: booking.roomType.name,
+    propertyName: lead.property.name,
+    roomTypeName: lead.roomType.name,
+    lines: bookings.map((b) => ({ roomTypeName: b.roomType.name, rooms: b.rooms })),
     checkIn: input.checkIn,
     checkOut: input.checkOut,
     guests: input.guests,
-    rooms: input.rooms,
-    totalPrice: Number(booking.totalPrice).toFixed(2),
-    bookingId: booking.code ?? booking.id,
+    rooms,
+    totalPrice: total.toFixed(2),
+    bookingId: lead.code ?? lead.id,
     paymentStatus: 'PAY_AT_PROPERTY',
   });
 
@@ -107,14 +121,15 @@ export const POST = handleRoute(async (request: NextRequest) => {
     success: true,
     requiresPayment: false,
     booking: {
-      id: booking.id,
-      code: booking.code,
-      checkIn: booking.checkIn,
-      checkOut: booking.checkOut,
+      id: lead.id,
+      code: lead.code,
+      checkIn: lead.checkIn,
+      checkOut: lead.checkOut,
       status: confirmed.status,
-      totalPrice: Number(booking.totalPrice),
+      totalPrice: total,
       paymentStatus: 'PAY_AT_PROPERTY',
     },
+    lines: lineSummary,
   });
 });
 

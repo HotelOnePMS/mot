@@ -59,6 +59,7 @@ export async function getGuestBooking(actor: Actor, bookingId: string) {
   const { stripeCheckoutSessionId: _s, stripePaymentIntentId: _p, ...rest } = booking;
   return {
     ...rest,
+    reservation: await reservationFor(booking),
     code: booking.code ?? booking.id.slice(-8).toUpperCase(),
     checkIn,
     checkOut,
@@ -71,6 +72,29 @@ export async function getGuestBooking(actor: Actor, bookingId: string) {
     canModifyCheckOut: (upcoming || booking.status === 'CHECKED_IN') && today < checkOut,
     canModify: (upcoming || booking.status === 'CHECKED_IN') && today < checkOut,
     cancellationDeadline: policy.deadlineLabel,
+  };
+}
+
+/**
+ * A multi-room-type reservation as the guest sees it: the code they were
+ * given and every room type in it (this one included), or null for a
+ * single booking. Each room type is still its own booking: it can be
+ * changed or cancelled on its own.
+ */
+async function reservationFor(b: { id: string; groupCode: string | null; userId: string }) {
+  if (!b.groupCode) return null;
+  const lines = await prisma.booking.findMany({
+    where: { groupCode: b.groupCode, userId: b.userId },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, code: true, status: true, rooms: true, guests: true, totalPrice: true, roomType: { select: { name: true } } },
+  });
+  const live = lines.filter((l) => l.status !== 'CANCELLED' && l.status !== 'NO_SHOW');
+  return {
+    code: b.groupCode,
+    totalPrice: live.reduce((s, l) => s + Number(l.totalPrice), 0),
+    rooms: live.reduce((s, l) => s + l.rooms, 0),
+    guests: live.reduce((s, l) => s + l.guests, 0),
+    lines: lines.map((l) => ({ id: l.id, code: l.code, status: l.status, rooms: l.rooms, guests: l.guests, totalPrice: Number(l.totalPrice), roomTypeName: l.roomType.name, current: l.id === b.id })),
   };
 }
 

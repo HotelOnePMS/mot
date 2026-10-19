@@ -212,6 +212,7 @@ export function openApiDocument(origin: string) {
         '',
         'Booking flow: searchHotels → checkAvailability → createBookingLink (the guest opens the pre-filled checkout and confirms; the default) — or requestBooking when the guest can’t open a link (the hotel confirms), or createBooking with an API key (confirmed at once, paid at the hotel).',
         'Always confirm the hotel, room, dates, guests and total with the guest before requestBooking or createBooking.',
+        'Several room types in one booking (for example 2 King rooms and a Twin): pass items, each roomTypeId with its rooms, instead of roomTypeId and rooms. guests is the whole party.',
         '',
         'Dates are YYYY-MM-DD; prices are USD. Only createBooking needs an API key (`Authorization: Bearer ho_live_…`), which hotel owners create in the console under AI assistants.',
         limitLine(),

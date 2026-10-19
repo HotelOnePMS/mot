@@ -3,6 +3,7 @@
  * these fall back to the product domain when no public URL is configured.
  */
 import { PRODUCT_URL } from '@/config/product';
+import { setLineParams, type BookingLine } from '@/lib/booking-lines';
 import { publicSiteUrl } from '../public-url';
 
 /** Absolute URL for a path on this deployment (publicSiteUrl(), else the product domain). */
@@ -23,6 +24,8 @@ export interface CheckoutStay {
   checkOut: string;
   guests: number;
   rooms: number;
+  /** Several room types booked together (then `roomTypeId` and `rooms` are ignored). */
+  items?: BookingLine[];
 }
 
 /** Optional guest details the checkout page pre-fills (guestName, guestEmail, guestPhone). */
@@ -35,10 +38,12 @@ export interface CheckoutGuest {
 /**
  * Relative path of the pre-filled checkout, `/properties/{id}/book?roomTypeId=…&checkIn=…&checkOut=…&guests=…&rooms=…`
  * (exactly what the guest voice tool `start_booking` opens), plus optional
- * guest prefill parameters.
+ * guest prefill parameters. Several room types use `items=<id>:<rooms>,…`
+ * in place of `roomTypeId`.
  */
 export function checkoutPath(propertyId: string, stay: CheckoutStay, guest?: CheckoutGuest): string {
   const q = new URLSearchParams({ roomTypeId: stay.roomTypeId, checkIn: stay.checkIn, checkOut: stay.checkOut, guests: String(stay.guests), rooms: String(stay.rooms) });
+  if (stay.items && stay.items.length > 1) setLineParams(q, stay.items);
   if (guest?.name) q.set('guestName', guest.name);
   if (guest?.email) q.set('guestEmail', guest.email);
   if (guest?.phone) q.set('guestPhone', guest.phone);

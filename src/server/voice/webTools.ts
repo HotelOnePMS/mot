@@ -181,17 +181,35 @@ export async function runWebTool(session: WebVoiceSession, name: string, raw: un
 
     case 'start_booking': {
       const a = z
-        .object({ property_id: optionalId, room_type_id: z.string().trim().min(1).max(64), check_in: isoDate, check_out: isoDate, guests: count(16), rooms: count(9) })
+        .object({
+          property_id: optionalId,
+          room_type_id: z.string().trim().min(1).max(64).nullish(),
+          check_in: isoDate,
+          check_out: isoDate,
+          guests: count(16),
+          rooms: count(9),
+          // Several room types booked together, in place of room_type_id + rooms.
+          items: z.array(z.object({ room_type_id: z.string().trim().min(1).max(64), rooms: count(9) })).max(4).nullish(),
+        })
         .parse(args);
       const h = await hotelFor(session, a.property_id);
       if ('error' in h) return h;
-      const link = await bookingLink({ propertyId: h.id, roomTypeId: a.room_type_id, checkIn: a.check_in, checkOut: a.check_out, guests: a.guests, rooms: a.rooms });
+      const link = await bookingLink({
+        propertyId: h.id,
+        roomTypeId: a.room_type_id || undefined,
+        items: a.items?.length ? a.items.map((i) => ({ roomTypeId: i.room_type_id, rooms: i.rooms })) : undefined,
+        checkIn: a.check_in,
+        checkOut: a.check_out,
+        guests: a.guests,
+        rooms: a.rooms,
+      });
       const s = link.summary;
+      const room = s.items.length > 1 ? s.items.map((i) => `${i.rooms} × ${i.roomType.name}`).join(', ') : s.roomType.name;
       return {
         opened: true,
         url: pathOf(link.url),
         hotel: s.hotel.name,
-        room: s.roomType.name,
+        room,
         check_in: s.checkIn,
         check_out: s.checkOut,
         nights: s.nights,
@@ -199,7 +217,7 @@ export async function runWebTool(session: WebVoiceSession, name: string, raw: un
         rooms: s.rooms,
         total: s.total,
         currency: s.currency,
-        say: `I’ve opened the checkout for the ${s.roomType.name} on your screen.`,
+        say: s.items.length > 1 ? `I’ve opened the checkout for ${room} on your screen.` : `I’ve opened the checkout for the ${s.roomType.name} on your screen.`,
       };
     }
 

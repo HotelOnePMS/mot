@@ -329,8 +329,11 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
         output.url.startsWith("/")
       ) {
         const url = output.url;
+        // Several room types open the checkout link itself; one opens through the hotel page.
         const select =
           call.name === "start_booking" &&
+          typeof args.room_type_id === "string" &&
+          !(Array.isArray(args.items) && args.items.length > 1) &&
           here.kind === "hotel" &&
           here.propertyId === hotelId
             ? here.actions?.selectRoom

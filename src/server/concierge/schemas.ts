@@ -23,6 +23,22 @@ const stay = {
   rooms: rooms.default(1).describe('Rooms needed (1–9)'),
 };
 
+/** Several room types for the same stay, in place of roomTypeId + rooms. */
+const items = z
+  .array(
+    z.object({
+      roomTypeId: id('room_type_id from checkAvailability'),
+      rooms: rooms.describe('Rooms of this type (1–9)'),
+    })
+  )
+  .min(1)
+  .max(4)
+  .optional()
+  .describe(
+    'To book several room types together (for example 2 King rooms and a Twin), list each with its room count instead of roomTypeId and rooms. The party (guests) is shared across them. At most 4 room types and 9 rooms in all.'
+  );
+const roomTypeId = z.string().trim().min(1).max(64).optional().describe('room_type_id from checkAvailability (or use items for several room types)');
+
 const fullName = z
   .string()
   .trim()
@@ -49,8 +65,9 @@ export const conciergeSchemas = {
   }),
   bookingLink: z.object({
     propertyId: id('Hotel id from searchHotels'),
-    roomTypeId: id('room_type_id from checkAvailability'),
+    roomTypeId,
     ...stay,
+    items,
     guest: z
       .object({
         name: optionalText(120).describe('Guest’s full name, to pre-fill checkout'),
@@ -62,8 +79,9 @@ export const conciergeSchemas = {
   }),
   requestBooking: z.object({
     propertyId: id('Hotel id from searchHotels'),
-    roomTypeId: id('room_type_id from checkAvailability'),
+    roomTypeId,
     ...stay,
+    items,
     name: z.string().trim().min(1).max(120).describe('Guest’s full name'),
     email: z.string().trim().toLowerCase().email().max(200).nullish().describe('Email for the booking link (email or phone is required)'),
     phone: optionalText(40).describe('Callback number (email or phone is required)'),
@@ -72,8 +90,9 @@ export const conciergeSchemas = {
   }),
   createBooking: z.object({
     propertyId: id('Hotel id from searchHotels'),
-    roomTypeId: id('room_type_id from checkAvailability'),
+    roomTypeId,
     ...stay,
+    items,
     guest: z
       .object({
         name: fullName.describe('Guest’s first and last name'),

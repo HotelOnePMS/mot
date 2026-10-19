@@ -29,6 +29,8 @@ export interface BookingEmailData {
   guestName: string;
   propertyName: string;
   roomTypeName: string;
+  /** Several room types in one reservation: each with its room count (roomTypeName is then ignored). */
+  lines?: { roomTypeName: string; rooms: number }[];
   /** Calendar day, YYYY-MM-DD. */
   checkIn: string;
   /** Calendar day, YYYY-MM-DD. */
@@ -94,7 +96,9 @@ function confirmationContent(data: BookingEmailData) {
   const nights = nightsBetween(data.checkIn, data.checkOut);
   const details: Detail[] = [
     { label: 'Booking reference', value: data.bookingId },
-    { label: 'Room', value: `${data.roomTypeName}${data.rooms > 1 ? ` × ${data.rooms}` : ''}` },
+    data.lines && data.lines.length > 1
+      ? { label: 'Rooms', value: data.lines.map((l) => `${l.roomTypeName} × ${l.rooms}`).join(', ') }
+      : { label: 'Room', value: `${data.roomTypeName}${data.rooms > 1 ? ` × ${data.rooms}` : ''}` },
     { label: 'Check-in', value: formatDay(data.checkIn) },
     { label: 'Check-out', value: formatDay(data.checkOut) },
     ...(nights ? [{ label: 'Length of stay', value: plural(nights, 'night') }] : []),

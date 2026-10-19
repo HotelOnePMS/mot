@@ -115,7 +115,7 @@ const TOOLS: ToolDef[] = [
     op: 'checkAvailability',
     annotations: READ,
     describe: ({ hotel }) =>
-      `Live availability and exact prices (USD) for every room type ${at(hotel)} for given dates and party. Suggest an option that is available and fits the party (fits_party), then use its room_type_id with get_booking_link.`,
+      `Live availability and exact prices (USD) for every room type ${at(hotel)} for given dates and party. Suggest an option that is available and fits the party (fits_party), then use its room_type_id with get_booking_link. A party that wants different room types together (say a King and a Twin) can book them in one go: pass items with each room_type_id and its room count.`,
     run: async (args, ctx) => ({ ...(await checkAvailability({ ...args, propertyId: property(args, ctx) } as Parameters<typeof checkAvailability>[0])) }),
   },
   {
