@@ -1,6 +1,7 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
+  allocateCents,
   bookingPaymentStatus,
   cancellationPolicyText,
   effectivePolicy,
@@ -88,4 +89,12 @@ test('policy text depends on the policy and never promises a dispute-free bookin
   assert.match(texts[1], /deposit of 2 nights/);
   assert.match(cancellationPolicyText({ policy: 'DEPOSIT', depositNights: 1 }), /deposit of 1 night /);
   for (const t of texts) assert.doesNotMatch(t, /no disputes|chargeback.free|guaranteed/i);
+});
+
+test('one payment for several room types is shared out in whole cents that add up', () => {
+  assert.deepEqual(allocateCents(30000, [100, 200]), [10000, 20000]);
+  assert.deepEqual(allocateCents(10000, [1, 1, 1]), [3334, 3333, 3333]);
+  assert.deepEqual(allocateCents(101, [0, 0]), [51, 50]);
+  assert.deepEqual(allocateCents(0, [5, 7]), [0, 0]);
+  assert.deepEqual(allocateCents(500, []), []);
 });
