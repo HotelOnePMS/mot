@@ -176,6 +176,9 @@ export async function runWebTool(session: WebVoiceSession, name: string, raw: un
       return {
         opened: true,
         url: pathOf(link.url),
+        // What confirm_booking takes, so the model names exactly what it books.
+        property_id: s.hotel.id,
+        room_type_id: s.roomType.id,
         hotel: s.hotel.name,
         room: s.roomType.name,
         check_in: s.checkIn,

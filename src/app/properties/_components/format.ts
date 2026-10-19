@@ -20,3 +20,8 @@ export function shiftDay(day: string, n: number): string {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 }
+
+/** A calendar day (YYYY-MM-DD) as links carry them; anything else in a URL is not a date. */
+export function isDay(v: string | null | undefined): v is string {
+  return !!v && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T12:00:00Z`));
+}

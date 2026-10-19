@@ -35,6 +35,9 @@ import {
 import {
   VoicePageRegistryContext,
   pageFromPath,
+  voiceText,
+  type VoiceBookingRequest,
+  type VoiceOrder,
   type VoicePage,
   type VoicePageRegistry,
   type VoiceStay,
@@ -76,6 +79,15 @@ const PROPERTY_TOOLS = new Set([
   "leave_message",
   "use_skill",
 ]);
+/** A page change the voice started (start_booking, open_hotel) counts as still on its way for at most this long. */
+const NAV_TIMEOUT = 15_000;
+/** Ids and calendar days as the agent may see them (anything else in a URL is left out). */
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+/** How long confirm_booking waits for the guest's words when they answered a read-back but their transcript lags. */
+const ANSWER_GRACE = 1_500;
+/** Consent state with nothing heard yet (see the consent section in VoiceDock). */
+const NO_CONSENT = { order: "", toldAt: 0, agentAfter: 0, guestAt: 0 };
 
 interface VoiceStatusResponse {
   provider: "openai" | "elevenlabs";
@@ -121,9 +133,158 @@ export function useVoiceDock(): VoiceDockApi | null {
 const text = (v: unknown) =>
   typeof v === "string" && v.trim() ? v.trim() : null;
 
-/** One short sentence for the agent about what is on the guest's screen. */
+/** A whole number from 1 to max (tool arguments may arrive as numbers or digit strings). */
+function count(v: unknown, max: number): number | null {
+  const n = typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : v;
+  return typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= max
+    ? n
+    : null;
+}
+
+/** What confirm_booking was asked to book, or null when it didn't say. */
+function bookingRequest(
+  args: Record<string, unknown>,
+): Omit<VoiceBookingRequest, "guestConfirmed"> | null {
+  const roomTypeId = text(args.room_type_id);
+  const checkIn = text(args.check_in);
+  const checkOut = text(args.check_out);
+  const guests = count(args.guests, 40);
+  const rooms = count(args.rooms, 9);
+  if (!roomTypeId || !checkIn || !checkOut || !guests || !rooms) return null;
+  return {
+    propertyId: text(args.property_id),
+    roomTypeId,
+    checkIn,
+    checkOut,
+    guests,
+    rooms,
+  };
+}
+
+/** Is `want` the order on screen? (property_id may be left out: a room type belongs to one hotel.) */
+function sameOrder(
+  o: VoiceOrder,
+  want: Omit<VoiceBookingRequest, "guestConfirmed">,
+): boolean {
+  return (
+    (!want.propertyId || want.propertyId === o.propertyId) &&
+    want.roomTypeId === o.roomTypeId &&
+    want.checkIn === o.checkIn &&
+    want.checkOut === o.checkOut &&
+    want.guests === o.guests &&
+    want.rooms === o.rooms
+  );
+}
+
+/** The order on screen, for the agent to read back (hotel text made safe, ids and dates only if well-formed). */
+function orderFacts(o: VoiceOrder | null | undefined) {
+  if (!o) return undefined;
+  return {
+    hotel: voiceText(o.hotel, 80) || null,
+    room: voiceText(o.room, 80) || null,
+    property_id: SAFE_ID.test(o.propertyId) ? o.propertyId : null,
+    room_type_id: SAFE_ID.test(o.roomTypeId) ? o.roomTypeId : null,
+    check_in: ISO_DAY.test(o.checkIn) ? o.checkIn : null,
+    check_out: ISO_DAY.test(o.checkOut) ? o.checkOut : null,
+    guests: o.guests,
+    rooms: o.rooms,
+    total: o.total ?? null,
+    currency: o.currency ?? null,
+  };
+}
+
+/** The ids confirm_booking takes for the checkout on screen, when they are well-formed. */
+function orderIds(o: VoiceOrder | null | undefined): string {
+  const f = orderFacts(o);
+  if (
+    !f?.property_id ||
+    !f.room_type_id ||
+    !f.check_in ||
+    !f.check_out ||
+    !count(f.guests, 40) ||
+    !count(f.rooms, 9)
+  )
+    return "";
+  return ` To book it, confirm_booking takes property_id ${f.property_id}, room_type_id ${f.room_type_id}, check_in ${f.check_in}, check_out ${f.check_out}, guests ${f.guests}, rooms ${f.rooms}.`;
+}
+
+/**
+ * An order as consent tracks it: hotel, room, dates, party and total. Null
+ * while it isn't fully known (no checkout, or its price still loading).
+ */
+function orderKey(o: {
+  propertyId: unknown;
+  roomTypeId: unknown;
+  checkIn: unknown;
+  checkOut: unknown;
+  guests: unknown;
+  rooms: unknown;
+  total: unknown;
+}): string | null {
+  if (typeof o.total !== "number" || !o.propertyId || !o.roomTypeId)
+    return null;
+  return JSON.stringify([
+    o.propertyId,
+    o.roomTypeId,
+    o.checkIn,
+    o.checkOut,
+    Number(o.guests),
+    Number(o.rooms),
+    o.total,
+  ]);
+}
+
+/** The order on a checkout page, once priced. */
+function pageOrderKey(p: VoicePage): string | null {
+  return p.kind === "checkout" && p.order
+    ? orderKey({ ...p.order, total: p.order.total ?? null })
+    : null;
+}
+
+/** Does `want` (a URL the voice opened) show in the address bar now? Same path and the same values for its query. */
+function sameUrl(want: string, at: Location): boolean {
+  let u: URL;
+  try {
+    u = new URL(want, at.origin);
+  } catch {
+    return false;
+  }
+  const trim = (p: string) => p.replace(/\/+$/, "") || "/";
+  if (trim(u.pathname) !== trim(at.pathname)) return false;
+  const have = new URLSearchParams(at.search);
+  for (const [k, v] of u.searchParams) if (have.get(k) !== v) return false;
+  return true;
+}
+
+/**
+ * The page the dock acts on: the last one registered — unless the address
+ * bar has already moved to a different page, whose registration lags the
+ * route change by an effect. Then only what the path says is known (no actions).
+ */
+function resolvePage(
+  registered: VoicePage | undefined,
+  fromPath: VoicePage,
+): VoicePage {
+  if (!registered) return fromPath;
+  const moved =
+    (fromPath.kind !== "other" && registered.kind !== fromPath.kind) ||
+    (!!registered.propertyId &&
+      !!fromPath.propertyId &&
+      registered.propertyId !== fromPath.propertyId);
+  if (moved) return fromPath;
+  return {
+    ...registered,
+    propertyId: registered.propertyId ?? fromPath.propertyId,
+  };
+}
+
+/**
+ * One short sentence for the agent about what is on the guest's screen. Page
+ * text (hotel names, taglines, room names, anything from the URL) goes
+ * through voiceText: it is data, and must never read like a [Page] update.
+ */
 function describePage(page: VoicePage, s: DockSession): string {
-  const name = page.propertyName?.trim();
+  const name = voiceText(page.propertyName, 80);
   const fallback: Record<VoicePage["kind"], string> = {
     home: `the ${PRODUCT_NAME} home page`,
     directory: "the list of hotels",
@@ -133,13 +294,18 @@ function describePage(page: VoicePage, s: DockSession): string {
     trips: "their trips (My trips)",
     other: "another page of the site",
   };
-  const place = page.summary?.trim() || fallback[page.kind];
+  const place = voiceText(page.summary, 600) || fallback[page.kind];
+  const ids = page.kind === "checkout" ? orderIds(page.order) : "";
   if (s.scope === "hotel") {
     if (page.propertyId && page.propertyId === s.propertyId)
-      return `The guest is on ${place}.`;
-    return `The guest moved to another page of the site. You still only help with ${s.name}.`;
+      return `The guest is on ${place}.${ids}`;
+    return `The guest moved to another page of the site. You still only help with ${voiceText(s.name, 80) || "this hotel"}.`;
   }
-  return `The guest is on ${place}.${page.propertyId ? ` Its property_id is ${page.propertyId}.` : ""}`;
+  const pid =
+    page.propertyId && SAFE_ID.test(page.propertyId)
+      ? ` Its property_id is ${page.propertyId}.`
+      : "";
+  return `The guest is on ${place}.${pid}${ids}`;
 }
 
 export function VoiceDock({ children }: { children: React.ReactNode }) {
@@ -154,15 +320,21 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
   const entries = React.useRef(
     new Map<string, React.MutableRefObject<VoicePage>>(),
   );
+  // Each registration (a page mounting) gets a new number, so a tool call can tell
+  // whether the page it started on is still the one on screen.
+  const generation = React.useRef(0);
+  const generations = React.useRef(new Map<string, number>());
   const [, setVersion] = React.useState(0);
   const registry = React.useMemo<VoicePageRegistry>(
     () => ({
       register(id, page) {
         entries.current.delete(id);
         entries.current.set(id, page); // last registered wins
+        generations.current.set(id, ++generation.current);
         setVersion((v) => v + 1);
       },
       unregister(id) {
+        generations.current.delete(id);
         if (entries.current.delete(id)) setVersion((v) => v + 1);
       },
       changed() {
@@ -171,23 +343,23 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
     }),
     [],
   );
-  const currentPage = React.useCallback((): VoicePage => {
-    const fromPath = pageFromPath(window.location.pathname);
-    const registered = [...entries.current.values()].at(-1)?.current;
-    if (!registered) return fromPath;
-    return {
-      ...registered,
-      propertyId: registered.propertyId ?? fromPath.propertyId,
-    };
+  const currentPage = React.useCallback(
+    (): VoicePage =>
+      resolvePage(
+        [...entries.current.values()].at(-1)?.current,
+        pageFromPath(window.location.pathname),
+      ),
+    [],
+  );
+  /** Which page is on screen right now: its registration and path (changes when the guest navigates). */
+  const pageToken = React.useCallback((): string => {
+    const id = [...entries.current.keys()].at(-1);
+    return `${id ? `${id}#${generations.current.get(id)}` : "-"}|${window.location.pathname}`;
   }, []);
-  const fromPath = pageFromPath(pathname);
-  const registered = [...entries.current.values()].at(-1)?.current;
-  const page: VoicePage = registered
-    ? {
-        ...registered,
-        propertyId: registered.propertyId ?? fromPath.propertyId,
-      }
-    : fromPath;
+  const page: VoicePage = resolvePage(
+    [...entries.current.values()].at(-1)?.current,
+    pageFromPath(pathname),
+  );
 
   // --- Where we are and what can be offered here ------------------------------
   const consolePath = isConsolePath(pathname);
@@ -234,13 +406,95 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
   const routerRef = React.useRef(router);
   routerRef.current = router;
 
+  // --- A page change the voice started, until it shows in the address bar ------
+  const pendingNav = React.useRef<{
+    url: string;
+    from: string;
+    since: number;
+  } | null>(null);
+  const navigating = React.useCallback((): boolean => {
+    const p = pendingNav.current;
+    if (!p) return false;
+    const loc = window.location;
+    // Arrived, went somewhere else instead, or gave up.
+    if (
+      sameUrl(p.url, loc) ||
+      loc.pathname + loc.search !== p.from ||
+      Date.now() - p.since > NAV_TIMEOUT
+    ) {
+      pendingNav.current = null;
+      return false;
+    }
+    return true;
+  }, []);
+
+  // --- Consent: confirm_booking books only after the guest answered a read-back ----
+  // of the order now on checkout: the agent was told that exact order (room,
+  // dates, party and total — start_booking's result or a [Page] update), spoke
+  // after that (its read-back), and the guest spoke after that. One counter
+  // orders those events; the guest's words themselves are the model's to judge.
+  const seq = React.useRef(0);
+  const consent = React.useRef({ ...NO_CONSENT });
+  /** The order on screen, when known: if it changed, earlier answers no longer count. */
+  const noteOrder = React.useCallback((key: string | null) => {
+    const c = consent.current;
+    if (!key || key === c.order) return; // unknown yet (loading): nothing changed
+    consent.current = {
+      order: key,
+      toldAt: 0,
+      agentAfter: 0,
+      guestAt: c.guestAt,
+    };
+  }, []);
+  /** The agent now knows this order (start_booking returned it, or a [Page] update named it). */
+  const toldAgent = React.useCallback(
+    (key: string | null) => {
+      if (!key) return;
+      noteOrder(key);
+      const c = consent.current;
+      if (!c.toldAt) c.toldAt = ++seq.current;
+    },
+    [noteOrder],
+  );
+  const onTranscript = React.useCallback(
+    (role: Caption["role"]) => {
+      // A change not noticed yet still comes before this line (not while a page the voice
+      // opened is on its way: the one still on screen is about to go).
+      if (!navigating()) noteOrder(pageOrderKey(currentPage()));
+      const n = ++seq.current;
+      const c = consent.current;
+      if (role === "user") c.guestAt = n;
+      else if (c.toldAt && !c.agentAfter) c.agentAfter = n;
+    },
+    [currentPage, navigating, noteOrder],
+  );
+  /** The agent spoke after it was told the current order (its read-back), and the guest answered after that. */
+  const guestConfirmed = React.useCallback(() => {
+    const c = consent.current;
+    return (
+      !!c.order &&
+      c.toldAt > 0 &&
+      c.agentAfter > c.toldAt &&
+      c.guestAt > c.agentAfter
+    );
+  }, []);
+  /** The agent read the order back and the guest hasn't been heard since (their words may still be on the way). */
+  const awaitingAnswer = React.useCallback(() => {
+    const c = consent.current;
+    return (
+      !!c.order &&
+      c.toldAt > 0 &&
+      c.agentAfter > c.toldAt &&
+      c.guestAt < c.agentAfter
+    );
+  }, []);
+
   const onToolCall = React.useCallback(
     async (
       call: VoiceToolCall,
       { token }: { token: string },
     ): Promise<unknown> => {
       const s = sessionRef.current;
-      const here = currentPage();
       let args: Record<string, unknown>;
       try {
         const parsed = JSON.parse(call.arguments || "{}");
@@ -254,39 +508,89 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
         call.name === "fill_guest_details" ||
         call.name === "confirm_booking"
       ) {
+        // The guest answered the read-back but their words haven't arrived yet (speech
+        // recognition can trail the model): give them a moment before deciding.
+        if (call.name === "confirm_booking" && !navigating()) {
+          noteOrder(pageOrderKey(currentPage()));
+          const until = Date.now() + ANSWER_GRACE;
+          while (
+            awaitingAnswer() &&
+            Date.now() < until &&
+            sessionRef.current?.startedAt === s?.startedAt
+          )
+            await new Promise((r) => setTimeout(r, 100));
+        }
+        // A page the voice just opened isn't on screen yet: don't act on the one it replaces.
+        if (navigating())
+          return {
+            error:
+              "The page you opened is still loading on the guest’s screen — wait a moment, then try again.",
+          };
+        const here = currentPage();
         const checkout =
           here.kind === "checkout" &&
           (s?.scope !== "hotel" || here.propertyId === s.propertyId);
-        const action =
-          call.name === "fill_guest_details"
-            ? here.actions?.fillGuest
-            : here.actions?.confirmBooking;
         if (!checkout)
           return {
             error:
               "Checkout isn’t open on the guest’s screen — call start_booking first.",
           };
-        if (!action)
+        const loading = {
+          error: "Checkout is still loading — try again in a moment.",
+        };
+        if (call.name === "fill_guest_details") {
+          const fill = here.actions?.fillGuest;
+          if (!fill) return loading;
+          return fill({
+            name: text(args.name),
+            phone: text(args.phone),
+            notes: text(args.notes),
+          });
+        }
+        const confirm = here.actions?.confirmBooking;
+        if (!confirm) return loading;
+        const want = bookingRequest(args);
+        if (!want)
           return {
-            error: "Checkout is still loading — try again in a moment.",
+            ok: false,
+            error:
+              "Nothing was booked: say what you are booking. confirm_booking needs the property_id, room_type_id, check_in, check_out, guests and rooms of the checkout on screen (from start_booking or the latest [Page] update).",
+            on_screen: orderFacts(here.order),
           };
-        if (call.name === "confirm_booking")
-          return here.actions!.confirmBooking!();
-        return here.actions!.fillGuest!({
-          name: text(args.name),
-          phone: text(args.phone),
-          notes: text(args.notes),
-        });
+        noteOrder(pageOrderKey(here));
+        const guestSaidYes = guestConfirmed();
+        // The checkout checks the rest, in its own order: a different order than its URL is refused
+        // (naming what's on screen), then price, sign-in and payment — which book nothing — and
+        // only then the guest's yes.
+        const result = await confirm({ ...want, guestConfirmed: guestSaidYes });
+        // A yes books once: another booking needs a new read-back and a new yes.
+        if (result.ok)
+          consent.current = {
+            ...NO_CONSENT,
+            guestAt: consent.current.guestAt,
+          };
+        if (
+          !result.ok &&
+          result.needs === "guest confirmation" &&
+          here.order &&
+          sameOrder(here.order, want)
+        )
+          return { ...result, on_screen: orderFacts(here.order) };
+        return result;
       }
 
+      // The call and the page this tool started on: what it may change on screen afterwards.
+      const startedAt = s?.startedAt;
+      const before = pageToken();
+      const at = currentPage();
       // "This hotel" means the one on screen, for the concierge.
       if (
         s?.scope === "global" &&
         PROPERTY_TOOLS.has(call.name) &&
         !text(args.property_id) &&
-        here.propertyId
+        at.propertyId
       )
-        args = { ...args, property_id: here.propertyId };
+        args = { ...args, property_id: at.propertyId };
       const res = await fetch("/api/voice/tool", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -304,7 +608,12 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
       const output = body.output ?? {};
       if (output.error) return output;
 
-      // Keep the screen in step with the conversation.
+      // Keep the screen in step with the conversation — only for this call, and only
+      // on the page the tool started on (the guest may have moved on meanwhile).
+      if (sessionRef.current?.startedAt !== startedAt || !liveRef.current)
+        return output;
+      const samePage = pageToken() === before;
+      const here = currentPage();
       const hotelId =
         s?.scope === "hotel" ? s.propertyId : text(args.property_id);
       const stay: VoiceStay | null =
@@ -319,6 +628,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
       if (
         call.name === "check_availability" &&
         stay &&
+        samePage &&
         here.kind === "hotel" &&
         here.propertyId === hotelId
       )
@@ -328,6 +638,13 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
         typeof output.url === "string" &&
         output.url.startsWith("/")
       ) {
+        if (!samePage)
+          return {
+            ...output,
+            opened: false,
+            say: undefined,
+            note: "The guest went to another page while this was loading, so nothing was opened on their screen. Ask whether they still want it before opening it again.",
+          };
         const url = output.url;
         const select =
           call.name === "start_booking" &&
@@ -335,18 +652,39 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
           here.propertyId === hotelId
             ? here.actions?.selectRoom
             : undefined;
-        // A beat later, so the agent's "I've opened it" lines up with the page changing.
-        setTimeout(
-          () =>
-            select && stay
-              ? select(String(args.room_type_id), stay)
-              : routerRef.current.push(url),
-          500,
-        );
+        // Until the address bar shows `url`, checkout tools wait (see navigating()).
+        pendingNav.current = {
+          url,
+          from: window.location.pathname + window.location.search,
+          since: Date.now(),
+        };
+        // The agent has this order (room, dates, party, total) to read back.
+        if (call.name === "start_booking")
+          toldAgent(
+            orderKey({
+              propertyId: output.property_id,
+              roomTypeId: output.room_type_id,
+              checkIn: output.check_in,
+              checkOut: output.check_out,
+              guests: output.guests,
+              rooms: output.rooms,
+              total: output.total,
+            }),
+          );
+        if (select && stay) select(String(args.room_type_id), stay);
+        else routerRef.current.push(url);
       }
       return output;
     },
-    [currentPage],
+    [
+      awaitingAnswer,
+      currentPage,
+      guestConfirmed,
+      navigating,
+      noteOrder,
+      pageToken,
+      toldAgent,
+    ],
   );
 
   // Mirrors the call's state so the options below can follow it in the same render.
@@ -366,6 +704,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
     audience: "guest",
     onToolCall,
     onStateChange: setCallState,
+    onTranscript,
     preload: warm,
   });
   const live =
@@ -395,21 +734,38 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
   const startRef = React.useRef(voice.start);
   startRef.current = voice.start;
   const lastContext = React.useRef("");
+  // End call closes the panel a beat later; a new call started in that beat cancels it.
+  const closeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelClose = React.useCallback(() => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    closeTimer.current = null;
+  }, []);
+  // When a minimised call ended with focus in the dock: the launcher takes focus once it mounts.
+  const focusLauncherAt = React.useRef(0);
   const begin = React.useCallback(() => {
+    cancelClose();
     setOpen(true);
     setWarm(true);
     if (liveRef.current || !targetRef.current) return;
     setSession({ ...targetRef.current, startedAt: Date.now() });
     lastContext.current = "";
+    pendingNav.current = null;
+    consent.current = { ...NO_CONSENT };
+    focusLauncherAt.current = 0;
     // Straight from the click, so the microphone prompt (and iOS audio unlock) see the gesture.
     void startRef.current();
-  }, []);
+  }, [cancelClose]);
 
   const minimise = () => setOpen(false);
   const end = () => {
     voice.stop();
-    setTimeout(() => setOpen(false), 300);
+    cancelClose();
+    closeTimer.current = setTimeout(() => {
+      closeTimer.current = null;
+      setOpen(false);
+    }, 300);
   };
+  React.useEffect(() => cancelClose, [cancelClose]);
 
   // Focus into the panel when it opens; back to the launcher or pill when it closes.
   React.useEffect(() => {
@@ -429,6 +785,33 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
     }
   }, [open]);
 
+  // A minimised call ended (End on the pill, or the agent or network hung up): the pill and its
+  // focused button go away, so focus moves to the launcher when it appears — unless the guest
+  // is busy elsewhere on the page.
+  const dockRef = React.useRef<HTMLDivElement>(null);
+  const focusFree = React.useCallback(() => {
+    const a = document.activeElement;
+    return !a || a === document.body || !!dockRef.current?.contains(a);
+  }, []);
+  const wasLive = React.useRef(live);
+  React.useEffect(() => {
+    const was = wasLive.current;
+    wasLive.current = live;
+    if (was && !live && !open && focusFree())
+      focusLauncherAt.current = Date.now();
+  }, [live, open, focusFree]);
+  const setLauncher = React.useCallback((el: HTMLButtonElement | null) => {
+    launcherRef.current = el;
+    const at = focusLauncherAt.current;
+    if (!el || !at) return;
+    focusLauncherAt.current = 0;
+    // Only right after that call ended (the launcher waits for the pill's exit animation).
+    if (Date.now() - at > 2500) return;
+    requestAnimationFrame(() => {
+      if (focusFree()) el.focus({ preventScroll: true });
+    });
+  }, [focusFree]);
+
   // A problem while minimised: show it.
   React.useEffect(() => {
     if (voice.error && session) setOpen(true);
@@ -445,17 +828,33 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
 
   // --- Tell the agent where the guest is ------------------------------------------
   const contextLine = session && live ? describePage(page, session) : "";
+  // The checkout order that line tells the agent about (for consent), if it names one.
+  const contextOrder =
+    session &&
+    live &&
+    (session.scope === "global" || page.propertyId === session.propertyId)
+      ? pageOrderKey(page)
+      : null;
   const sendContext = voice.sendContext;
   React.useEffect(() => {
     if (voice.state !== "live" || !contextLine) return;
     // Let the page settle (data loads after navigation) before speaking up.
     const timer = setTimeout(() => {
-      if (contextLine === lastContext.current) return;
-      lastContext.current = contextLine;
-      sendContext(`[Page] ${contextLine}`);
+      if (contextLine !== lastContext.current) {
+        lastContext.current = contextLine;
+        sendContext(`[Page] ${contextLine}`);
+      }
+      if (!navigating()) toldAgent(contextOrder);
     }, 900);
     return () => clearTimeout(timer);
-  }, [voice.state, contextLine, sendContext]);
+  }, [
+    voice.state,
+    contextLine,
+    contextOrder,
+    sendContext,
+    toldAgent,
+    navigating,
+  ]);
 
   // --- Placement -----------------------------------------------------------------
   const [collapsed, setCollapsed] = React.useState(false);
@@ -475,6 +874,20 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
     };
   }, [pathname]);
 
+  // Phones and tablets (below lg): past the first screenful the launcher and the live pill fold into
+  // a 48px circle (the pill's End call is then in the panel), so they cover less of the page.
+  const [desktop, setDesktop] = React.useState(false);
+  React.useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const update = () => setDesktop(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  const scrollFold = collapsed && !desktop;
+  const scrollFoldNow = React.useRef(scrollFold);
+  scrollFoldNow.current = scrollFold;
+
   const showLauncher =
     !consolePath && !noLauncher && !!target && !live && !open;
   const showPill = !consolePath && live && !open;
@@ -482,13 +895,17 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
     !consolePath && open && (live || !noLauncher) && (!!session || !!target);
 
   // Keep clear of anything marked data-voice-avoid (checkout's confirm button,
-  // the hotel page's booking card; "desktop" = only from lg up): fold into a
-  // 48px circle first, then lift above what's still covered if that clears it.
+  // the hotel page's booking card; "desktop" = only from lg up), and of each
+  // control inside data-voice-avoid-controls (the hotel page's room list and
+  // stay search): fold into a 48px circle first, then lift above what's still
+  // covered if that clears it.
   const floatRef = React.useRef<HTMLDivElement>(null);
   const [lift, setLift] = React.useState(0);
   const [avoidFold, setAvoidFold] = React.useState(false);
   const liftNow = React.useRef(0);
   const foldNow = React.useRef(false);
+  // The live pill folds to its orb next to something to avoid, or for the scroll on phones.
+  const pillFolded = avoidFold || scrollFold;
   // Unfolded widths, per kind, to know when unfolding would fit again.
   const wideWidths = React.useRef({ launcher: 0, pill: 0 });
   React.useEffect(() => {
@@ -503,25 +920,43 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
         const r = el.getBoundingClientRect();
         // Unfolded width: measured while unfolded, estimated until then.
         const widths = wideWidths.current;
-        if (!foldNow.current) widths[kind] = r.width;
-        const wide = widths[kind] || (kind === "pill" ? 200 : 150);
+        if (!foldNow.current && !scrollFoldNow.current) widths[kind] = r.width;
+        // Folded for the scroll: it stays a circle, whatever it passes.
+        const wide = scrollFoldNow.current
+          ? FOLDED
+          : widths[kind] || (kind === "pill" ? 200 : 150);
         // Where it sits without a lift.
         const top = r.top + liftNow.current;
         const bottom = r.bottom + liftNow.current;
         const desktop = window.matchMedia("(min-width: 1024px)").matches;
-        const avoid = [...document.querySelectorAll<HTMLElement>("[data-voice-avoid]")]
+        const avoid = [
+          ...document.querySelectorAll<HTMLElement>(
+            "[data-voice-avoid], [data-voice-avoid-controls] :is(button, a[href], input, select, textarea)",
+          ),
+        ]
           .filter((a) => a.dataset.voiceAvoid !== "desktop" || desktop)
-          .map((a) => a.getBoundingClientRect())
-          .filter((b) => b.width > 0 && b.height > 0);
-        // A sliver of overlap (a card's padding) doesn't hide anything.
-        const hits = (left: number) =>
-          avoid.filter((b) => b.right - 12 > left && b.left + 12 < r.right && b.bottom > top && b.top < bottom);
+          // A sliver of overlap (a card's padding) doesn't hide anything; on a single control it does.
+          .map((a) => ({ b: a.getBoundingClientRect(), slack: a.hasAttribute("data-voice-avoid") ? 12 : 2 }))
+          .filter(({ b }) => b.width > 0 && b.height > 0);
+        /** What it would cover from `left` to its right edge, lifted by `up`. */
+        const hits = (left: number, up = 0) =>
+          avoid
+            .filter(({ b, slack }) => b.right - slack > left && b.left + slack < r.right && b.bottom > top - up && b.top < bottom - up)
+            .map(({ b }) => b);
         const fold = hits(r.right - wide).length > 0;
+        const left = r.right - (fold ? FOLDED : wide);
         const max = window.innerHeight * 0.5;
+        // Lift above what it covers; if that lands on the next control up (a stay search's
+        // date fields above its steppers), above that too — within half the screen.
         let need = 0;
-        for (const b of hits(r.right - (fold ? FOLDED : wide))) {
-          const clear = bottom - b.top + 12;
-          if (clear <= max) need = Math.max(need, clear); // can't clear a tall card: stay put rather than float mid-screen
+        for (let i = 0; i < 6; i++) {
+          let next = need;
+          for (const b of hits(left, need)) {
+            const clear = bottom - b.top + 12;
+            if (clear <= max) next = Math.max(next, clear); // can't clear a tall card: stay put rather than float mid-screen
+          }
+          if (next === need) break;
+          need = next;
         }
         if (fold !== foldNow.current) {
           foldNow.current = fold;
@@ -548,7 +983,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
       window.removeEventListener("resize", measure);
       ro?.disconnect();
     };
-  }, [showLauncher, showPill, collapsed, pathname]);
+  }, [showLauncher, showPill, collapsed, desktop, pathname]);
 
   // --- Words for screen readers ---------------------------------------------------
   const shown = live && session ? session : (target ?? session);
@@ -592,6 +1027,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
         {children}
         {!consolePath && (
           <div
+            ref={dockRef}
             data-voice-dock={instance}
             data-voice-session={session?.startedAt ?? ""}
             data-voice-state={voice.state}
@@ -620,7 +1056,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
                 <AnimatePresence mode="wait" initial={false}>
                   {showLauncher ? (
                     <motion.button
-                      ref={launcherRef}
+                      ref={setLauncher}
                       key="launcher"
                       data-voice-launcher
                       type="button"
@@ -657,13 +1093,13 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
                     // The live pill; folded (next to a booking card) it is just the orb, and End call is in the panel.
                     <motion.div
                       key="pill"
-                      data-voice-pill={avoidFold ? "folded" : "full"}
+                      data-voice-pill={pillFolded ? "folded" : "full"}
                       initial={{ opacity: 0, y: 12, scale: 0.95 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: 12 }}
                       className={cn(
                         "flex items-center rounded-full border bg-surface text-foreground shadow-float",
-                        !avoidFold && "gap-1 p-1",
+                        !pillFolded && "gap-1 p-1",
                       )}
                     >
                       <button
@@ -671,10 +1107,10 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
                         type="button"
                         onClick={() => setOpen(true)}
                         aria-haspopup="dialog"
-                        title={avoidFold ? VOICE_PHASE_LABEL[phase] : undefined}
+                        title={pillFolded ? VOICE_PHASE_LABEL[phase] : undefined}
                         className={cn(
                           "flex items-center rounded-full text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          avoidFold
+                          pillFolded
                             ? "size-[46px] justify-center"
                             : "h-11 gap-2.5 pl-1 pr-3.5",
                         )}
@@ -685,13 +1121,13 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
                           speaking={voice.agentSpeaking}
                           working={voice.working}
                           muted={voice.muted}
-                          size={avoidFold ? 38 : 36}
+                          size={pillFolded ? 38 : 36}
                           tone="brand"
                         />
                         <span
                           className={cn(
                             "flex items-center gap-1.5",
-                            avoidFold && "sr-only",
+                            pillFolded && "sr-only",
                           )}
                         >
                           <span
@@ -704,7 +1140,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
                           — open the call with the {deskName}
                         </span>
                       </button>
-                      {!avoidFold && (
+                      {!pillFolded && (
                         <IconButton
                           label="End call"
                           variant="ghost"

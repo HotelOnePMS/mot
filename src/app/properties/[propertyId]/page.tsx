@@ -33,11 +33,11 @@ import { Callout, EmptyState, Skeleton } from '@/components/ui/primitives';
 import { SmartImage } from '@/components/ui/smart-image';
 import { StaySearch, defaultStay, type StayQuery } from '@/components/guest/StaySearch';
 import { brandScope } from '@/components/guest/brand';
-import { useVoicePage } from '@/components/voice/page-context';
+import { useVoicePage, voiceText } from '@/components/voice/page-context';
 import { useVoiceDock } from '@/components/voice/VoiceDock';
 import { GuestShell } from '../_components/guest-shell';
 import { usePropertyShell } from '../_components/property-shell';
-import { plural, price } from '../_components/format';
+import { isDay, plural, price } from '../_components/format';
 
 interface Photo {
   id: string;
@@ -91,7 +91,7 @@ function readStay(params: URLSearchParams): StayQuery {
   const d = defaultStay();
   const checkIn = params.get('checkIn');
   const checkOut = params.get('checkOut');
-  const ok = !!checkIn && !!checkOut && checkOut > checkIn;
+  const ok = isDay(checkIn) && isDay(checkOut) && checkOut > checkIn;
   return {
     checkIn: ok ? checkIn! : d.checkIn,
     checkOut: ok ? checkOut! : d.checkOut,
@@ -284,16 +284,17 @@ function RoomCard({
                 </p>
               )}
             </div>
+            {/* data-voice-avoid (here and below): the voice launcher or live pill moves off the room's button. */}
             {state === 'bookable' ? (
-              <Button variant="brand" className="h-11 px-5" onClick={onSelect}>
+              <Button data-voice-avoid variant="brand" className="h-11 px-5" onClick={onSelect}>
                 Select<span className="sr-only"> {rt.name}</span>
               </Button>
             ) : state === 'too-small' && neededRooms <= 9 ? (
-              <Button variant="outline" className="h-11" onClick={() => onRooms(neededRooms)}>
+              <Button data-voice-avoid variant="outline" className="h-11" onClick={() => onRooms(neededRooms)}>
                 Search {plural(neededRooms, 'room')}
               </Button>
             ) : state === 'sold-out' ? (
-              <Button variant="outline" className="h-11" onClick={onOtherDates}>
+              <Button data-voice-avoid variant="outline" className="h-11" onClick={onOtherDates}>
                 Try other dates
               </Button>
             ) : null}
@@ -352,6 +353,7 @@ function PropertyPage() {
   const dock = useVoiceDock();
 
   // The voice front desk (the dock in the root layout) sees this stay and can re-price the page or open checkout.
+  // Hotel text (names) goes through voiceText: it is data for the agent, never instructions.
   const voiceRooms = (avail?.roomTypes ?? []).map((r) => ({ id: r.id, name: r.name, sleeps: r.capacity, available: roomState(r) === 'bookable', nightly: r.quote?.averageNightly ?? null, total: r.quote?.total ?? null }));
   const voiceCheapest = voiceRooms.filter((r) => r.available && r.nightly !== null).sort((a, b) => a.nightly! - b.nightly!)[0];
   useVoicePage({
@@ -362,8 +364,8 @@ function PropertyPage() {
     stay: { checkIn: stay.checkIn, checkOut: stay.checkOut, guests: stay.guests, rooms: stay.rooms ?? 1 },
     roomOptions: voiceRooms,
     summary: name
-      ? `${name}’s page, showing ${fmtRange(stay.checkIn, stay.checkOut)} for ${plural(stay.guests, 'guest')}${(stay.rooms ?? 1) > 1 ? `, ${plural(stay.rooms ?? 1, 'room')}` : ''}${
-          avail ? (voiceCheapest ? ` — from ${price(Math.round(voiceCheapest.nightly!))} a night (${voiceCheapest.name})` : ' — nothing left for these dates') : ''
+      ? `${voiceText(name, 80)}’s page, showing ${fmtRange(stay.checkIn, stay.checkOut)} for ${plural(stay.guests, 'guest')}${(stay.rooms ?? 1) > 1 ? `, ${plural(stay.rooms ?? 1, 'room')}` : ''}${
+          avail ? (voiceCheapest ? ` — from ${price(Math.round(voiceCheapest.nightly!))} a night (${voiceText(voiceCheapest.name, 80)})` : ' — nothing left for these dates') : ''
         }`
       : null,
     // Phones: clear the fixed booking bar (≈69px + safe area) at the bottom of the page.
@@ -534,7 +536,8 @@ function PropertyPage() {
                 {fmtRange(stay.checkIn, stay.checkOut)} · {plural(nights, 'night')} · {plural(stay.guests, 'guest')}
                 {rooms > 1 ? ` · ${plural(rooms, 'room')}` : ''}
               </p>
-              <div ref={searchRef} data-stay-search className="mt-5 scroll-mt-24 lg:hidden">
+              {/* data-voice-avoid-controls: the voice launcher or live pill folds or moves up off each control here (steppers, dates). */}
+              <div ref={searchRef} data-stay-search data-voice-avoid-controls className="mt-5 scroll-mt-24 lg:hidden">
                 <StaySearch value={stay} onSubmit={(v) => setStay(v)} showDestination={false} showRooms submitLabel="Update" compact pending={isValidating && !!avail} />
               </div>
               {availError && (

@@ -14,9 +14,9 @@ import { Badge } from '@/components/ui/badge';
 import { Callout, EmptyState, Skeleton } from '@/components/ui/primitives';
 import { SmartImage } from '@/components/ui/smart-image';
 import { StaySearch, defaultStay, type StayQuery } from '@/components/guest/StaySearch';
-import { useVoicePage } from '@/components/voice/page-context';
+import { useVoicePage, voiceText } from '@/components/voice/page-context';
 import { GuestShell } from './_components/guest-shell';
-import { plural, price } from './_components/format';
+import { isDay, plural, price } from './_components/format';
 
 interface PropertyCard {
   id: string;
@@ -42,7 +42,7 @@ function readQuery(params: URLSearchParams): Query {
   const d = defaultStay();
   const checkIn = params.get('checkIn');
   const checkOut = params.get('checkOut');
-  const dated = !!checkIn && !!checkOut && checkOut > checkIn;
+  const dated = isDay(checkIn) && isDay(checkOut) && checkOut > checkIn;
   return {
     q: params.get('q') ?? '',
     checkIn: dated ? checkIn! : d.checkIn,
@@ -50,6 +50,17 @@ function readQuery(params: URLSearchParams): Query {
     guests: Number(params.get('guests')) || 2,
     dated,
   };
+}
+
+/**
+ * The ?q= search words for the voice agent, JSON-quoted — only short ones that
+ * read like a place or hotel name ("Santa Cruz, CA"); anything longer or with
+ * other characters is left out (null).
+ */
+function voiceSearchWords(q: string): string | null {
+  const s = q.trim().replace(/\s+/g, ' ');
+  if (!s || s.length > 40 || s.split(' ').length > 5 || !/^[A-Za-z0-9À-ÖØ-öø-ÿ ,.'’&-]+$/.test(s)) return null;
+  return JSON.stringify(s);
 }
 
 type Blocker = { kind: 'closed' | 'capacity' | 'sold-out'; label: string; detail: string };
@@ -194,11 +205,16 @@ function Directory() {
   const searching = isValidating && !!data;
 
   // The voice concierge knows what the guest is browsing.
+  // The search words come from the URL (anyone can craft a link): the agent only hears them when they
+  // look like a place or hotel name, JSON-quoted; hotel names and towns go through voiceText.
+  const searchWords = voiceSearchWords(query.q);
   useVoicePage({
     kind: 'directory',
     stay: query.dated ? { checkIn: query.checkIn, checkOut: query.checkOut, guests: query.guests, rooms: 1 } : null,
-    summary: `the list of hotels${query.q ? ` matching “${query.q}”` : ''}${query.dated ? ` for ${fmtRange(query.checkIn, query.checkOut)}` : ''}, ${plural(query.guests, 'guest')}${
-      data ? ` — ${plural(sorted.length, 'hotel')} shown${sorted.length ? `: ${sorted.slice(0, 5).map((p) => `${p.name} (${p.city})`).join(', ')}${sorted.length > 5 ? '…' : ''}` : ''}` : ''
+    summary: `the list of hotels${searchWords ? ` for the search ${searchWords}` : query.q ? ' for the guest’s search' : ''}${query.dated ? ` for ${fmtRange(query.checkIn, query.checkOut)}` : ''}, ${plural(query.guests, 'guest')}${
+      data
+        ? ` — ${plural(sorted.length, 'hotel')} shown${sorted.length ? `: ${sorted.slice(0, 5).map((p) => `${voiceText(p.name, 60)} (${voiceText(p.city, 40)})`).join(', ')}${sorted.length > 5 ? '…' : ''}` : ''}`
+        : ''
     }`,
   });
 

@@ -39,7 +39,7 @@ import { SmartImage } from '@/components/ui/smart-image';
 import { BookingStatusBadge } from '@/components/hotel/badges';
 import { brandScope } from '@/components/guest/brand';
 import { DateField } from '@/components/guest/StaySearch';
-import { useVoicePage } from '@/components/voice/page-context';
+import { useVoicePage, voiceText } from '@/components/voice/page-context';
 import { GuestShell } from '@/app/properties/_components/guest-shell';
 import { plural, price } from '@/app/properties/_components/format';
 
@@ -328,14 +328,14 @@ function BookingPage() {
     if (status === 'unauthenticated') router.replace(`/login?callbackUrl=${encodeURIComponent(`/bookings/${bookingId}`)}`);
   }, [status, router, bookingId]);
 
-  // The voice front desk (the site's voice dock) knows which booking is on screen.
+  // The voice front desk (the site's voice dock) knows which booking is on screen (hotel text as data: voiceText).
   useVoicePage({
     kind: 'booking',
     propertyId: b?.property.id ?? null,
     propertyName: b?.property.name ?? null,
     brand: b?.property.primaryColor ?? null,
     summary: b
-      ? `their booking page at ${b.property.name}: confirmation ${b.code}, ${BOOKING_STATUS[b.status]?.label.toLowerCase() ?? b.status.toLowerCase()}, ${b.roomType.name}, ${fmtDay(b.checkIn, 'weekday')} to ${fmtDay(b.checkOut, 'weekday')}, ${plural(b.guests, 'guest')}, ${price(b.totalPrice)} (${paymentLabel(b.paymentStatus).label.toLowerCase()})${
+      ? `their booking page at ${voiceText(b.property.name, 80)}: confirmation ${b.code}, ${BOOKING_STATUS[b.status]?.label.toLowerCase() ?? b.status.toLowerCase()}, ${voiceText(b.roomType.name, 80)}, ${fmtDay(b.checkIn, 'weekday')} to ${fmtDay(b.checkOut, 'weekday')}, ${plural(b.guests, 'guest')}, ${price(b.totalPrice)} (${paymentLabel(b.paymentStatus).label.toLowerCase()})${
           b.policy.passed ? '' : `; free changes until ${b.policy.deadlineLabel}`
         }${isNew ? ' — they have just booked it' : ''}`
       : null,
