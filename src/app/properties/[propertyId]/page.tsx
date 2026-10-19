@@ -25,7 +25,8 @@ import {
   Zap,
 } from 'lucide-react';
 import type { StayQuote } from '@/lib/dto';
-import { MAX_RESERVATION_LINES, MAX_RESERVATION_ROOMS, linesFromParams, setLineParams, totalRooms, type BookingLine } from '@/lib/booking-lines';
+import { MAX_RESERVATION_LINES, MAX_RESERVATION_ROOMS, linesFromParams, setLineParams, splitParty, totalRooms, type BookingLine } from '@/lib/booking-lines';
+import { priceStay } from '@/server/services/pricing';
 import { fetcher } from '@/lib/fetcher';
 import { fmtRange, nightsBetween, telHref } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -185,6 +186,24 @@ function roomState(a: RoomAvailability | undefined): RoomState {
 /** Price of one room of a type for the whole stay (quotes are for `quote.rooms` rooms). */
 const perRoomTotal = (a: RoomAvailability | undefined) => (a?.quote ? a.quote.total / Math.max(1, a.quote.rooms) : null);
 
+/**
+ * A room type's total in a combined booking: its rooms, for its share of the
+ * party, with the hotel's taxes and fees, priced the way the booking will be
+ * (per-guest taxes count each guest once across the room types).
+ */
+function lineTotal(a: RoomAvailability | undefined, rooms: number, guests: number | undefined): number | null {
+  const q = a?.quote;
+  if (!q) return null;
+  if (guests === undefined) return rooms * perRoomTotal(a)!;
+  return priceStay({
+    nightly: q.nights.map((n) => n.price),
+    rooms,
+    guests,
+    currency: q.currency,
+    charges: q.charges.map((c) => ({ name: c.name, kind: c.kind, amount: c.rate })),
+  }).total;
+}
+
 function RoomCard({
   rt,
   a,
@@ -342,7 +361,7 @@ function RoomCard({
               <div className="flex flex-wrap items-center gap-2">
                 {combinable && state !== 'sold-out' && (
                   <Button data-voice-avoid variant="outline" className="h-11" onClick={() => onCombine(1)}>
-                    <Plus aria-hidden /> Add<span className="sr-only"> a {rt.name} to a booking with other room types</span>
+                    <Plus aria-hidden /> Add<span className="sr-only"> {rt.name} to a booking with other room types</span>
                   </Button>
                 )}
                 {state === 'bookable' ? (
@@ -511,7 +530,12 @@ function PropertyPage() {
     .filter((l) => l.rt);
   const pickedRooms = totalRooms(picked);
   const pickedSleeps = picked.reduce((s, l) => s + l.rooms * l.rt!.capacity, 0);
-  const pickedTotal = picked.every((l) => perRoomTotal(l.a) !== null) ? picked.reduce((s, l) => s + l.rooms * perRoomTotal(l.a)!, 0) : null;
+  const pickedParty = splitParty(
+    stay.guests,
+    picked.map((l) => ({ rooms: l.rooms, capacity: l.rt!.capacity }))
+  );
+  const pickedLines = picked.map((l, i) => ({ ...l, total: lineTotal(l.a, l.rooms, pickedParty?.[i]) }));
+  const pickedTotal = pickedLines.every((l) => l.total !== null) ? pickedLines.reduce((s, l) => s + l.total!, 0) : null;
   const pickedShort = picked.find((l) => l.a && l.a.available < l.rooms);
   const pickedProblem = !picked.length
     ? null
@@ -539,12 +563,12 @@ function PropertyPage() {
         </button>
       </div>
       <ul className="mt-3 space-y-1.5 text-sm">
-        {picked.map((l) => (
+        {pickedLines.map((l) => (
           <li key={l.roomTypeId} className="flex justify-between gap-3">
             <span className="min-w-0 truncate">
               {l.rt!.name} × {l.rooms}
             </span>
-            <span className="tabular text-muted-foreground">{perRoomTotal(l.a) !== null ? price(l.rooms * perRoomTotal(l.a)!, cur) : '…'}</span>
+            <span className="tabular text-muted-foreground">{l.total !== null ? price(l.total, cur) : '…'}</span>
           </li>
         ))}
       </ul>

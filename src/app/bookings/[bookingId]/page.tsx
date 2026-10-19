@@ -509,7 +509,7 @@ function BookingPage() {
                     {countdown && <span className="text-base font-semibold">{countdown}</span>}
                   </div>
                   <p className="mt-1.5 text-sm text-muted-foreground">
-                    {cancelled ? `This booking was ${b.status === 'NO_SHOW' ? 'marked as a no-show' : 'cancelled'}.` : `${b.user.firstName} ${b.user.lastName} · ${plural(b.guests, 'guest')}`}
+                    {cancelled ? `This booking was ${b.status === 'NO_SHOW' ? 'marked as a no-show' : 'cancelled'}.` : `${b.user.firstName} ${b.user.lastName} · ${plural(b.reservation?.guests || b.guests, 'guest')}`}
                   </p>
                 </div>
                 <button
