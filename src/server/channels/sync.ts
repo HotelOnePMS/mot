@@ -3,7 +3,7 @@ import type { Prisma, SyncLogStatus } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getAdapter } from './adapters';
 import { buildAriUpdates, computeChannelDays, loadConnection } from './ari';
-import { addDays, hotelToday, toISODate } from './dates';
+import { addDays, todayAt, toISODate } from './dates';
 import { ChannelApiError } from './types';
 
 export async function logSync(
@@ -57,7 +57,7 @@ export async function pushAri(connectionId: string, options: AriPushOptions = {}
   const connection = await loadConnection(connectionId);
   if (!connection) throw new ChannelApiError('Channel connection not found');
 
-  const today = hotelToday();
+  const today = await todayAt(connection.propertyId);
   const lastDay = addDays(today, connection.syncWindowDays - 1);
   const from = options.from && options.from > today ? options.from : today;
   const to = options.to && options.to < lastDay ? options.to : lastDay;

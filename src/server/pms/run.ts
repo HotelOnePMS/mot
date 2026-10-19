@@ -11,10 +11,11 @@ import { after } from 'next/server';
 import { Prisma, type BridgeTask } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { executeMcpTask, isChangeKind, type ExecuteOptions, type McpTaskResult } from './executor';
+import { logError } from '@/server/log';
 
 const STALE_RUNNING_MS = 5 * 60 * 1000;
 
-const logFailure = (taskId: string) => (e: unknown) => console.error(`[pms-mcp] task ${taskId} failed to run:`, e);
+const logFailure = (taskId: string) => (e: unknown) => logError('pms-mcp', `task ${taskId} failed to run:`, e);
 
 /**
  * Run an MCP task after the current response is sent (Next.js `after`), or
@@ -70,7 +71,7 @@ export async function runMcpBridgeTask(taskId: string, opts: ExecuteOptions = {}
       { connection: task.connection, propertyName: task.property.name, ...opts },
     );
   } catch (e) {
-    console.error('[pms-mcp] executor crashed:', e);
+    logError('pms-mcp', 'executor crashed:', e);
     result = { status: 'FAILED', summary: 'Something went wrong talking to the PMS.', calls: [], engine: 'none', error: 'Internal error' };
   }
 
@@ -116,7 +117,7 @@ export async function persistResult(task: Pick<BridgeTask, 'id' | 'connectionId'
           detail: JSON.stringify({ source: 'agent', summary: result.summary.slice(0, 300), taskId: task.id, tools: result.calls.filter((c) => c.ok).map((c) => c.tool) }).slice(0, 4000),
         },
       })
-      .catch((e) => console.error('[pms-mcp] audit write failed:', e));
+      .catch((e) => logError('pms-mcp', 'audit write failed:', e));
   }
   if (!updated.count) console.warn(`[pms-mcp] task ${task.id} was no longer running when it finished (cancelled?)`);
   return prisma.bridgeTask.findUniqueOrThrow({ where: { id: task.id } });

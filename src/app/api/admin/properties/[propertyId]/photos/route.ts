@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { staffGuard } from '@/server/guard';
 import { uploadImage, deleteImage } from '@/lib/cloudinary';
+import { logError } from '@/server/log';
 
 // POST - Upload photos to a property
 export async function POST(
@@ -68,7 +69,7 @@ export async function POST(
       photos: uploadedPhotos,
     });
   } catch (error) {
-    console.error('Error uploading photos:', error);
+    logError('api/admin/properties/[propertyId]/photos', 'Error uploading photos:', error);
     return NextResponse.json(
       { error: 'Failed to upload photos' },
       { status: 500 }
@@ -97,7 +98,7 @@ export async function GET(
 
     return NextResponse.json(photos);
   } catch (error) {
-    console.error('Error fetching photos:', error);
+    logError('api/admin/properties/[propertyId]/photos', 'Error fetching photos:', error);
     return NextResponse.json(
       { error: 'Failed to fetch photos' },
       { status: 500 }
@@ -141,7 +142,7 @@ export async function DELETE(
       try {
         await deleteImage(photo.publicId);
       } catch (error) {
-        console.error('Error deleting from Cloudinary:', error);
+        logError('api/admin/properties/[propertyId]/photos', 'Error deleting from Cloudinary:', error);
         // Continue to delete from database even if Cloudinary deletion fails
       }
     }
@@ -168,7 +169,7 @@ export async function DELETE(
 
     return NextResponse.json({ message: 'Photo deleted successfully' });
   } catch (error) {
-    console.error('Error deleting photo:', error);
+    logError('api/admin/properties/[propertyId]/photos', 'Error deleting photo:', error);
     return NextResponse.json(
       { error: 'Failed to delete photo' },
       { status: 500 }
@@ -209,7 +210,7 @@ export async function PATCH(
 
     return NextResponse.json(updatedPhoto);
   } catch (error) {
-    console.error('Error setting main photo:', error);
+    logError('api/admin/properties/[propertyId]/photos', 'Error setting main photo:', error);
     return NextResponse.json(
       { error: 'Failed to set main photo' },
       { status: 500 }

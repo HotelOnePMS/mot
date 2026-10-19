@@ -2,7 +2,7 @@ import type { ChannelPromotion, PromotionType } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getAdapter } from './adapters';
 import { loadConnection } from './ari';
-import { addDays, hotelToday, isDateString, toDbDate, toISODate } from './dates';
+import { addDays, earliestToday, isDateString, toDbDate, toISODate } from './dates';
 import { errorMessage, logSync } from './sync';
 import { CHANNEL_LABELS, ChannelApiError, OtaPromotionPayload } from './types';
 
@@ -29,7 +29,7 @@ export interface PromotionChanges extends Partial<PromotionInput> {
 
 /** Throws a ChannelApiError describing the first problem found */
 export function validatePromotion(input: PromotionInput): void {
-  const today = hotelToday();
+  const today = earliestToday();
   if (!input.name.trim()) throw new ChannelApiError('Promotion name is required');
   if (!PROMOTION_TYPES.includes(input.type)) throw new ChannelApiError(`Unknown promotion type ${input.type}`);
   if (!(input.discountPercent >= 1 && input.discountPercent <= 80)) {

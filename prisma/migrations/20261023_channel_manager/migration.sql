@@ -1,11 +1,6 @@
 -- OTA channel manager (Expedia, Booking.com): connections, room mappings,
 -- channel prices and restrictions, promotions, imported OTA reservations,
--- sync log, and the channel agent's conversations. Additive only; existing
--- bookings get source DIRECT.
-
--- CreateEnum
-CREATE TYPE "BookingSource" AS ENUM ('DIRECT', 'EXPEDIA', 'BOOKING_COM');
-
+-- sync log, and the channel agent's conversations. Additive only.
 -- CreateEnum
 CREATE TYPE "OtaChannel" AS ENUM ('EXPEDIA', 'BOOKING_COM');
 
@@ -29,9 +24,6 @@ CREATE TYPE "SyncLogStatus" AS ENUM ('SUCCESS', 'FAILED');
 
 -- CreateEnum
 CREATE TYPE "ChannelAgentActionStatus" AS ENUM ('EXECUTED', 'REJECTED', 'FAILED');
-
--- AlterTable
-ALTER TABLE "bookings" ADD COLUMN     "source" "BookingSource" NOT NULL DEFAULT 'DIRECT';
 
 -- CreateTable
 CREATE TABLE "channel_connections" (

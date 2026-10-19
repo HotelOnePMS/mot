@@ -3,12 +3,14 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { requireStaff, resolvePropertyId } from '@/server/authz';
 import { assertNotDemoHotel, demoHotelLocked } from '@/server/demo';
-import { forbidden } from '@/server/errors';
+import { badRequest, forbidden } from '@/server/errors';
 import { handleRoute, json, parseJson, parseQuery } from '@/server/http';
 import { recordAudit } from '@/server/services/audit';
 import { AGENT_KEY_SCOPES, AGENT_KEYS_DEMO_LOCKED as DEMO_LOCKED, createAgentKey, listAgentKeys } from '@/server/agent-api/keys';
 
 export const dynamic = 'force-dynamic';
+
+const VOICE_ONLY = 'Voice-only hotels take bookings in their own system, so assistants can’t find or book them on HotelOne. Move to “keep your PMS” or “everything on HotelOne” under Connect your PMS to use API keys.';
 
 /**
  * GET ?propertyId — the hotel's API keys for outside AI assistants (never
@@ -19,7 +21,7 @@ export const GET = handleRoute(async (request: NextRequest) => {
   const actor = await requireStaff('agentkeys.manage');
   const q = parseQuery(request, z.object({ propertyId: z.string().optional() }));
   const propertyId = await resolvePropertyId(actor, q.propertyId);
-  const property = await prisma.property.findUniqueOrThrow({ where: { id: propertyId }, select: { isDemo: true, isActive: true } });
+  const property = await prisma.property.findUniqueOrThrow({ where: { id: propertyId }, select: { isDemo: true, isActive: true, setupPath: true } });
   const locked = demoHotelLocked(actor, property.isDemo);
   const isAdmin = actor.role === 'ADMIN';
   return json({
@@ -28,7 +30,9 @@ export const GET = handleRoute(async (request: NextRequest) => {
     locked: locked ? DEMO_LOCKED : null,
     canCreateAllHotels: isAdmin,
     /** False while the hotel is hidden from guests: assistants can't find or book it either. */
-    listed: property.isActive,
+    listed: property.isActive && property.setupPath !== 'VOICE',
+    /** Voice-only hotels take bookings in their own system, so assistants can't find or book them here. */
+    voiceOnly: property.setupPath === 'VOICE',
   });
 });
 
@@ -46,8 +50,9 @@ export const POST = handleRoute(async (request: NextRequest) => {
   const body = await parseJson(request, createSchema);
   const propertyId = await resolvePropertyId(actor, body.propertyId);
   if (body.allHotels && actor.role !== 'ADMIN') throw forbidden('Only platform admins can create keys for every hotel.');
-  const property = await prisma.property.findUniqueOrThrow({ where: { id: propertyId }, select: { isDemo: true, name: true } });
+  const property = await prisma.property.findUniqueOrThrow({ where: { id: propertyId }, select: { isDemo: true, name: true, setupPath: true } });
   assertNotDemoHotel(actor, property.isDemo, DEMO_LOCKED);
+  if (!body.allHotels && property.setupPath === 'VOICE') throw badRequest(VOICE_ONLY);
 
   const { key, view } = await createAgentKey({ propertyId: body.allHotels ? null : propertyId, name: body.name, scopes: body.scopes, createdById: actor.userId });
   await recordAudit(

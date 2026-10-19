@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useCurrency } from '@/components/hotel/currency';
 import Link from 'next/link';
 import useSWR from 'swr';
 import { toast } from 'sonner';
@@ -41,12 +42,17 @@ interface RatesResponse {
 }
 
 type EditMode = 'set' | 'adjust' | 'reset';
+/** Whole amounts in the selected hotel's currency. */
+const useWhole = () => {
+  const currency = useCurrency();
+  return (n: number) => money(n, { cents: false, currency });
+};
+
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DOW_LONG = ['Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays'];
 const DOW_JS = [1, 2, 3, 4, 5, 6, 0];
-const CURRENCY = 'USD';
-const whole = (n: number) => money(n, { cents: false, currency: CURRENCY });
-const currencySymbol = new Intl.NumberFormat('en-US', { style: 'currency', currency: CURRENCY }).formatToParts(0).find((p) => p.type === 'currency')?.value ?? '$';
+
+const currencySymbol = (currency: string) => new Intl.NumberFormat('en-US', { style: 'currency', currency }).formatToParts(0).find((p) => p.type === 'currency')?.value ?? currency;
 
 function monthGrid(month: string) {
   // month = YYYY-MM-01. Weeks start Monday; always 6 rows for a steady layout.
@@ -65,6 +71,7 @@ function shiftMonth(month: string, n: number) {
 const isWeekendNight = (d: ISODate) => weekday(d) === 5 || weekday(d) === 6;
 
 function Legend({ min, max, occupancy = true }: { min?: number; max?: number; /** Rooms sold (hotels whose bookings live in HotelOne). */ occupancy?: boolean }) {
+  const whole = useWhole();
   return (
     <ul className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground" aria-label="Calendar key">
       <li className="inline-flex items-center gap-1.5">
@@ -94,11 +101,11 @@ function Legend({ min, max, occupancy = true }: { min?: number; max?: number; /*
 }
 
 export default function RateCalendarPage() {
-  const { ctx, property, can, refresh } = useConsole();
+  const whole = useWhole();
+  const { property, can, refresh, today, currency } = useConsole();
   // Voice-only hotels keep bookings in their own system: prices only, no rooms sold.
   const voiceOnly = property?.setupPath === 'VOICE';
   const reduce = useReducedMotion();
-  const today = ctx?.today ?? '';
   const typesUrl = usePropertyUrl('/api/admin/room-types');
   const { data: types } = useSWR<RoomTypeLite[]>(typesUrl, fetcher);
   const [roomTypeId, setRoomTypeId] = React.useState<string>('');
@@ -527,7 +534,7 @@ export default function RateCalendarPage() {
                       <Field label="New nightly price" hint={data ? `Base price is ${whole(data.roomType.basePrice)}` : undefined}>
                         <div className="relative">
                           <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden>
-                            {currencySymbol}
+                            {currencySymbol(currency)}
                           </span>
                           <Input
                             type="number"

@@ -13,7 +13,7 @@
  *   /.well-known/agent-card.json and /.well-known/mcp.json.
  */
 export * from './keys';
-export { agentRoute, agentJson, preflight, publicDocHeaders, requestOrigin, clientIp, originAllowed, consumeAgentLimit, PUBLISHED_LIMITS, type AgentRequestContext, type RateCategory } from './http';
+export { agentRoute, agentJson, preflight, publicDocHeaders, publicOrigin, requestOrigin, readBodyText, MAX_REST_BODY_BYTES, MAX_MCP_BODY_BYTES, clientIp, originAllowed, consumeAgentLimit, PUBLISHED_LIMITS, type AgentRequestContext, type RateCategory } from './http';
 export { listTools, callTool, toolCatalog, isToolName, type ToolName, type ToolContext, type ListedTool, type ScopedHotel } from './tools';
 export { handleMcpPost, mcpMethodNotAllowed, MCP_METHODS, MCP_PROTOCOL_VERSIONS, MCP_LATEST_VERSION, MCP_SERVER_VERSION } from './mcp';
 export { openApiDocument, API_VERSION } from './openapi';

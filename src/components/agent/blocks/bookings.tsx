@@ -104,7 +104,7 @@ export function BookingCard({ block }: { block: Extract<AgentBlock, { type: 'boo
         <div className="ml-auto text-right">
           <p className="text-lg font-semibold tabular">
             <span className="sr-only">Total </span>
-            {formatMoney(b.totalPrice)}
+            {formatMoney(b.totalPrice, b.currency)}
           </p>
           <PaymentBadge status={b.paymentStatus} size="sm" />
         </div>

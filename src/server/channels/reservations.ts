@@ -1,19 +1,14 @@
 import crypto from 'crypto';
-import { Prisma, type BookingSource, type OtaChannel } from '@prisma/client';
+import { Prisma, type OtaChannel } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { atNoonUTC } from '../dates';
 import { generateBookingCode } from '../services/bookings';
 import { nightlyInventory } from '../services/inventory';
 import { getAdapter } from './adapters';
 import { ConnectionWithMappings, computeChannelDays, loadConnection, roundPrice } from './ari';
-import { addDays, hotelToday, isDateString } from './dates';
+import { addDays, todayAt, isDateString } from './dates';
 import { errorMessage, logSync, scheduleInventorySync } from './sync';
 import { CHANNEL_LABELS, ChannelApiError, OtaReservation, ReservationConfirmation } from './types';
-
-const BOOKING_SOURCE: Record<OtaChannel, BookingSource> = {
-  EXPEDIA: 'EXPEDIA',
-  BOOKING_COM: 'BOOKING_COM',
-};
 
 export interface ImportResult {
   externalId: string;
@@ -238,7 +233,8 @@ export async function importReservation(
         paymentStatus: 'PAY_AT_PROPERTY',
         code,
         guestEmail: guestEmail(reservation),
-        source: BOOKING_SOURCE[connection.channel],
+        // Booking.source names the OTA: EXPEDIA | BOOKING_COM.
+        source: connection.channel,
         notes,
         statusHistory: {
           create: {
@@ -395,7 +391,7 @@ export async function simulateReservation(connectionId: string): Promise<ImportR
   }
 
   const mapping = connection.roomMappings[crypto.randomInt(connection.roomMappings.length)];
-  const checkIn = addDays(hotelToday(), crypto.randomInt(3, 30));
+  const checkIn = addDays(await todayAt(connection.propertyId), crypto.randomInt(3, 30));
   const checkOut = addDays(checkIn, crypto.randomInt(1, 5));
   const days = await computeChannelDays(connection, checkIn, addDays(checkOut, -1), [mapping.roomTypeId]);
   const [firstName, lastName] = SAMPLE_GUESTS[crypto.randomInt(SAMPLE_GUESTS.length)];

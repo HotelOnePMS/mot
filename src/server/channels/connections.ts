@@ -1,7 +1,7 @@
 import type { ChannelConnection, ChannelMode, OtaChannel } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getAdapter, sealPassword } from './adapters';
-import { addDays, hotelToday } from './dates';
+import { addDays, todayAt } from './dates';
 import { pullReservations } from './reservations';
 import { errorMessage, logSync, pushAri } from './sync';
 import { CHANNEL_LABELS, ChannelApiError, OtaRoomType } from './types';
@@ -268,9 +268,10 @@ export async function activateConnection(connectionId: string) {
   if (connection.status === 'DRAFT') throw new ChannelApiError('Verify the connection first');
   if (connection._count.roomMappings === 0) throw new ChannelApiError('Map at least one room type first');
 
+  const today = await todayAt(connection.propertyId);
   const ari = await pushAri(connectionId, {
-    from: hotelToday(),
-    to: addDays(hotelToday(), connection.syncWindowDays - 1),
+    from: today,
+    to: addDays(today, connection.syncWindowDays - 1),
     force: true,
   });
   const updated = await prisma.channelConnection.update({

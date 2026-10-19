@@ -8,7 +8,7 @@ import { fmtDay, formatDateRange, formatMoney, formatNights, nightsBetween, rela
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, Skeleton } from '@/components/ui/primitives';
-import { BookingStatusBadge, PaymentBadge } from '@/components/hotel/badges';
+import { BookingStatusBadge, PaymentBadge, RiskFlagList } from '@/components/hotel/badges';
 
 export type SortKey = 'guest' | 'checkIn' | 'room' | 'status' | 'total';
 export type Sort = { key: SortKey; dir: 'asc' | 'desc' };
@@ -204,6 +204,7 @@ export function ReservationList({
                         {b.rooms > 1 ? `, ${b.rooms} rooms` : ''}
                       </span>
                     </p>
+                    <RiskFlagList flags={b.riskFlags} className="mt-1" />
                   </div>
                 </div>
               </td>
@@ -227,9 +228,9 @@ export function ReservationList({
               </td>
               <td className="py-3 pl-3 pr-4 text-right align-middle font-medium tabular">
                 {b.status === 'CANCELLED' || b.status === 'NO_SHOW' ? (
-                  <span className="text-muted-foreground line-through decoration-muted-foreground/60">{formatMoney(b.totalPrice, currency, { cents: false })}</span>
+                  <span className="text-muted-foreground line-through decoration-muted-foreground/60">{formatMoney(b.totalPrice, b.currency ?? currency, { cents: false })}</span>
                 ) : (
-                  formatMoney(b.totalPrice, currency, { cents: false })
+                  formatMoney(b.totalPrice, b.currency ?? currency, { cents: false })
                 )}
               </td>
             </tr>
@@ -249,7 +250,7 @@ export function ReservationList({
                     {b.guest.name}
                   </Link>
                   <span className={cn('shrink-0 font-semibold tabular', (b.status === 'CANCELLED' || b.status === 'NO_SHOW') && 'text-muted-foreground line-through')}>
-                    {formatMoney(b.totalPrice, currency, { cents: false })}
+                    {formatMoney(b.totalPrice, b.currency ?? currency, { cents: false })}
                   </span>
                 </div>
                 <p className="mt-0.5 text-sm tabular text-foreground/90">
@@ -259,8 +260,9 @@ export function ReservationList({
                 <p className="truncate text-xs text-muted-foreground">
                   {b.roomType.name} · {b.room ? `Room ${b.room.number}` : 'No room yet'} · <span className="font-mono">{b.code}</span>
                 </p>
-                <div className="mt-2">
+                <div className="mt-2 flex flex-wrap items-center gap-2">
                   <StatusCell b={b} today={today} />
+                  <RiskFlagList flags={b.riskFlags} />
                 </div>
               </div>
             </div>

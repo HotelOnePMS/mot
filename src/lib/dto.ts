@@ -3,6 +3,8 @@
  * client components. Client-safe: no server imports.
  */
 
+import type { RiskFlag } from './risk';
+
 export type ISODate = string; // YYYY-MM-DD
 
 export type BookingStatus = 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'CHECKED_IN' | 'CHECKED_OUT' | 'NO_SHOW';
@@ -25,7 +27,13 @@ export interface BookingSummary {
   roomType: { id: string; name: string };
   room: { id: string; number: string; floor: string | null } | null;
   totalPrice: number;
+  /** The hotel's currency for every amount on this booking. */
+  currency: string;
   paymentStatus: string;
+  /** Collected online and not refunded, in the booking's currency. */
+  amountPaid: number;
+  /** Reasons for the front desk to look twice (staff only; computed on the server). */
+  riskFlags: RiskFlag[];
   notes: string | null;
   createdAt: string;
 }
@@ -107,10 +115,24 @@ export interface StayQuote {
   rooms: number;
   guests: number;
   averageNightly: number;
+  /** Room charges for every room and night. */
   subtotal: number;
+  /** Taxes and fees on top of the room charges. */
+  charges: QuoteCharge[];
+  chargesTotal: number;
+  /** What the guest pays: subtotal + charges. */
   total: number;
-  currency: 'USD';
+  /** The hotel's ISO 4217 currency. */
+  currency: string;
   available: number;
+}
+
+export interface QuoteCharge {
+  name: string;
+  kind: 'PERCENT' | 'PER_ROOM_NIGHT' | 'PER_GUEST_NIGHT' | 'PER_STAY';
+  /** The percentage for PERCENT, otherwise the unit amount. */
+  rate: number;
+  amount: number;
 }
 
 export interface OccupancyDay {
@@ -141,13 +163,22 @@ export interface StaffProperty {
   setupPath: SetupPath;
   primaryColor: string | null;
   isDemo: boolean;
+  /** IANA time zone of the hotel's clock. */
+  timezone: string;
+  currency: string;
+  /** Today at this hotel. */
+  today: ISODate;
+  organization: { id: string; name: string } | null;
 }
 
 export interface StaffContext {
-  user: { id: string; name: string; email: string; role: string };
+  user: { id: string; name: string; email: string; role: string; mfaEnabled: boolean; emailVerified: boolean };
   properties: StaffProperty[];
   permissions: string[];
+  /** Today on the platform clock; each property carries its own `today`. */
   today: ISODate;
+  /** Organizations this person administers. */
+  orgAdminOf: { id: string; name: string }[];
   agent: { llmEnabled: boolean; voiceEnabled: boolean };
 }
 

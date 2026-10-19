@@ -5,7 +5,7 @@
  */
 import { prisma } from '@/lib/prisma';
 import { computeChannelDays, getPmsRates, loadConnection, roundPrice, type ConnectionWithMappings } from './ari';
-import { addDays, eachDate, hotelToday, isDateString, toDbDate, toISODate, Weekday, WEEKDAYS, weekdayOf } from './dates';
+import { addDays, eachDate, earliestToday, isDateString, toDbDate, todayAt, toISODate, Weekday, WEEKDAYS, weekdayOf } from './dates';
 import { AriPushSummary, errorMessage, pushAri, syncRoomTypeToChannels } from './sync';
 import { CHANNEL_LABELS, ChannelApiError } from './types';
 
@@ -75,7 +75,7 @@ export function validateDateRange(startDate: string, endDate: string): void {
   if (!isDateString(startDate) || !isDateString(endDate)) {
     throw new ChannelApiError('Dates must be in YYYY-MM-DD format');
   }
-  const today = hotelToday();
+  const today = earliestToday();
   if (startDate < today) throw new ChannelApiError(`Start date ${startDate} is in the past (today is ${today})`);
   if (endDate < startDate) throw new ChannelApiError('End date must be on or after the start date');
   if (endDate > addDays(today, 730)) throw new ChannelApiError('Dates can be at most 2 years ahead');
@@ -536,10 +536,12 @@ export async function applyMarkup(request: MarkupRequest) {
       data: { defaultMarkupPercent: request.markupPercent },
     });
   }
+  const { propertyId } = await prisma.channelConnection.findUniqueOrThrow({ where: { id: request.connectionId }, select: { propertyId: true } });
+  const today = await todayAt(propertyId);
   const sync = await pushConnections(
     [request.connectionId],
-    hotelToday(),
-    addDays(hotelToday(), 730),
+    today,
+    addDays(today, 730),
     request.roomTypeId ? [request.roomTypeId] : undefined
   );
   return { ...plan, applied: true, sync };

@@ -14,6 +14,7 @@
 import { createHash } from 'crypto';
 import { prisma } from '@/lib/prisma';
 import { DomainError } from '../errors';
+import { logError } from '@/server/log';
 
 /** voice_sessions.channel of rate-limit hits. */
 export const RATE_LIMIT_CHANNEL = 'RATE_LIMIT';
@@ -56,5 +57,5 @@ function sweep() {
   const now = new Date();
   prisma.voiceSession
     .deleteMany({ where: { channel: RATE_LIMIT_CHANNEL, startedAt: { lt: now }, OR: [{ endedAt: { lt: now } }, { startedAt: { lt: new Date(now.getTime() - MAX_WINDOW_MS) } }] } })
-    .catch((e) => console.error('[concierge] rate-limit sweep failed', e));
+    .catch((e) => logError('concierge', 'rate-limit sweep failed', e));
 }

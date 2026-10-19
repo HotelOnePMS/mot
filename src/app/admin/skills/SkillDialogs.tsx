@@ -28,6 +28,21 @@ const linesOf = (text: string) =>
     .map((l) => l.trim())
     .filter(Boolean);
 
+/**
+ * Where focus goes when a dialog closes. These dialogs open from buttons on
+ * the page (no DialogTrigger), so Radix has nothing to return focus to:
+ * `onReturnFocus` puts it back on the opener (or the nearest thing left).
+ */
+type ReturnFocus = { onReturnFocus?: () => void };
+
+const returnFocusHandler = (onReturnFocus?: () => void) =>
+  onReturnFocus
+    ? (e: Event) => {
+        e.preventDefault();
+        onReturnFocus();
+      }
+    : undefined;
+
 /** Add or edit a saved answer: the question, what agents say, and who hears it. */
 export function AnswerDialog({
   open,
@@ -35,6 +50,7 @@ export function AnswerDialog({
   initial,
   guestLocked,
   onSave,
+  onReturnFocus,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -43,7 +59,7 @@ export function AnswerDialog({
   /** Guest answers can't change here (public demo): only staff-only answers. */
   guestLocked: boolean;
   onSave: (draft: AnswerDraft) => Promise<boolean>;
-}) {
+} & ReturnFocus) {
   const [question, setQuestion] = React.useState('');
   const [answer, setAnswer] = React.useState('');
   const [audience, setAudience] = React.useState<Audience>('ALL');
@@ -74,7 +90,7 @@ export function AnswerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={returnFocusHandler(onReturnFocus)}>
         <form onSubmit={submit} noValidate className="space-y-5">
           <DialogHeader>
             <DialogTitle>{initial ? 'Edit answer' : 'Add an answer'}</DialogTitle>
@@ -126,13 +142,14 @@ export function StepsDialog({
   initial,
   kind,
   onSave,
+  onReturnFocus,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   initial: SkillView | null;
   kind: 'MACRO' | 'RECIPE';
   onSave: (draft: StepsDraft) => Promise<boolean>;
-}) {
+} & ReturnFocus) {
   const [name, setName] = React.useState('');
   const [steps, setSteps] = React.useState('');
   const [errors, setErrors] = React.useState<{ name?: string; steps?: string }>({});
@@ -163,7 +180,7 @@ export function StepsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={returnFocusHandler(onReturnFocus)}>
         <form onSubmit={submit} noValidate className="space-y-5">
           <DialogHeader>
             <DialogTitle>{recipe ? 'Edit PMS recipe' : initial ? 'Edit shortcut' : 'Add a shortcut'}</DialogTitle>
@@ -198,6 +215,43 @@ export function StepsDialog({
             </Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** "Delete …?" for a skill: the console's confirm dialog, returning focus to the page when it closes. */
+export function DeleteSkillDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  loading,
+  onConfirm,
+  onReturnFocus,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  title: string;
+  description: React.ReactNode;
+  loading?: boolean;
+  onConfirm: () => void;
+} & ReturnFocus) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent onCloseAutoFocus={returnFocusHandler(onReturnFocus)}>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Keep it
+          </Button>
+          <Button variant="destructive" loading={loading} onClick={onConfirm}>
+            Delete
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

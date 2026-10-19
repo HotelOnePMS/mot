@@ -181,7 +181,7 @@ function InviteDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenCha
           <>
             <DialogHeader>
               <DialogTitle>{created.name} is on the team</DialogTitle>
-              <DialogDescription>Share these sign-in details privately. They can change the password from their profile.</DialogDescription>
+              <DialogDescription>Share these sign-in details privately. This password is temporary: they’ll be asked to choose their own the first time they sign in.</DialogDescription>
             </DialogHeader>
             <pre className="whitespace-pre-wrap break-all rounded-xl border bg-surface-sunken p-4 font-mono text-xs leading-relaxed">{credentials}</pre>
             <DialogFooter>
@@ -208,9 +208,9 @@ function InviteDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenCha
             </Field>
             <RoleChooser name="invite-role" value={form.role} onChange={(role) => setForm({ ...form, role })} allowOwner={myRole === 'ADMIN' || myRole === 'OWNER'} />
             <PropertyChecks value={props} onChange={setProps} />
-            <Field label="Temporary password" required hint="At least 8 characters. Share it privately; they can change it later.">
+            <Field label="Temporary password" required hint="At least 10 characters. Share it privately; they can change it later.">
               <div className="flex gap-2">
-                <Input value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="font-mono" minLength={8} required autoComplete="off" />
+                <Input value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="font-mono" minLength={10} required autoComplete="off" />
                 <IconButton label="Make up another password" variant="outline" onClick={() => setForm({ ...form, password: tempPassword() })}>
                   <KeyRound />
                 </IconButton>
@@ -526,7 +526,7 @@ export default function TeamPage() {
         onConfirm={runConfirm}
       >
         {confirm?.action === 'reset' && (
-          <Field label="New password" hint="At least 8 characters.">
+          <Field label="New password" hint="At least 10 characters. Their other sessions end.">
             <div className="flex gap-2">
               <Input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="font-mono" autoComplete="off" />
               <IconButton label="Make up another password" variant="outline" onClick={() => setNewPassword(tempPassword())}>

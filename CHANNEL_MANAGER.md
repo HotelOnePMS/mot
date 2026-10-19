@@ -139,8 +139,8 @@ curl -H "Authorization: Bearer $CRON_SECRET" https://<your-host>/api/channels/cr
 
 ## Database
 
-`prisma/migrations/20261019_channel_manager` adds the channel tables and `bookings.source` (existing bookings
-become `DIRECT`). It is additive and runs with the normal deploy (`scripts/vercel-build.mjs` applies migrations).
+`prisma/migrations/20261023_channel_manager` adds the channel tables (OTA bookings reuse the existing
+`bookings.source` column). It is additive and runs with the normal deploy (`scripts/vercel-build.mjs` applies migrations).
 
 ## Going live with the OTAs
 

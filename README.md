@@ -25,15 +25,25 @@ Hotels move between paths without starting over (Console → *Your PMS* → *Mov
 - **PMS bridge** — a computer-use operator that works the hotel's existing PMS in a browser, through the HotelOne Connector on a hotel computer or our isolated cloud browser — or, when the PMS company offers one, **their MCP server**: HotelOne connects and tests it, caches its tools as skills, runs look-ups through read-only tools and changes only after a confirmed plan, and accepts signed events back. Partner guide and tool contract: `/developers/pms` (`src/server/pms`).
 - **Channels** — Expedia and Booking.com for hotels on HotelOne: onboarding (sandbox or live), room mapping, rate/availability/restriction sync after every booking and rate change, OTA reservations imported as bookings, promotions, and a Channel Agent that changes OTA rates and promotions from plain-English requests with approval. See [CHANNEL_MANAGER.md](CHANNEL_MANAGER.md) (`src/server/channels`).
 - **Booking confirmation email** (Resend) — sent by HotelOne on the hotel's behalf (`src/server/email.ts`).
+- **Front desk: New reservation and Night audit** — staff take walk-in and phone bookings from the front desk (same booking engine and prices as the website, confirmed at once, optionally checked straight in; `src/server/services/reservations.ts`). The night audit closes the business day: arrivals who never came become no-shows, overdue departures and unpaid balances are listed, occupied rooms can be flagged for stayover cleaning, and the day's report (occupancy, room revenue, ADR) is saved once per day (`src/server/services/nightAudit.ts`).
+- **Each hotel's clock, currency, taxes and fees** — a hotel's "today", check-in day and 3 PM cancellation cut-off follow its own time zone; prices, Stripe charges, emails and the agent use its currency; taxes and fees (a percentage, per room per night, per guest per night or per stay) are added to every quote and shown line by line at checkout. Bookings store their currency, room subtotal and charge lines; reports count room revenue without taxes (*Settings → Prices and time*, `src/server/services/hotels.ts`, `pricing.ts`).
+- **Hotel groups (organizations)** — administrators of an organization see and manage every hotel in it; its sign-in policy covers its staff (*Setup → Organization*, `src/server/services/organizations.ts`).
+- **Sign-in security** — lockouts after repeated failures and sign-up limits per network, password reset by email, email verification, a 10-character password rule, two-step sign-in (TOTP with recovery codes; organizations can require it), "sign out everywhere", OpenID Connect single sign-on per organization with people created on first sign-in, and SCIM 2.0 provisioning (`/api/scim/v2`). Password changes, two-step changes, deactivation and role changes end existing sessions (`src/server/auth`, *Account → Security*).
+- **Error tracking and logs** — structured JSON logs in production and Sentry when `SENTRY_DSN` is set, including background work and uncaught route errors (`src/server/log.ts`, `src/instrumentation.ts`).
 
 ## Architecture
 
 ```
 src/app            Next.js App Router pages + route handlers (thin)
 src/server         Domain layer (server-only)
-  authz.ts         roles → permissions, per-property tenancy scoping
-  services/        bookings, inventory (availability + pricing), rates, rooms,
-                   housekeeping, front desk, guest self-service, bridge, audit
+  authz.ts         roles → permissions, per-property tenancy scoping (plus organization admins' hotels)
+  auth/            sign-in (lockouts, two-step codes), tokens, password reset, email
+                   verification, TOTP, OIDC single sign-on, SCIM provisioning
+  log.ts           structured logs + Sentry
+  services/        bookings, inventory (availability + pricing), pricing (taxes and fees),
+                   hotels (each hotel's clock and currency), rates, rooms, housekeeping,
+                   front desk, reservations (at the desk), night audit, organizations,
+                   guest self-service, bridge, audit
   agent/           deterministic NLU → resolver → read tools / write planners,
                    signed plans, NDJSON streaming engine (llm.ts = optional plug-in)
   voice/           GPT-Live session creation, prompts, tool schemas, guest tools
@@ -44,12 +54,15 @@ public/downloads   hotelone-connector.mjs (desktop connector / cloud worker);
                    stayos-connector.mjs stays for computers set up before the rename
 connector/         connector docs
 prisma/            schema, migrations, demo seed
+tests/unit         Vitest: pricing, currency, clocks, TOTP, signed plans, SSO state, SCIM filters, authz
+tests/integration  Vitest + PostgreSQL: booking engine, desk reservations, night audit, sign-in, reset, organizations, SCIM
 ```
 
 Key rules the code enforces:
 
 - **Availability is derived from bookings** for every night (no counters to drift); prices come from the rate calendar's exceptions over the base price, and the booking endpoint charges exactly the quote. Booking creation runs in a serializable transaction.
-- **Dates are calendar days** (`YYYY-MM-DD`, stored at 12:00 UTC); the hotel's "today" uses `HOTEL_TIMEZONE`.
+- **Dates are calendar days** (`YYYY-MM-DD`, stored at 12:00 UTC); each hotel's "today" uses its own time zone (`HOTEL_TIMEZONE` for hotels that haven't set one).
+- **Money is in the hotel's currency**, rounded to that currency's minor unit; the booking stores exactly what Stripe charges (taxes and fees included).
 - **Nothing changes without a person**: agent writes → signed plan → confirm; voice writes → spoken yes → the same plan; bridge changes → confirmed plan → queued task; look-ups only are read-only by design.
 - **Secrets stay server-side**: OpenAI keys never reach browsers or connectors; PMS passwords are sealed and typed by the worker when the model calls `fill_credential` — the model never sees them.
 
@@ -65,7 +78,7 @@ npm run db:seed                 # demo data (wipes the dev database)
 npm run dev
 ```
 
-Open http://localhost:3000 and use the one-click demo logins on `/login` (password `demo1234`):
+Open http://localhost:3000 and use the one-click demo logins on `/demo`, the *Live demo* page (password `demo1234`):
 
 | Login | Sees |
 | --- | --- |
@@ -85,9 +98,9 @@ Open http://localhost:3000 and use the one-click demo logins on `/login` (passwo
 | `DIRECT_URL` | ✓ local | Unpooled connection for migrations (locally the same as `DATABASE_URL`; the Vercel build fills it from `DATABASE_URL_UNPOOLED` / `POSTGRES_URL_NON_POOLING` / `DATABASE_URL`) |
 | `NEXTAUTH_SECRET` | ✓ | Session signing; also signs agent plans and voice sessions unless `AGENT_PLAN_SECRET` is set |
 | `NEXTAUTH_URL` | prod | Public URL (Stripe return URLs) |
-| `HOTEL_TIMEZONE` | | Hotel "today" (default `America/Los_Angeles`) |
+| `HOTEL_TIMEZONE` | | Platform default time zone (default `America/Los_Angeles`); each hotel can set its own |
 | `AGENT_PLAN_SECRET` | | Separate secret for signed agent plans |
-| `NEXT_PUBLIC_DEMO_MODE` | | `true` = public demo: one-click demo logins on `/login`; the shared demo logins and the demo hotels' public details (name, listing, voice script) can't be changed |
+| `NEXT_PUBLIC_DEMO_MODE` | | `true` = public demo: one-click demo logins on `/demo` (the *Live demo* page); the shared demo logins and the demo hotels' public details (name, listing, voice script) can't be changed |
 | `NEXT_PUBLIC_SITE_URL` | | Canonical public address, e.g. `https://hotelone.site` — metadata, sitemap, and Stripe return URLs (default: `https://hotelone.site` for metadata, the host the guest booked on for Stripe) |
 | `ELEVENLABS_API_KEY` | voice | Voice front desk on ElevenLabs Agents (used when set). Needs Agents write access; HotelOne creates and updates its two agents itself |
 | `ELEVENLABS_VOICE_ID`, `ELEVENLABS_LLM` | | ElevenLabs voice (default: the platform default) and LLM (default `gemini-2.5-flash`) |
@@ -101,7 +114,7 @@ Open http://localhost:3000 and use the one-click demo logins on `/login` (passwo
 | `OPENAI_VOICE_BACKEND_MODEL` | | Model the voice delegates reasoning/tools to (default `gpt-6-luna`) |
 | `BRIDGE_OPERATOR_MODEL` | | Computer-use model (default `computer-use-preview`) |
 | `BRIDGE_OPERATOR_TOOL` | | `computer` to use the GA computer tool instead of `computer_use_preview` |
-| `HOTELONE_VAULT_KEY` | prod bridge | 32-byte base64 key for sealing PMS logins (`openssl rand -base64 32`); dev derives one from `NEXTAUTH_SECRET`. `STAYOS_VAULT_KEY` is still accepted — to switch names, copy the **exact same value** (a new key can't open stored logins) |
+| `HOTELONE_VAULT_KEY` | prod | 32-byte base64 key for sealing PMS logins, two-step sign-in secrets and SSO client secrets (`openssl rand -base64 32`); dev derives one from `NEXTAUTH_SECRET`. `STAYOS_VAULT_KEY` is still accepted — to switch names, copy the **exact same value** (a new key can't open stored logins) |
 | `BRIDGE_WORKER_SECRET` | cloud bridge | Shared secret for the cloud worker (`hotelone-connector.mjs worker`) |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | | Online card payment (pay-at-hotel works without) |
 | `RESEND_API_KEY` | | Confirmation emails |
@@ -114,12 +127,20 @@ Open http://localhost:3000 and use the one-click demo logins on `/login` (passwo
 | `VOICE_CONCIERGE_MAX_SESSIONS_PER_HOUR`, `VOICE_CONCIERGE_VOICE` | | Hourly ceiling for concierge web calls (default 120) and its GPT-Live voice (default `marin`) |
 | `AGENT_API_ALLOWED_ORIGINS` | | Comma-separated browser origins allowed to call `/api/mcp` and `/api/agents/v1` (empty: any https origin; server-to-server calls need none) |
 | `AGENT_API_READS_PER_MINUTE`, `AGENT_API_REQUESTS_PER_HOUR`, `AGENT_API_LOOKUPS_PER_HOUR` | | Per-IP limits for AI assistants without a key (defaults 120 / 10 / 20); raise them if hosted assistants that share IP addresses hit them |
+| `AGENT_KEYS_PER_HOTEL_DAY` | | API keys a hotel can create per day, revoked ones included (default 10) |
+| `AGENT_API_KEY_HOTEL_LOOKUPS_PER_HOUR`, `AGENT_API_KEY_HOTEL_REQUESTS_PER_HOUR`, `AGENT_API_KEY_HOTEL_BOOKINGS_PER_HOUR` | | Pools shared by all of a hotel's keys, on top of each key's own limits (defaults 300 / 100 / 100) |
+| `CONCIERGE_MAX_REQUESTS_PER_HOTEL_HOUR`, `CONCIERGE_MAX_PUBLIC_REQUESTS_PER_HOTEL_HOUR` | | Booking requests per hotel per hour from key holders and from anonymous assistants (defaults 20 / 10) |
+| `AGENT_CONFIRMATIONS_PER_HOTEL_DAY`, `AGENT_CONFIRMATIONS_PER_KEY_DAY` | | Confirmation emails for API-key bookings per hotel and per key per day (defaults 50 / 25; each address also gets at most 3 a day) |
+| `TRUSTED_PROXY_HOPS` | | Off Vercel: which X-Forwarded-For entry (counting from the right) is the client for rate limits (default 1). On Vercel its own headers are used |
 | `PMS_MCP_MODEL` | | Model that plans PMS MCP tool calls when the vendor doesn't follow the HotelOne contract (default `OPENAI_VOICE_BACKEND_MODEL`) |
 | `PMS_MCP_ALLOWED_HOSTS` | | Hosts a PMS MCP server may use despite the private-address guard (e.g. a vendor's on-premise gateway) |
 | `CRON_SECRET` | channels | Bearer token for `/api/channels/cron` (OTA reservation import + daily reconciliation; Vercel Cron sends it) |
 | `CHANNEL_AGENT_MODEL` | | Channel Agent model (default `OPENAI_VOICE_BACKEND_MODEL`); the agent needs `OPENAI_API_KEY` |
 | `EXPEDIA_EQC_BASE_URL`, `EXPEDIA_API_BASE_URL`, `BOOKING_COM_SUPPLY_URL`, `BOOKING_COM_SECURE_URL` | | Point live OTA connections at a certification environment (see CHANNEL_MANAGER.md) |
 | `PMS_EVENTS_SECRET` | | Base secret for PMS event signatures (default: derived from `NEXTAUTH_SECRET`, so rotating that rotates every PMS event secret) |
+| `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN` | | Error tracking on the server and in browsers (off when unset; the browser only downloads Sentry when set). `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE` tune it |
+| `SIGNUP_MAX_PER_IP_HOUR` | | New guest accounts per network per hour (default 10) |
+| `TEST_DATABASE_URL` | tests | PostgreSQL for `npm run test:integration` (migrations are applied; nothing is deleted) |
 | `VOICE_MAX_SESSIONS_PER_HOUR`, `BRIDGE_MAX_TASKS_PER_HOUR`, `ONBOARDING_MAX_PER_HOUR` | | Spend and abuse ceilings, enforced in the database so they hold across server instances (defaults 300 / 30 per hotel / 30) |
 
 ## The PMS bridge in one minute
@@ -129,6 +150,23 @@ Open http://localhost:3000 and use the one-click demo logins on `/login` (passwo
 3. Staff ask the agent ("who's arriving?", "check in Moreno into 14"). Look-ups queue straight away; changes need a confirmed plan. Results stream back into the conversation as live task cards.
 
 See [`connector/README.md`](connector/README.md) for details and guardrails.
+
+## Hotel groups, single sign-on and SCIM
+
+1. An owner opens *Setup → Organization*, names the group and picks their hotels; they become its administrator and see every hotel in it.
+2. *Sign-in policy*: require two-step sign-in for staff who use a password, and choose the role new SSO/SCIM people get.
+3. *Single sign-on*: create an OpenID Connect web app in your identity provider (Okta, Microsoft Entra ID, Google Workspace, Auth0, Keycloak) with the redirect URI `https://<your-domain>/api/sso/callback` and scopes `openid email profile`, then enter the issuer, client ID, client secret and your email domains. Staff click *Continue with single sign-on* on the login page. "Require it" turns off passwords for those domains. SAML-only providers connect through a broker that speaks OIDC.
+4. *SCIM*: create a token and give your identity provider the base URL `https://<your-domain>/api/scim/v2`. It can create, update, deactivate and remove staff; removed people are turned off and keep their history.
+
+## Tests and CI
+
+```bash
+npm test                                   # unit tests, no database
+TEST_DATABASE_URL=postgresql://…/hotelone_test npm run test:integration
+npm run typecheck && npm run lint
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs lint, type check, unit tests, integration tests against PostgreSQL 16 and a production build on every pull request and every push to `main`.
 
 ## Deploying
 
@@ -144,4 +182,4 @@ The product name lives in `src/config/product.ts` (`PRODUCT_NAME`, `PRODUCT_DOMA
 
 ## Scripts
 
-`npm run dev` · `npm run build` · `npm run lint` · `npm run db:seed` · `npx prisma migrate deploy`
+`npm run dev` · `npm run build` · `npm run lint` · `npm run typecheck` · `npm test` · `npm run test:integration` · `npm run db:seed` · `npx prisma migrate deploy`

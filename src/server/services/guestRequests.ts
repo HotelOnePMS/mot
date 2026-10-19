@@ -9,6 +9,7 @@ import { prisma } from '@/lib/prisma';
 import { isDemoEmail } from '@/config/product';
 import { siteUrl } from '../concierge/urls';
 import { sendGuestRequestAlert } from '../email';
+import { logError } from '@/server/log';
 
 const CHANNEL: Record<string, string> = { PHONE: 'Phone call', WHATSAPP: 'WhatsApp', VOICE: 'Booking page', AGENT: 'AI assistant' };
 const email = z.string().email();
@@ -53,7 +54,7 @@ async function deliver(requestId: string) {
 
 /** Email the hotel's team about a new message, after the response is sent (never delays the caller). */
 export function alertTeam(requestId: string): void {
-  const run = () => deliver(requestId).catch((e) => console.error('[requests] alert failed for', requestId, e));
+  const run = () => deliver(requestId).catch((e) => logError('requests', 'alert failed for', requestId, e));
   try {
     after(run);
   } catch {

@@ -1,11 +1,12 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
+import { reservedShortcutName, suggestionTitle } from '@/server/agent/skills';
 import { requireStaff } from '@/server/authz';
 import { badRequest, forbidden } from '@/server/errors';
 import { handleRoute, json, parseJson } from '@/server/http';
 import { recordAudit } from '@/server/services/audit';
 import { deleteSkill, updateSkill, type SkillBody, type SkillPatch } from '@/server/skills';
-import { SKILLS_DEMO_LOCKED, describeSkill, guestAnswersLocked, guestFacing, skillForStaff, skillView } from '@/server/skills/admin';
+import { SHORTCUT_NAME_RESERVED, SKILLS_DEMO_LOCKED, describeSkill, guestAnswersLocked, guestFacing, skillForStaff, skillView } from '@/server/skills/admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,8 +44,13 @@ export const PATCH = handleRoute(async (request: NextRequest, { params }: Route)
   if (body.steps !== undefined && skill.kind === 'ANSWER') throw badRequest('Saved answers don’t have steps.');
   const touchesGuests = guestFacing(skill) || body.audience === 'ALL';
   if (touchesGuests && skill.propertyId && (await guestAnswersLocked(actor, skill.propertyId))) throw forbidden(SKILLS_DEMO_LOCKED);
+  if (skill.kind === 'MACRO' && body.title !== undefined && body.title !== skill.title && reservedShortcutName(body.title)) throw badRequest(SHORTCUT_NAME_RESERVED);
 
   const patch: SkillPatch = { status: body.status, title: body.title, description: body.description, audience: body.audience };
+  // Approving a suggestion named after its template ("Add a note to {guest}: …", from before suggestions got plain names): give it one.
+  if (skill.kind === 'MACRO' && skill.status === 'SUGGESTED' && body.status === 'ACTIVE' && body.title === undefined && /\{[A-Za-z_]+\d*\}/.test(skill.title)) {
+    patch.title = suggestionTitle(skill.title);
+  }
   if (skill.kind === 'ANSWER' && body.answer !== undefined) patch.body = { answer: body.answer };
   if (skill.kind === 'MACRO' && body.steps) {
     patch.body = { steps: body.steps.map((command) => ({ command: command.slice(0, 500) })) };

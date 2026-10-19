@@ -6,6 +6,15 @@
 import { addDaysISO, dayOfWeek, eachNight, hotelToday, HOTEL_TIMEZONE, isISODate, toISODate } from '../dates';
 
 export { hotelToday, HOTEL_TIMEZONE, toISODate };
+export { todayAt } from '../services/hotels';
+
+/**
+ * The earliest calendar date anywhere (UTC-12). Input checks that don't know which hotel's
+ * clock applies use it, so they only reject dates that are past for every hotel.
+ */
+export function earliestToday(): string {
+  return hotelToday(new Date(), 'Etc/GMT+12');
+}
 
 export const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'] as const;
 export type Weekday = (typeof WEEKDAYS)[number];

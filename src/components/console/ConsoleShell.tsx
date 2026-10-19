@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ChevronsUpDown,
   ExternalLink,
+  Globe,
   LogOut,
   Menu,
   Monitor,
@@ -20,9 +21,14 @@ import {
   Plus,
   Sparkles,
   Sun,
+  UserRound,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { roleLabel } from '@/lib/status';
+import { loginUrl, signOutTarget } from '@/lib/routes';
+import type { StaffProperty } from '@/lib/dto';
+import { PRODUCT_NAME } from '@/config/product';
+import { LABELS } from '@/config/copy';
 import { Logo, LogoMark } from '@/components/brand/Logo';
 import { Badge } from '@/components/ui/badge';
 import { Button, IconButton } from '@/components/ui/button';
@@ -60,6 +66,28 @@ function useModKey(): string | null {
 
 function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(href + '/');
+}
+
+/** Voice-only hotels have no booking site, so there is nothing to open. */
+function hasBookingSite(property: StaffProperty | undefined): property is StaffProperty {
+  return !!property && property.setupPath !== 'VOICE';
+}
+
+/** Leaving the console always lands on the sign-in page, wherever you were in it. */
+function signOutOfConsole() {
+  void signOut({ callbackUrl: signOutTarget('/admin') });
+}
+
+/** The hotel's public page in a new tab (a real link, so it can be copied too). */
+function BookingSiteItem({ property }: { property: StaffProperty }) {
+  return (
+    <DropdownMenuItem asChild>
+      <a href={`/properties/${property.id}`} target="_blank" rel="noopener">
+        <ExternalLink aria-hidden /> {LABELS.bookingSite}
+        <span className="sr-only">(opens in a new tab)</span>
+      </a>
+    </DropdownMenuItem>
+  );
 }
 
 function NavList({
@@ -136,11 +164,6 @@ function NavList({
                       ) : (
                         <span className="truncate">{item.label}</span>
                       )}
-                      {!collapsed && item.agent && (
-                        <Badge variant="agent" size="sm" className="ml-auto">
-                          AI
-                        </Badge>
-                      )}
                     </Link>
                   </li>
                 );
@@ -208,10 +231,8 @@ function PropertySwitcher({ className }: { className?: string }) {
             )}
           </DropdownMenuItem>
         ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => window.open(`/properties/${property.id}`, '_blank', 'noopener')}>
-          <ExternalLink aria-hidden /> View booking site
-        </DropdownMenuItem>
+        {(hasBookingSite(property) || can('property.create')) && <DropdownMenuSeparator />}
+        {hasBookingSite(property) && <BookingSiteItem property={property} />}
         {can('property.create') && (
           <DropdownMenuItem onSelect={() => router.push('/admin/properties/add')}>
             <Plus aria-hidden /> Add a property
@@ -223,7 +244,7 @@ function PropertySwitcher({ className }: { className?: string }) {
 }
 
 function UserMenu() {
-  const { ctx } = useConsole();
+  const { ctx, property } = useConsole();
   const { theme, setTheme } = useTheme();
   if (!ctx) return <Skeleton className="size-10 rounded-full" />;
   return (
@@ -245,6 +266,18 @@ function UserMenu() {
           </p>
         </div>
         <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/profile">
+            <UserRound aria-hidden /> {LABELS.profile}
+          </Link>
+        </DropdownMenuItem>
+        {hasBookingSite(property) && <BookingSiteItem property={property} />}
+        <DropdownMenuItem asChild>
+          <Link href="/">
+            <Globe aria-hidden /> {PRODUCT_NAME} website
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuLabel>Theme</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={theme ?? 'system'} onValueChange={setTheme}>
           <DropdownMenuRadioItem value="light">
@@ -258,8 +291,8 @@ function UserMenu() {
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem destructive onSelect={() => signOut({ callbackUrl: '/login' })}>
-          <LogOut aria-hidden /> Sign out
+        <DropdownMenuItem destructive onSelect={signOutOfConsole}>
+          <LogOut aria-hidden /> {LABELS.signOut}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -289,7 +322,7 @@ function ShellGate({ children }: { children: React.ReactNode }) {
   const { ctx, error, property } = useConsole();
   const router = useRouter();
   React.useEffect(() => {
-    if (error instanceof ApiError && error.status === 401) router.replace(`/login?callbackUrl=${encodeURIComponent(window.location.pathname)}`);
+    if (error instanceof ApiError && error.status === 401) router.replace(loginUrl(window.location.pathname + window.location.search));
   }, [error, router]);
   if (error instanceof ApiError && error.status === 403) {
     return (
@@ -514,8 +547,20 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
             <NavList groups={groups} touch onNavigate={() => setMobileOpen(false)} />
           </div>
           {ctx && (
-            <div className="shrink-0 border-t px-4 py-3 text-xs text-muted-foreground">
-              Signed in as <span className="font-medium text-foreground">{ctx.user.name}</span> · {roleLabel(ctx.user.role)}
+            <div className="shrink-0 space-y-2.5 border-t p-3">
+              <p className="truncate px-1 text-xs text-muted-foreground">
+                Signed in as <span className="font-medium text-foreground">{ctx.user.name}</span> · {roleLabel(ctx.user.role)}
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <Button asChild variant="outline" className="h-11">
+                  <Link href="/profile" onClick={() => setMobileOpen(false)}>
+                    <UserRound aria-hidden /> {LABELS.profile}
+                  </Link>
+                </Button>
+                <Button variant="outline" className="h-11" onClick={signOutOfConsole}>
+                  <LogOut aria-hidden /> {LABELS.signOut}
+                </Button>
+              </div>
             </div>
           )}
         </SheetContent>

@@ -7,6 +7,7 @@ import { handleRoute, json, parseJson } from '@/server/http';
 import { authenticateBridge, loadTaskForCaller, logOperatorStep, readCredentials } from '@/server/services/bridge';
 import { MAX_STEPS, operatorStep, totp } from '@/server/bridge/operator';
 import { recipeForTask } from '@/server/bridge/recipes';
+import { logError } from '@/server/log';
 
 type Params = { params: Promise<{ taskId: string }> };
 
@@ -55,7 +56,7 @@ export const POST = handleRoute(async (request: NextRequest, { params }: Params)
     pending: body.pending,
     recipe: recipe?.recipe ?? null,
   });
-  await logOperatorStep({ ...task, payload: counted.payload }, { currentUrl: body.currentUrl, next, recipeKey: recipe?.key ?? null }).catch((e) => console.error('[bridge] step log failed:', e));
+  await logOperatorStep({ ...task, payload: counted.payload }, { currentUrl: body.currentUrl, next, recipeKey: recipe?.key ?? null }).catch((e) => logError('bridge', 'step log failed:', e));
   if (next.kind === 'done' && next.steps) {
     // Recipe material stays on the server; the connector only needs status and summary.
     const { steps: _steps, ...rest } = next;
