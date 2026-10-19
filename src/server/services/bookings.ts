@@ -7,6 +7,9 @@ import { randomInt } from 'crypto';
 import { prisma } from '@/lib/prisma';
 import type { BookingStatus, BookingSummary, ISODate } from '@/lib/dto';
 import { BOOKING_STATUS } from '@/lib/status';
+import { paymentAmountDue, toCents, fromCents, type PaymentPolicy } from '@/lib/payments';
+import { HOLD_MINUTES } from '../payments/config';
+import { releaseExpiredHolds } from '../payments/expiry';
 import { assertPropertyAccess, can, requirePermission, scopeByProperty, type Actor, type Permission } from '../authz';
 import { addDaysISO, atNoonUTC, dayBounds, diffDays, formatDay, hotelToday, isISODate, toISODate } from '../dates';
 import { badRequest, conflict, DomainError, notFound } from '../errors';
@@ -118,6 +121,13 @@ export interface CreateBookingInput {
   rooms?: number;
   notes?: string | null;
   paymentStatus?: string;
+  /**
+   * Online payment: the booking is held (PENDING, AWAITING_PAYMENT) until the
+   * amount due now is paid. The amount is worked out from the server's quote.
+   */
+  onlinePayment?: { policy: PaymentPolicy; depositNights: number };
+  /** The cancellation/refund policy the guest accepted, recorded with the booking. */
+  policyAcceptance?: { version: string; hash: string; text: string; ip?: string | null; userAgent?: string | null };
   /** Who/what created it, for the status history. */
   createdVia?: string;
 }
@@ -146,6 +156,9 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
     throw badRequest(`${roomType.name} sleeps up to ${roomType.capacity} per room. Add another room or choose a larger room type.`);
   }
 
+  // Unpaid online bookings past their hold free their rooms before we count what is left.
+  await releaseExpiredHolds({ roomTypeId: input.roomTypeId });
+
   // Serializable transaction: two guests racing for the last room cannot
   // both succeed. Retries on serialization failures and code collisions.
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -162,6 +175,16 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
             );
           }
           const quote = await quoteStay(tx, { roomTypeId: input.roomTypeId, checkIn: input.checkIn, checkOut: input.checkOut, rooms, guests: input.guests });
+          const due = input.onlinePayment
+            ? paymentAmountDue({
+                policy: input.onlinePayment.policy,
+                depositNights: input.onlinePayment.depositNights,
+                nightlyCents: quote.nights.map((n) => toCents(n.price)),
+                rooms,
+                totalCents: toCents(quote.total),
+              })
+            : null;
+          const online = !!due && due.dueNowCents > 0;
           return tx.booking.create({
             data: {
               userId: input.userId,
@@ -173,10 +196,24 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
               rooms,
               totalPrice: quote.total,
               status: 'PENDING',
-              paymentStatus: input.paymentStatus ?? 'UNPAID',
+              paymentStatus: online ? 'AWAITING_PAYMENT' : (input.paymentStatus ?? 'UNPAID'),
+              ...(online ? { paymentDue: fromCents(due.dueNowCents), expiresAt: new Date(Date.now() + HOLD_MINUTES * 60_000) } : {}),
+              ...(input.policyAcceptance
+                ? {
+                    policyAcceptance: {
+                      create: {
+                        version: input.policyAcceptance.version,
+                        hash: input.policyAcceptance.hash,
+                        text: input.policyAcceptance.text,
+                        ip: input.policyAcceptance.ip ?? null,
+                        userAgent: input.policyAcceptance.userAgent?.slice(0, 300) ?? null,
+                      },
+                    },
+                  }
+                : {}),
               code: generateBookingCode(),
               notes: input.notes?.trim() || null,
-              statusHistory: { create: { status: 'PENDING', notes: input.createdVia ?? 'Booking created' } },
+              statusHistory: { create: { status: 'PENDING', notes: online ? 'Booked online — awaiting card payment' : (input.createdVia ?? 'Booking created') } },
             },
             include: bookingInclude,
           });

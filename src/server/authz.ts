@@ -32,6 +32,12 @@ export const PERMISSIONS = {
   'booking.cancel': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'booking.reinstate': ['ADMIN', 'OWNER', 'MANAGER'],
   'booking.payment.view': ['ADMIN', 'OWNER', 'MANAGER'],
+  // Online payments (Stripe Connect): who sees and changes them, refunds and disputes.
+  'payments.view': ['ADMIN', 'OWNER', 'MANAGER'],
+  'payments.manage': ['ADMIN', 'OWNER'],
+  'payments.refund': ['ADMIN', 'OWNER', 'MANAGER'],
+  'disputes.view': ['ADMIN', 'OWNER', 'MANAGER'],
+  'disputes.manage': ['ADMIN', 'OWNER'],
   'room.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
   'room.status': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
   'room.outOfOrder': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],

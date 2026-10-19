@@ -515,7 +515,9 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
       const warnings: string[] = [];
       const due = toISODate(b.checkOut);
       if (due > today) warnings.push(`Early departure — due ${formatDay(due)}. Unused nights go back on sale.`);
-      if ((b.paymentStatus ?? 'UNPAID') !== 'PAID') warnings.push(`Balance ${money(Number(b.totalPrice))} — ${PAYMENT_STATUS[b.paymentStatus ?? 'UNPAID']?.label ?? 'unpaid'}. Settle before the guest leaves.`);
+      const collected = toBookingSummary(b).amountPaid;
+      const balance = Math.max(0, Number(b.totalPrice) - collected);
+      if (balance > 0.004) warnings.push(`Balance ${money(balance)} — ${PAYMENT_STATUS[b.paymentStatus ?? 'UNPAID']?.label ?? 'unpaid'}. Settle before the guest leaves.`);
       return {
         steps: [
           {

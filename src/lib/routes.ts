@@ -57,6 +57,8 @@ export const CONSOLE_ACCESS: { prefix: string; roles: readonly StaffRole[] }[] =
   { prefix: '/admin/activity', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
   { prefix: '/admin/settings', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
   { prefix: '/admin/analytics', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
+  // Card disputes: same roles as the 'disputes.view' permission; submitting evidence needs 'disputes.manage'.
+  { prefix: '/admin/disputes', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
   { prefix: '/admin/voice', roles: ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'] },
   { prefix: '/admin/connect', roles: ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'] },
   // Same roles as the 'skills.view' permission; changes need 'skills.manage'.

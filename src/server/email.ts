@@ -38,7 +38,10 @@ export interface BookingEmailData {
   /** Amount in the hotel's currency, e.g. "240.00". */
   totalPrice: string;
   bookingId: string;
+  /** PAID, DEPOSIT_PAID or PAY_AT_PROPERTY. */
   paymentStatus: string;
+  /** Collected online so far, e.g. "120.00" (deposits). */
+  amountPaid?: string;
 }
 
 // Email clients ignore CSS variables and dark-mode classes: the light theme's
@@ -91,6 +94,7 @@ interface Detail {
 
 function confirmationContent(data: BookingEmailData) {
   const paid = data.paymentStatus === 'PAID';
+  const deposit = data.paymentStatus === 'DEPOSIT_PAID';
   const nights = nightsBetween(data.checkIn, data.checkOut);
   const details: Detail[] = [
     { label: 'Booking reference', value: data.bookingId },
@@ -102,10 +106,14 @@ function confirmationContent(data: BookingEmailData) {
     { label: 'Total', value: formatTotal(data.totalPrice) },
   ];
   return {
-    paid,
+    paid: paid || deposit,
     details,
-    paymentLabel: paid ? 'Paid online' : 'Pay at the hotel',
-    paymentNote: paid ? 'Your payment has been received.' : 'Nothing has been charged — you’ll pay the hotel during your stay.',
+    paymentLabel: paid ? 'Paid online' : deposit ? 'Deposit paid online' : 'Pay at the hotel',
+    paymentNote: paid
+      ? 'Your payment has been received.'
+      : deposit
+        ? `Your deposit${data.amountPaid ? ` of ${formatTotal(data.amountPaid)}` : ''} has been received. You’ll pay the balance at the hotel.`
+        : 'Nothing has been charged — you’ll pay the hotel during your stay.',
     preheader: `${data.propertyName}: ${formatDay(data.checkIn)} to ${formatDay(data.checkOut)}. Reference ${data.bookingId}.`,
   };
 }
@@ -363,5 +371,62 @@ export async function sendPasswordResetEmail(data: PasswordResetEmailData): Prom
     await resend.emails.send({ from: fromAddress, to: data.to, subject: `Reset your ${PRODUCT_NAME} password`, html, text });
   } catch (error) {
     console.error('[email] Failed to send password reset email:', error);
+  }
+}
+
+export interface DisputeAlertData {
+  to: string[];
+  propertyName: string;
+  guestName: string | null;
+  bookingCode: string | null;
+  /** "150.00 USD" */
+  amount: string;
+  reason: string | null;
+  /** When Stripe needs the evidence by, as a readable date, if known. */
+  dueBy: string | null;
+  /** Absolute link to the dispute in the console. */
+  consoleUrl: string;
+}
+
+/**
+ * Tell a hotel's owner a card payment was disputed and that the evidence is
+ * ready to review. Nothing is submitted for them. Skips (logs) without Resend.
+ */
+export async function sendDisputeAlert(data: DisputeAlertData): Promise<boolean> {
+  if (!resend) {
+    console.log(`[email] Skipping dispute alert to ${data.to.join(', ')} (RESEND_API_KEY not configured)`);
+    return false;
+  }
+  const subject = `A card payment was disputed — ${oneLine(data.propertyName)}${data.bookingCode ? ` (${oneLine(data.bookingCode)})` : ''}`;
+  const e = escapeHtml;
+  const facts = [
+    ['Amount', data.amount],
+    ...(data.bookingCode ? [['Booking', data.bookingCode]] : []),
+    ...(data.guestName ? [['Guest', data.guestName]] : []),
+    ...(data.reason ? [['Reason given', data.reason.replace(/_/g, ' ')]] : []),
+    ...(data.dueBy ? [['Respond by', data.dueBy]] : []),
+  ];
+  const html = `<!doctype html><html><body style="margin:0;padding:24px;background:${C.page};font-family:${FONT};color:${C.ink}">
+<div style="max-width:520px;margin:0 auto;background:${C.card};border:1px solid ${C.border};border-radius:12px;padding:28px">
+<p style="margin:0 0 12px;font-size:18px;font-weight:600">A guest’s bank has disputed a payment</p>
+<p style="margin:0 0 16px;font-size:15px;line-height:1.5">${e(data.propertyName)} received a card dispute. We put together the booking record, the policy the guest accepted, the 3D Secure result and the check-in details. Review it and submit it from the console when you’re ready — nothing is sent to the bank until you do.</p>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 20px;font-size:14px;line-height:22px">${facts.map(([k, v]) => `<tr><td style="padding-right:16px;color:${C.muted}">${e(k)}</td><td style="font-weight:600">${e(v)}</td></tr>`).join('')}</table>
+<p style="margin:0 0 8px"><a href="${e(data.consoleUrl)}" style="display:inline-block;background:${C.primary};color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 20px;border-radius:8px">Review the evidence</a></p>
+<p style="margin:16px 0 0;font-size:13px;line-height:1.5;color:${C.muted}">Disputes have a deadline set by the card network. Winning is never certain, so the sooner you submit, the better.</p>
+</div></body></html>`;
+  const text = [
+    `A guest’s bank has disputed a card payment at ${data.propertyName}.`,
+    '',
+    ...facts.map(([k, v]) => `${k}: ${v}`),
+    '',
+    'We assembled the evidence from the booking record. Review it and submit it yourself — nothing is sent to the bank until you do:',
+    data.consoleUrl,
+  ].join('\n');
+  try {
+    await resend.emails.send({ from: fromAddress, to: data.to, subject, html, text });
+    return true;
+  } catch (error) {
+    console.error('[email] Failed to send dispute alert:', error);
+    return false;
   }
 }

@@ -3,6 +3,8 @@
  * client components. Client-safe: no server imports.
  */
 
+import type { RiskFlag } from './risk';
+
 export type ISODate = string; // YYYY-MM-DD
 
 export type BookingStatus = 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'CHECKED_IN' | 'CHECKED_OUT' | 'NO_SHOW';
@@ -26,6 +28,10 @@ export interface BookingSummary {
   room: { id: string; number: string; floor: string | null } | null;
   totalPrice: number;
   paymentStatus: string;
+  /** Collected online and not refunded, in the booking's currency. */
+  amountPaid: number;
+  /** Reasons for the front desk to look twice (staff only; computed on the server). */
+  riskFlags: RiskFlag[];
   notes: string | null;
   createdAt: string;
 }
