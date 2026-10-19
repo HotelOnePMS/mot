@@ -5,6 +5,7 @@ import { handleRoute, json, parseJson } from '@/server/http';
 import { recordAudit } from '@/server/services/audit';
 import { propertySchema } from '@/server/schemas';
 import { scheduleConfigSkillSync } from '@/server/skills';
+import { findAvailableSubdomain, hostPropertySubdomain } from '@/server/domains';
 
 /** GET — properties the caller can manage, with room types and booking counts. */
 export const GET = handleRoute(async () => {
@@ -26,6 +27,8 @@ export const POST = handleRoute(async (request: NextRequest) => {
   const actor = await requireStaff();
   requirePermission(actor, 'property.create');
   const body = await parseJson(request, propertySchema);
+  // Default booking page address, e.g. oceanview-resort.hotelone.site
+  const subdomain = await findAvailableSubdomain(body.name);
   const property = await prisma.$transaction(async (tx) => {
     const p = await tx.property.create({
       data: {
@@ -42,6 +45,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
         primaryColor: body.primaryColor || null,
         type: body.type ?? 'Hotel',
         isActive: body.isActive ?? true,
+        subdomain,
       },
     });
     if (actor.role !== 'ADMIN') {
@@ -51,5 +55,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
   });
   await recordAudit({ actor, source: 'classic' }, property.id, 'PROPERTY_CREATE', `Created property ${property.name}`);
   scheduleConfigSkillSync(property.id);
+  // The next deploy's subdomain sync retries it if this fails
+  await hostPropertySubdomain(subdomain).catch((error) => console.error('Error adding subdomain to Vercel:', error));
   return json(property, { status: 201 });
 });

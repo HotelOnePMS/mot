@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Callout, EmptyState, Skeleton } from '@/components/ui/primitives';
 import { PhotoManager } from '@/components/setup/PhotoManager';
+import { BookingDomainCard } from '@/components/setup/BookingDomainCard';
 import { EMPTY_PROPERTY, PropertyFields, errorSummary, propertyErrors, toPropertyPayload, type PropertyDraft } from '@/components/setup/PropertyFields';
 import { SaveBar } from '@/components/setup/SaveBar';
 import { ConfirmDialog } from '@/components/frontdesk/dialogs';
@@ -233,6 +234,8 @@ export default function PropertyDetailPage() {
           <p className="mb-4 mt-0.5 text-sm text-muted-foreground">Your cover photo is the first thing guests see. Bright, wide shots work best.</p>
           <PhotoManager endpoint={`/api/admin/properties/${p.id}/photos`} editable={editable} />
         </Card>
+
+        <BookingDomainCard propertyId={p.id} editable={editable && !p.isDemo} />
 
         {editable && (
           <Card className="p-5 sm:p-8">

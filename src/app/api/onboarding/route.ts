@@ -9,6 +9,7 @@ import { VOICES } from '@/server/voice/live';
 import { toE164 } from '@/lib/phone';
 import { cloudLoginUrlIssue, pmsLoginUrlSchema } from '@/server/schemas';
 import { scheduleConfigSkillSync } from '@/server/skills';
+import { findAvailableSubdomain, hostPropertySubdomain } from '@/server/domains';
 
 /** "15:00" — a time of day on the 24-hour clock. */
 const clock = z
@@ -82,6 +83,8 @@ export const POST = handleRoute(async (request: NextRequest) => {
     throw conflict('An account with this email already exists — sign in instead.');
   }
   const passwordHash = await bcrypt.hash(body.account.password, 12);
+  // Default booking page address, e.g. oceanview-resort.hotelone.site
+  const subdomain = await findAvailableSubdomain(body.property.name);
 
   const result = await prisma.$transaction(async (tx) => {
     const user = await tx.user.create({
@@ -102,6 +105,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
         isActive: true,
         isDemo: false,
         setupPath: body.path,
+        subdomain,
         // Hotels that keep their PMS start in the agent, where the bridge lives.
         interfaceMode: body.path === 'BRIDGE' ? 'AGENTIC' : 'CLASSIC',
       },
@@ -144,6 +148,8 @@ export const POST = handleRoute(async (request: NextRequest) => {
   });
   // The new hotel's rooms, policy and contact details become agent skills.
   scheduleConfigSkillSync(result.property.id);
+  // The next deploy's subdomain sync retries it if this fails
+  await hostPropertySubdomain(subdomain).catch((error) => console.error('Error adding subdomain to Vercel:', error));
 
   const next = body.path === 'VOICE' ? '/admin/voice?welcome=1' : body.path === 'BRIDGE' ? '/admin/connect?welcome=1' : '/admin/dashboard?welcome=1';
   return json({ message: 'Onboarding complete', property: { id: result.property.id, name: result.property.name }, next }, { status: 201 });

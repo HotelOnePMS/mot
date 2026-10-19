@@ -45,6 +45,24 @@ The repo deploys as-is: `vercel.json` runs `scripts/vercel-build.mjs`, which
 5. **Phone lines last**: ElevenLabs calls the public address, so finish DNS (*Valid Configuration* in Vercel) before turning on a phone line or opening the *Phone* tab. Lines that already exist keep calling the old address until their agent is re-synced: open each hotel's *Voice* → *Phone* tab as the owner, a manager or a platform admin (or press *Refresh* there) — that re-syncs the agent and its tools with the new webhook address; saving the line does the same. Until every line has been re-synced, keep the old `*.vercel.app` address publicly reachable — open `https://<project>.vercel.app/api/health` in a private window; if Vercel asks you to sign in, *Settings* → *Deployment Protection* is now covering it.
 6. **PMS connectors**: desktop connectors remember the address they were paired with, so they keep using the old `*.vercel.app` address while it stays reachable; re-pair one to move it to `https://hotelone.site`. Set `HOTELONE_SERVER=https://hotelone.site` (or keep `STAYOS_SERVER`) on the cloud worker.
 
+## Hotel booking page domains
+
+Each hotel's booking page can have its own address, set by the owner in *Console → Properties → (hotel) → Booking page address*.
+
+**Default addresses** (`oceanview-resort.hotelone.site`): every hotel gets one, made from its name; owners can change it. Addresses no hotel uses send visitors to `https://hotelone.site`. Once a hotel's own domain is live, its default address forwards guests there.
+
+1. Set `PROPERTY_DOMAIN_BASE=hotelone.site`.
+2. Vercel only takes a `*.hotelone.site` wildcard when `hotelone.site` uses Vercel's nameservers. Either:
+   - **Keep GoDaddy DNS** (as set up above): at GoDaddy add `CNAME` `*` → `cname.vercel-dns.com`, and set `VERCEL_API_TOKEN` + `VERCEL_PROJECT_ID` (below). The app adds each hotel's subdomain to the project: when the hotel is created, when its address changes, and on every deploy for any that are missing.
+   - **Move the nameservers to Vercel**: add `*.hotelone.site` under *Settings → Domains* and set `PROPERTY_DOMAIN_WILDCARD=true`; nothing is added per hotel.
+3. Redeploy. The migration gives existing hotels an address from their name.
+
+**A hotel's own domain** (`book.mymotel.com`): the owner enters it, the card shows the DNS records to add at their provider (`CNAME` → `cname.vercel-dns.com`, or for a root domain `A` `@` → `76.76.21.21` plus `www`), and *Check DNS* turns it on once it points here. On that domain guests see only that hotel's booking page and their booking; sign-in, accounts and staff pages redirect to the main site.
+
+- `VERCEL_API_TOKEN` (sensitive; *Account Settings → Tokens*, scoped to the team), `VERCEL_PROJECT_ID` (*Project → Settings → General*) and, for a team project, `VERCEL_TEAM_ID`: the app then adds and removes domains on the project itself, so Vercel routes them and issues their certificates. Without them, add each domain by hand under *Settings → Domains*.
+- `NEXTAUTH_DOMAIN` must stay unset: it pins the sign-in cookie to one domain, and guests book on the hotels' domains.
+- Optional: `APP_HOSTNAMES` (comma-separated extra hostnames of the main site; `*.vercel.app`, `NEXT_PUBLIC_SITE_URL`, `HOTELONE_PUBLIC_URL` and the production domain always count), `CUSTOM_DOMAIN_CNAME_TARGET` / `CUSTOM_DOMAIN_A_RECORD` (override the DNS values shown to owners), `INTERNAL_APP_URL` (where middleware looks up domains; defaults to the request's own origin).
+
 ## Phone line (ElevenLabs)
 
 Answer a hotel's phone with the voice front desk. Production only: preview deployments sit behind Vercel Authentication, which would refuse ElevenLabs' webhooks (the console says so on previews).
