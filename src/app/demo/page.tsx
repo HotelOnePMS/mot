@@ -5,18 +5,13 @@ import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/primitives';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
 import { DemoLogins } from '@/components/auth/DemoLogins';
+import { DEMO_ENABLED } from '@/config/demo';
 import { LABELS, TERMS } from '@/config/copy';
 import { PRODUCT_NAME } from '@/config/product';
 import { prisma } from '@/lib/prisma';
 import { LISTED_PROPERTY } from '@/server/concierge/facts';
 
 export const revalidate = 300;
-
-/**
- * Same rule as DEMO_ENABLED. That constant lives in a client module, and a
- * server component only receives a reference to it (always truthy).
- */
-const DEMO_LOGINS = process.env.NEXT_PUBLIC_DEMO_MODE === 'true' || (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_DEMO_MODE !== 'false');
 
 export const metadata: Metadata = {
   title: LABELS.demo,
@@ -96,7 +91,7 @@ export default async function DemoPage() {
               Your hotel console
             </h2>
             <p className="mt-2 text-pretty leading-relaxed text-muted-foreground">Where your team works, from the owner to housekeeping — every change confirmed by a person and logged.</p>
-            {DEMO_LOGINS ? (
+            {DEMO_ENABLED ? (
               <DemoLogins className="mt-6" />
             ) : (
               <>

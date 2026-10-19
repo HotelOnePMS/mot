@@ -9,7 +9,7 @@ import { PRODUCT_NAME } from '@/config/product';
 
 export const metadata: Metadata = {
   title: 'About',
-  description: `${PRODUCT_NAME} gives independent hotels a booking site under their own name, a front desk run by saying what you need, and a phone agent that never misses a call.`,
+  description: `${PRODUCT_NAME} gives independent hotels a booking site under their own name, a front desk run by saying what you need, and a voice front desk that never misses a call.`,
   alternates: { canonical: '/about' },
 };
 
@@ -20,7 +20,7 @@ const PRINCIPLES = [
 ];
 
 const PATHS = [
-  { id: 'full', title: SETUP_PATH_COPY.FULL.title, text: 'Booking site, front desk, rates and the phone agent.' },
+  { id: 'full', title: SETUP_PATH_COPY.FULL.title, text: 'Booking site, front desk, rates and the voice front desk.' },
   { id: 'bridge', title: SETUP_PATH_COPY.BRIDGE.title, text: 'The AI agent works alongside the software you already use.' },
   { id: 'voice', title: SETUP_PATH_COPY.VOICE.title, text: 'Answer every call and WhatsApp message, day and night.' },
 ];

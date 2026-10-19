@@ -82,7 +82,10 @@ const pathOnly = (path: string) => path.split(/[?#]/)[0];
 
 /** Only same-site relative paths are accepted as a post-sign-in destination. */
 export function safeCallback(raw: string | null | undefined): string | null {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return null;
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return null;
+  // Browsers drop tabs and newlines and read "\" as "/", so "/\t/evil.com" would leave the site.
+  if (/[\x00-\x1f\x7f\\]/.test(raw)) return null;
+  if (new URL(raw, 'http://local.invalid').origin !== 'http://local.invalid') return null;
   if (/^\/(login|register|api)(\/|$)/.test(pathOnly(raw))) return null;
   return raw;
 }

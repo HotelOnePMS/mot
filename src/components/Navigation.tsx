@@ -246,7 +246,8 @@ export default function Navigation({
                       })}
                     </React.Fragment>
                   ))}
-                  <DropdownMenuSeparator />
+                  {/* Staff: My trips and Sign out share the last group. */}
+                  {accountGroups.length === 1 && <DropdownMenuSeparator />}
                   <DropdownMenuItem onSelect={signOutHere}>
                     <LogOut className="h-4 w-4" aria-hidden /> {LABELS.signOut}
                   </DropdownMenuItem>

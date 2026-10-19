@@ -2,15 +2,17 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import { useSession } from 'next-auth/react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { ArrowRight, CalendarDays, LayoutDashboard, Luggage, MapPin, RefreshCw, Search } from 'lucide-react';
+import { ArrowRight, CalendarDays, Hotel, LayoutDashboard, Luggage, MapPin, RefreshCw, Search } from 'lucide-react';
 import type { BookingStatus } from '@/lib/dto';
 import { fetcher } from '@/lib/fetcher';
 import { fmtDay, fmtRange, localToday, nightsBetween } from '@/lib/format';
 import { isStaffRole } from '@/lib/routes';
 import { cn } from '@/lib/utils';
+import { LABELS } from '@/config/copy';
 import { Button } from '@/components/ui/button';
 import { Callout, EmptyState, Skeleton } from '@/components/ui/primitives';
 import { SmartImage } from '@/components/ui/smart-image';
@@ -139,6 +141,29 @@ function Group({ id, title, count, children }: { id: string; title: string; coun
   );
 }
 
+/** The middleware sends travellers here from the console with ?notice=staff-only. Follows the URL, so it goes away on the next visit. */
+function StaffOnlyNotice() {
+  const params = useSearchParams();
+  if (params.get('notice') !== 'staff-only') return null;
+  return (
+    <Callout
+      tone="info"
+      icon={Hotel}
+      role="status"
+      className="mb-8 items-center"
+      action={
+        <Button asChild size="sm" variant="outline">
+          <Link href="/onboarding">
+            {LABELS.hotelSignup} <ArrowRight aria-hidden />
+          </Link>
+        </Button>
+      }
+    >
+      That page is for hotel staff. Running a hotel?
+    </Callout>
+  );
+}
+
 const CARD_GRID = 'grid gap-4 sm:grid-cols-2 lg:grid-cols-3';
 
 export default function TripsPage() {
@@ -146,7 +171,6 @@ export default function TripsPage() {
   const { data, error, isLoading, mutate } = useSWR<Trip[]>('/api/bookings', fetcher);
   const today = localToday();
   const firstName = session?.user?.name?.split(' ')[0];
-
   const upcoming = (data ?? [])
     .filter((t) => (t.status === 'CONFIRMED' || t.status === 'PENDING' || t.status === 'CHECKED_IN') && t.checkOut >= today)
     .sort((a, b) => a.checkIn.localeCompare(b.checkIn));
@@ -167,17 +191,23 @@ export default function TripsPage() {
   return (
     <GuestShell>
       <div className="mx-auto max-w-7xl px-4 pb-16 pt-8 sm:px-6 sm:pt-12">
+        {!isStaffRole(session?.user?.role) && (
+          <React.Suspense fallback={null}>
+            <StaffOnlyNotice />
+          </React.Suspense>
+        )}
+
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             {firstName && <p className="text-sm font-medium text-muted-foreground">Welcome back, {firstName}</p>}
-            <h1 className="mt-1 font-display text-4xl tracking-tight sm:text-5xl">My trips</h1>
+            <h1 className="mt-1 font-display text-4xl tracking-tight sm:text-5xl">{LABELS.myTrips}</h1>
             <p className="mt-2 text-muted-foreground" aria-live="polite">
               {!data ? ' ' : upcoming.length ? `You have ${plural(upcoming.length, 'upcoming stay')}.` : 'No stays coming up — where to next?'}
             </p>
           </div>
           <Button asChild variant="outline" className="self-start sm:self-auto">
             <Link href="/properties">
-              <Search aria-hidden /> Find a stay
+              <Search aria-hidden /> {LABELS.findStay}
             </Link>
           </Button>
         </div>
@@ -189,7 +219,7 @@ export default function TripsPage() {
             className="mt-6 items-center"
             action={
               <Button asChild size="sm" variant="outline">
-                <Link href="/admin">Open console</Link>
+                <Link href="/admin">{LABELS.console}</Link>
               </Button>
             }
           >
@@ -231,7 +261,7 @@ export default function TripsPage() {
               description="When you book a stay it shows up here — with your confirmation, directions and free changes until the day before."
               action={
                 <Button asChild size="lg">
-                  <Link href="/properties">Find a stay</Link>
+                  <Link href="/properties">{LABELS.findStay}</Link>
                 </Button>
               }
             />
@@ -258,7 +288,7 @@ export default function TripsPage() {
                     description="Find your next stay — book direct for the best rate and free changes until the day before."
                     action={
                       <Button asChild>
-                        <Link href="/properties">Find a stay</Link>
+                        <Link href="/properties">{LABELS.findStay}</Link>
                       </Button>
                     }
                   />

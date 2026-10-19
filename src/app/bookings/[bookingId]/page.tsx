@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import useSWR from 'swr';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { toast } from 'sonner';
@@ -26,10 +26,12 @@ import {
 } from 'lucide-react';
 import type { BookingStatus, StayQuote } from '@/lib/dto';
 import { api, fetcher } from '@/lib/fetcher';
-import { addDays, fmtDay, localToday, nightsBetween } from '@/lib/format';
+import { addDays, fmtDay, localToday, nightsBetween, telHref } from '@/lib/format';
+import { loginUrl } from '@/lib/routes';
 import { BOOKING_STATUS, paymentLabel } from '@/lib/status';
 import { cn } from '@/lib/utils';
 import { PRODUCT_NAME } from '@/config/product';
+import { LABELS } from '@/config/copy';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -312,6 +314,7 @@ function LoadingState() {
 
 function BookingPage() {
   const { bookingId } = useParams<{ bookingId: string }>();
+  const pathname = usePathname();
   const params = useSearchParams();
   const router = useRouter();
   const reduce = useReducedMotion();
@@ -324,9 +327,12 @@ function BookingPage() {
   const isNew = params.get('new') === '1';
   const payment = params.get('payment');
 
+  // Signed out: sign in and come back here, query included (?action=cancel from the email still opens the dialog).
   React.useEffect(() => {
-    if (status === 'unauthenticated') router.replace(`/login?callbackUrl=${encodeURIComponent(`/bookings/${bookingId}`)}`);
-  }, [status, router, bookingId]);
+    if (status !== 'unauthenticated') return;
+    const search = params.toString();
+    router.replace(loginUrl(search ? `${pathname}?${search}` : pathname));
+  }, [status, router, pathname, params]);
 
   // The voice front desk (the site's voice dock) knows which booking is on screen.
   useVoicePage({
@@ -408,13 +414,17 @@ function BookingPage() {
   };
 
   return (
-    <GuestShell brandColor={b.property.primaryColor} brand={{ name: b.property.name, href: `/properties/${b.property.id}` }}>
+    <GuestShell
+      brandColor={b.property.primaryColor}
+      brand={{ name: b.property.name, href: `/properties/${b.property.id}` }}
+      hotel={{ name: b.property.name, phone: b.property.phone, email: b.property.email }}
+    >
       <div className="mx-auto max-w-7xl px-4 pb-16 sm:px-6">
         <Link
           href="/dashboard"
           className="-ml-1 mt-3 inline-flex min-h-10 items-center gap-1.5 rounded-md px-1 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <ArrowLeft className="h-4 w-4" aria-hidden /> My trips
+          <ArrowLeft className="h-4 w-4" aria-hidden /> {LABELS.myTrips}
         </Link>
 
         {justBooked && (
@@ -547,7 +557,16 @@ function BookingPage() {
                     <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
                     <span>
                       The free change window closed at {b.policy.deadlineLabel}. To change or cancel now, contact {b.property.name}
-                      {b.property.phone ? ` on ${b.property.phone}` : ''}.
+                      {b.property.phone && (
+                        <>
+                          {' '}
+                          on{' '}
+                          <a href={telHref(b.property.phone)} className="rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            {b.property.phone}
+                          </a>
+                        </>
+                      )}
+                      .
                     </span>
                   </p>
                 ) : (
@@ -602,7 +621,7 @@ function BookingPage() {
                   </a>
                 </Button>
                 <Button asChild variant="outline" className="h-11 justify-start">
-                  <a href={`tel:${b.property.phone}`}>
+                  <a href={telHref(b.property.phone)}>
                     <Phone aria-hidden /> <span className="sr-only">Call the hotel: </span>
                     {b.property.phone}
                   </a>
@@ -627,7 +646,7 @@ function BookingPage() {
               )}
               {justBooked && (
                 <p className="mt-4 flex items-start gap-2 text-xs text-muted-foreground">
-                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden /> You can find this booking any time under My trips.
+                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden /> You can find this booking any time under {LABELS.myTrips}.
                 </p>
               )}
             </section>

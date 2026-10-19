@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Logo, LogoMark } from '@/components/brand/Logo';
 import { PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL } from '@/config/product';
+import { LABELS } from '@/config/copy';
 
 const footLink =
   'rounded-sm py-1 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
@@ -8,13 +9,14 @@ const footLink =
 /**
  * Split auth layout: the form on the left (the page's <main>), a brand panel
  * on the right from lg up. `aside` is the panel's story; its text inherits
- * the inverse foreground colour.
+ * the inverse foreground colour. `headerAction` sits at the right of the
+ * header, across from the logo.
  */
-export function AuthLayout({ children, aside }: { children: React.ReactNode; aside?: React.ReactNode }) {
+export function AuthLayout({ children, aside, headerAction }: { children: React.ReactNode; aside?: React.ReactNode; headerAction?: React.ReactNode }) {
   return (
     <div className="grid min-h-dvh bg-background lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
       <div className="flex min-w-0 flex-col px-4 py-6 sm:px-10 sm:py-8">
-        <header>
+        <header className="flex items-center justify-between gap-4">
           <Link
             href="/"
             className="inline-flex rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
@@ -22,6 +24,7 @@ export function AuthLayout({ children, aside }: { children: React.ReactNode; asi
           >
             <Logo />
           </Link>
+          {headerAction}
         </header>
 
         <main id="main" className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center py-10 sm:py-12">
@@ -41,7 +44,7 @@ export function AuthLayout({ children, aside }: { children: React.ReactNode; asi
             </Link>
             <span aria-hidden>·</span>
             <Link href="/contact" className={footLink}>
-              Contact
+              {LABELS.contact}
             </Link>
             <span aria-hidden>·</span>
             <a href={`mailto:${PRODUCT_SUPPORT_EMAIL}`} className={footLink}>

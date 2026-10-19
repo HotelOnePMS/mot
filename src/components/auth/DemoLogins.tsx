@@ -7,10 +7,7 @@ import { BedDouble, Building2, ChartLine, CircleAlert, ConciergeBell, Loader2, L
 import { destinationFor } from '@/lib/routes';
 import { cn } from '@/lib/utils';
 import { demoEmail } from '@/config/product';
-
-/** One-click demo logins: on in development, and in production with NEXT_PUBLIC_DEMO_MODE=true. */
-export const DEMO_ENABLED = process.env.NEXT_PUBLIC_DEMO_MODE === 'true' || (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_DEMO_MODE !== 'false');
-export const DEMO_PASSWORD = 'demo1234';
+import { DEMO_ENABLED, DEMO_PASSWORD } from '@/config/demo';
 
 const DEMO_ACCOUNTS: { label: string; email: string; hint: string; icon: LucideIcon }[] = [
   { label: 'Owner', email: demoEmail('owner'), hint: 'Everything, incl. rates and team', icon: Building2 },

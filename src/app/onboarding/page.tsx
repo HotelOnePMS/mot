@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { signIn } from 'next-auth/react';
+import { signIn, useSession } from 'next-auth/react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   AlertCircle,
@@ -22,17 +22,21 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
+  UserRound,
   type LucideIcon,
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/fetcher';
 import { HALF_HOURS, formatClock } from '@/lib/format';
 import { toE164 } from '@/lib/phone';
+import { canAccessConsolePath, loginUrl } from '@/lib/routes';
 import { cn } from '@/lib/utils';
+import { LABELS, SETUP_PATH_COPY } from '@/config/copy';
 import { PRODUCT_NAME, isDemoEmail } from '@/config/product';
 import { Logo } from '@/components/brand/Logo';
 import { Button, IconButton } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Field } from '@/components/ui/label';
+import { Callout } from '@/components/ui/primitives';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { BRAND_SWATCHES, PROPERTY_TYPES } from '@/components/setup/PropertyFields';
 
@@ -47,10 +51,12 @@ interface RoomDraft {
 type Errors = Record<string, string>;
 
 const PATHS: { id: Path; icon: LucideIcon; title: string; text: string; badge: string }[] = [
-  { id: 'FULL', icon: Hotel, title: `Run on ${PRODUCT_NAME}`, text: 'Booking site, front desk, housekeeping, rates, the agent and voice — all in one place.', badge: 'Most complete' },
-  { id: 'BRIDGE', icon: ServerCog, title: 'Keep your PMS', text: 'The agent and voice work your current reservation system for you. Move over any time.', badge: 'No migration' },
-  { id: 'VOICE', icon: AudioLines, title: 'Just voice', text: 'A voice front desk that answers calls with your real rooms and prices.', badge: 'Fastest' },
+  { id: 'FULL', icon: Hotel, title: SETUP_PATH_COPY.FULL.title, text: 'Booking site, front desk, housekeeping, rates, the agent and voice — all in one place.', badge: SETUP_PATH_COPY.FULL.badge },
+  { id: 'BRIDGE', icon: ServerCog, title: SETUP_PATH_COPY.BRIDGE.title, text: 'The agent and voice work your current reservation system for you. Move over any time.', badge: SETUP_PATH_COPY.BRIDGE.badge },
+  { id: 'VOICE', icon: AudioLines, title: SETUP_PATH_COPY.VOICE.title, text: 'A voice front desk that answers calls with your real rooms and prices.', badge: SETUP_PATH_COPY.VOICE.badge },
 ];
+/** Hotel owners sign in to the console, so every sign-in link here asks to go back there. */
+const CONSOLE_LOGIN = loginUrl('/admin');
 const SYSTEMS = ['Cloudbeds', 'Mews', 'Oracle OPERA Cloud', 'Little Hotelier', 'RoomRaccoon', 'eZee Absolute', 'innRoad', 'WebRezPro', 'SkyTouch', 'Hotelogix', 'Other'];
 const SWATCH_NAMES: Record<string, string> = {
   '#0E7490': 'Lagoon',
@@ -357,6 +363,7 @@ function RoomRows({
 function Onboarding() {
   const router = useRouter();
   const params = useSearchParams();
+  const { data: session, status } = useSession();
   const initialPath = (['FULL', 'BRIDGE', 'VOICE'] as const).find((p) => p.toLowerCase() === params.get('path')?.toLowerCase());
   const [path, setPath] = React.useState<Path>(initialPath ?? 'FULL');
   const [step, setStep] = React.useState(initialPath ? 1 : 0);
@@ -378,6 +385,27 @@ function Onboarding() {
       el.focus();
     }
   }, []);
+
+  // Signed in already: say what this page does, and point owners to the console's own way to add a hotel.
+  // Shown on the first step the visitor sees (links from the product pages skip the path step).
+  const signedInAs = status === 'authenticated' && session?.user ? session.user : null;
+  const canAddProperty = !!signedInAs && canAccessConsolePath(signedInAs.role, '/admin/properties/add') && !isDemoEmail(signedInAs.email ?? '');
+  const signedInNotice = signedInAs && (
+    <Callout tone="neutral" icon={UserRound} className="mt-6">
+      <p>
+        You’re signed in as <span className="font-medium">{signedInAs.name || signedInAs.email}</span>. Setting up a hotel here creates a new owner login.
+      </p>
+      {canAddProperty && (
+        <p className="mt-1 text-muted-foreground">
+          Adding another hotel? Use{' '}
+          <Link href="/admin/properties/add" className="rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            Add a property in your console
+          </Link>
+          .
+        </p>
+      )}
+    </Callout>
+  );
 
   const lastStep = path === 'FULL' ? 'Rooms & brand' : path === 'BRIDGE' ? 'Your system' : 'Voice';
   const steps = ['Your path', 'Account', 'Property', lastStep];
@@ -512,7 +540,7 @@ function Onboarding() {
         },
       });
       const login = await signIn('credentials', { email: account.email.trim().toLowerCase(), password: account.password, redirect: false });
-      router.push(login?.error ? '/login?onboarded=1' : res.next);
+      router.push(!login || login.error ? `/login?onboarded=1&callbackUrl=${encodeURIComponent(res.next)}` : res.next);
     } catch (e) {
       setBusy(false);
       const problem = e instanceof ApiError ? serverProblem(e, path, sentRooms, Boolean(bridge.loginUrl.trim())) : null;
@@ -527,7 +555,11 @@ function Onboarding() {
       const conflict = e instanceof ApiError && e.status === 409;
       const technical = e instanceof ApiError && e.code === 'VALIDATION';
       setFormError({
-        message: technical ? 'Some details didn’t go through. Check your entries and try again.' : (e as Error).message || 'Something went wrong. Please try again.',
+        message: conflict
+          ? 'An account with this email already exists. If it’s a traveller account, use a different email for the hotel. Is it your hotel login?'
+          : technical
+            ? 'Some details didn’t go through. Check your entries and try again.'
+            : (e as Error).message || 'Something went wrong. Please try again.',
         signIn: conflict,
       });
     }
@@ -572,9 +604,9 @@ function Onboarding() {
             <Logo />
           </Link>
           <p className="text-sm text-muted-foreground">
-            <span className="hidden sm:inline">Have an account? </span>
-            <Link href="/login" className={cn('inline-flex min-h-10 items-center rounded-md font-medium text-primary underline-offset-4 hover:underline', focusRing)}>
-              Sign in
+            <span className="hidden min-[420px]:inline">Already have an account? </span>
+            <Link href={CONSOLE_LOGIN} className={cn('inline-flex min-h-10 items-center rounded-md font-medium text-primary underline-offset-4 hover:underline', focusRing)}>
+              {LABELS.signIn}
             </Link>
           </p>
         </header>
@@ -590,6 +622,7 @@ function Onboarding() {
                     <StepIntro headingRef={headingRef} title="How would you like to start?">
                       You can switch paths later without starting over.
                     </StepIntro>
+                    {signedInNotice}
                     <fieldset className="mt-6 space-y-3" aria-labelledby="onb-title">
                       {PATHS.map((p) => {
                         const selected = path === p.id;
@@ -621,6 +654,7 @@ function Onboarding() {
                     <StepIntro headingRef={headingRef} title="Create your account">
                       You’ll be the owner. Invite your team once you’re in.
                     </StepIntro>
+                    {initialPath && signedInNotice}
                     <div className="mt-6 space-y-4">
                       <div className="grid grid-cols-2 gap-3">
                         <Field label="First name" htmlFor="o-first" error={errors.firstName}>
@@ -924,8 +958,8 @@ function Onboarding() {
                   {formError.signIn && (
                     <>
                       {' '}
-                      <Link href="/login" className="rounded-sm font-semibold underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                        Sign in
+                      <Link href={CONSOLE_LOGIN} className="rounded-sm font-semibold underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                        {LABELS.signIn}
                       </Link>
                     </>
                   )}

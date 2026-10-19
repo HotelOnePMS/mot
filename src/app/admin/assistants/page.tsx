@@ -8,6 +8,7 @@ import { Bot, CalendarCheck2, CheckCircle2, ChevronDown, ExternalLink, Inbox, Ke
 import { api, fetcher } from '@/lib/fetcher';
 import { timeAgo } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { LABELS } from '@/config/copy';
 import { PRODUCT_NAME } from '@/config/product';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -309,7 +310,7 @@ function ApiKeys({ propertyId, hotelName, origin }: { propertyId: string; hotelN
             className="mt-5"
             action={
               <Button asChild size="sm" variant="outline" className="bg-surface">
-                <Link href="/onboarding">Get started</Link>
+                <Link href="/onboarding">{LABELS.hotelSignup}</Link>
               </Button>
             }
           >
