@@ -298,7 +298,8 @@ export function extractName(original: string): string | undefined {
     .replace(/\brooms?\s*#?\s*\d+[a-z]?\b/gi, ' ')
     .replace(/\b\d+\b/g, ' ')
     .replace(/[“”"'’`]s\b/g, '')
-    .replace(/[^A-Za-zÀ-ÿ'’\-\s]/g, ' ');
+    // Letters of any script, so "Nguyễn Văn An" or "Иван Петров" stay whole names.
+    .replace(/[^\p{L}\p{M}'’\-\s]/gu, ' ');
   const words = cleaned
     .split(/\s+/)
     .map((w) => w.replace(/^['’-]+|['’-]+$/g, ''))

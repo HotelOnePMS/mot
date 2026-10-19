@@ -13,6 +13,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import type { AgentApiKey } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { DomainError, conflict, notFound } from '../errors';
+import { logError } from '@/server/log';
 
 export const AGENT_KEY_PREFIX = 'ho_live_';
 /** What a key may do beyond the public tools. */
@@ -21,9 +22,19 @@ export type AgentKeyScope = (typeof AGENT_KEY_SCOPES)[number];
 /** Characters of the key kept for display ("ho_live_AbC1"). */
 export const AGENT_KEY_DISPLAY_LENGTH = 12;
 /** Why keys can't be created or revoked here in the public demo (src/server/demo.ts demoHotelLocked). */
-export const AGENT_KEYS_DEMO_LOCKED = 'API keys aren’t available on demo hotels or with the shared demo logins. Set up your own hotel (Get started) to connect your own assistants.';
+export const AGENT_KEYS_DEMO_LOCKED = 'API keys aren’t available on demo hotels or with the shared demo logins. Set up your own hotel to connect your own assistants.';
 /** Active keys a hotel (or the all-hotels pool) may hold at once. */
 export const MAX_ACTIVE_KEYS = 25;
+/**
+ * Keys a hotel (or the all-hotels pool) may create in any 24 hours, revoked
+ * ones included (AGENT_KEYS_PER_HOTEL_DAY overrides), so revoking and
+ * re-creating keys can't be used to start fresh per-key rate limits.
+ */
+export const maxKeysPerDay = () => {
+  const n = Number(process.env.AGENT_KEYS_PER_HOTEL_DAY);
+  return Number.isInteger(n) && n > 0 ? n : 10;
+};
+const DAY_MS = 24 * 3600_000;
 
 const BODY_LENGTH = 32;
 const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
@@ -76,10 +87,11 @@ const invalidKey = (why: string) => new DomainError(401, 'INVALID_API_KEY', why)
 /**
  * The key in `Authorization: Bearer <key>`, verified: null when the request
  * has no Authorization header (public access); DomainError 401
- * INVALID_API_KEY when it has one that's malformed, unknown or revoked — a
- * key that stopped working should fail loudly, not quietly lose access.
- * Looks the key up by its hash (the secret is never compared directly) and
- * records when it was last used, at most once a minute.
+ * INVALID_API_KEY when it has one that's malformed, unknown or revoked, when
+ * its hotel is inactive (hidden or suspended), or when the person who created
+ * it has been deactivated — a key that stopped working should fail loudly,
+ * not quietly lose access. Looks the key up by its hash (the secret is never
+ * compared directly) and records when it was last used, at most once a minute.
  */
 export async function agentKeyFromRequest(request: Request): Promise<AgentKeyContext | null> {
   const header = request.headers.get('authorization');
@@ -93,8 +105,14 @@ export async function agentKeyFromRequest(request: Request): Promise<AgentKeyCon
   // The lookup is by hash; compare again in constant time so a match never depends on string comparison timing.
   if (!row || !timingSafeEqual(Buffer.from(row.keyHash, 'hex'), Buffer.from(hash, 'hex'))) throw invalidKey('This API key isn’t recognised. Check it was copied in full, or ask the hotel for a new one.');
   if (row.revokedAt) throw invalidKey('This API key was revoked. Ask the hotel for a new one.');
+  const [property, creator] = await Promise.all([
+    row.propertyId ? prisma.property.findUnique({ where: { id: row.propertyId }, select: { isActive: true } }) : null,
+    row.createdById ? prisma.user.findUnique({ where: { id: row.createdById }, select: { isActive: true } }) : null,
+  ]);
+  if (row.propertyId && !property?.isActive) throw invalidKey('This API key’s hotel isn’t taking bookings on HotelOne right now, so the key is paused. Ask the hotel.');
+  if (row.createdById && !creator?.isActive) throw invalidKey('This API key stopped working because the person who created it no longer has access. Ask the hotel for a new one.');
   if (!row.lastUsedAt || Date.now() - row.lastUsedAt.getTime() > TOUCH_EVERY_MS) {
-    void prisma.agentApiKey.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } }).catch((e) => console.error('[agent-api] could not record key use', e));
+    void prisma.agentApiKey.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } }).catch((e) => logError('agent-api', 'could not record key use', e));
   }
   return { id: row.id, name: row.name, prefix: row.prefix, propertyId: row.propertyId, scopes: row.scopes };
 }
@@ -158,11 +176,18 @@ export async function getAgentKey(id: string): Promise<AgentKeyView | null> {
 /**
  * Creates a key and returns it in full — the only time it's ever available.
  * Authorisation (who may create a key for which hotel) is the caller's job.
- * DomainError 409 when the hotel already has MAX_ACTIVE_KEYS active keys.
+ * DomainError 409 when the hotel already has MAX_ACTIVE_KEYS active keys;
+ * 429 RATE_LIMITED when it has created maxKeysPerDay() keys (revoked ones
+ * included) in the last 24 hours.
  */
 export async function createAgentKey(input: { propertyId: string | null; name: string; scopes: AgentKeyScope[]; createdById: string | null }): Promise<{ key: string; view: AgentKeyView }> {
-  const active = await prisma.agentApiKey.count({ where: { propertyId: input.propertyId, revokedAt: null } });
+  const [active, createdToday] = await Promise.all([
+    prisma.agentApiKey.count({ where: { propertyId: input.propertyId, revokedAt: null } }),
+    prisma.agentApiKey.count({ where: { propertyId: input.propertyId, createdAt: { gte: new Date(Date.now() - DAY_MS) } } }),
+  ]);
   if (active >= MAX_ACTIVE_KEYS) throw conflict(`There are already ${MAX_ACTIVE_KEYS} active keys — revoke one you no longer use first.`);
+  const perDay = maxKeysPerDay();
+  if (createdToday >= perDay) throw new DomainError(429, 'RATE_LIMITED', `${perDay} API keys have been created here in the last 24 hours, which is the most allowed — try again tomorrow, or keep using a key you already have.`);
   const key = generateAgentKey();
   const row = await prisma.agentApiKey.create({
     data: {

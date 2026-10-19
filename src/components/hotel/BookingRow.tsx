@@ -6,7 +6,7 @@ import { formatDateRange, formatMoney, formatNights, relativeDay } from '@/lib/f
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Avatar } from '@/components/ui/primitives';
-import { BookingStatusBadge, PaymentBadge } from './badges';
+import { BookingStatusBadge, PaymentBadge, RiskFlagList } from './badges';
 
 /** The guest's name; when the row opens something, it stretches over the whole row. */
 const stretched =
@@ -95,6 +95,7 @@ export function BookingRow({
             </span>
             {variant === 'inhouse' && <span>Leaves {relativeDay(b.checkOut, today).toLowerCase()}</span>}
           </div>
+          <RiskFlagList flags={b.riskFlags} className="mt-1" />
           {lastNote && (
             <p className="mt-1 flex items-start gap-1 text-xs text-foreground/80">
               <MessageSquareText className="mt-0.5 size-3 shrink-0 text-muted-foreground" aria-hidden />
@@ -125,7 +126,7 @@ export function BookingRow({
         )}
         <BookingStatusBadge status={b.status} />
         {variant === 'departures' && b.paymentStatus !== 'PAID' && <PaymentBadge status={b.paymentStatus} />}
-        <span className="hidden w-20 text-right text-sm font-medium tabular md:inline">{formatMoney(b.totalPrice, 'USD', { cents: false })}</span>
+        <span className="hidden w-20 text-right text-sm font-medium tabular md:inline">{formatMoney(b.totalPrice, b.currency, { cents: false })}</span>
         {actions && (
           // Above the stretched link, so these stay clickable.
           <div className="relative z-10 flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>

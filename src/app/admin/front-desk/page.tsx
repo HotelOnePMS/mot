@@ -12,8 +12,10 @@ import {
   ChevronRight,
   CircleCheck,
   Info,
+  MoonStar,
   MoreHorizontal,
   OctagonAlert,
+  Plus,
   RefreshCw,
   Search,
   TriangleAlert,
@@ -45,6 +47,8 @@ import { PageShell } from '@/components/console/PageShell';
 import { AssignRoomDialog, CheckInDialog, CheckOutDialog, ConfirmDialog, NoteDialog } from '@/components/frontdesk/dialogs';
 import { RoomSheet } from '@/components/frontdesk/RoomSheet';
 import { useBookingActions } from '@/components/frontdesk/useBookingActions';
+import { NewReservationDialog } from '@/components/frontdesk/NewReservation';
+import { NightAuditSheet } from '@/components/frontdesk/NightAudit';
 
 type Tab = 'arrivals' | 'departures' | 'inhouse' | 'rooms';
 type RoomFilter = 'all' | 'ready' | 'dirty' | 'occupied' | 'arriving' | 'ooo';
@@ -112,8 +116,7 @@ function AlertStrip({ alerts }: { alerts: FrontDeskAlert[] }) {
 }
 
 export default function FrontDeskPage() {
-  const { ctx, can } = useConsole();
-  const today = ctx?.today ?? '';
+  const { can, today } = useConsole();
   const [day, setDay] = React.useState<string>('');
   const date = day || today;
   const [tab, setTab] = React.useState<Tab>('arrivals');
@@ -121,6 +124,8 @@ export default function FrontDeskPage() {
   const [roomFilter, setRoomFilter] = React.useState<RoomFilter>('all');
   const [dialog, setDialog] = React.useState<DialogState>(null);
   const [room, setRoom] = React.useState<RoomSummary | null>(null);
+  const [newReservation, setNewReservation] = React.useState(false);
+  const [audit, setAudit] = React.useState(false);
   const { transition, pending } = useBookingActions();
 
   const summaryUrl = usePropertyUrl('/api/admin/front-desk', { date: day || undefined });
@@ -299,6 +304,16 @@ export default function FrontDeskPage() {
           <IconButton label="Refresh" variant="outline" onClick={() => mutate()} aria-busy={isValidating || undefined}>
             <RefreshCw className={cn(isValidating && 'motion-safe:animate-spin')} />
           </IconButton>
+          {can('audit.run') && (
+            <Button variant="outline" onClick={() => setAudit(true)}>
+              <MoonStar aria-hidden /> Night audit
+            </Button>
+          )}
+          {can('booking.create') && (
+            <Button onClick={() => setNewReservation(true)}>
+              <Plus aria-hidden /> New reservation
+            </Button>
+          )}
         </>
       }
     >
@@ -452,6 +467,8 @@ export default function FrontDeskPage() {
         }}
       />
       <RoomSheet room={room} onOpenChange={(o) => !o && setRoom(null)} />
+      <NewReservationDialog open={newReservation} onOpenChange={setNewReservation} onCreated={() => void mutate()} />
+      <NightAuditSheet open={audit} onOpenChange={setAudit} />
     </PageShell>
   );
 }

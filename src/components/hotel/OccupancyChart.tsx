@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useCurrency } from '@/components/hotel/currency';
 import type { OccupancyDay } from '@/lib/dto';
 import { fmtDay, weekday } from '@/lib/format';
 import { money } from '@/lib/status';
@@ -58,6 +59,7 @@ export function OccupancyChart({
   /** Accessible name of the chart. */
   label?: string;
 }) {
+  const currency = useCurrency();
   const [active, setActive] = React.useState<number | null>(null);
   const plotRef = React.useRef<HTMLDivElement>(null);
   const [width, setWidth] = React.useState(0);
@@ -113,7 +115,7 @@ export function OccupancyChart({
             <span className="tabular">
               {shown.occupancyPct}% · {shown.roomsSold} of {shown.totalRooms} rooms
             </span>
-            <span className="tabular">Avg rate {money(shown.adr, { cents: false })}</span>
+            <span className="tabular">Avg rate {money(shown.adr, { cents: false, currency })}</span>
           </>
         ) : (
           <span>
@@ -196,7 +198,7 @@ export function OccupancyChart({
                 <td>
                   {d.roomsSold} of {d.totalRooms}
                 </td>
-                <td>{money(d.adr, { cents: false })}</td>
+                <td>{money(d.adr, { cents: false, currency })}</td>
               </tr>
             ))}
           </tbody>

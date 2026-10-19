@@ -8,6 +8,7 @@ import { Bot, CalendarCheck2, CheckCircle2, ChevronDown, ExternalLink, Inbox, Ke
 import { api, fetcher } from '@/lib/fetcher';
 import { timeAgo } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { LABELS } from '@/config/copy';
 import { PRODUCT_NAME } from '@/config/product';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -43,6 +44,7 @@ interface KeysResponse {
   canCreateAllHotels: boolean;
   /** False while the hotel is hidden from guests. */
   listed: boolean;
+  voiceOnly?: boolean;
 }
 
 const code = 'rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[0.8125rem] text-foreground';
@@ -75,7 +77,7 @@ function CopyField({ label, value, copyLabel, copiedLabel, prose = false }: { la
 }
 
 /** The hotel's own MCP link, a message for guests, and what assistants can do with it. */
-function HotelLink({ origin, hotelId, hotelName, listed }: { origin: string; hotelId: string; hotelName: string; listed?: boolean }) {
+function HotelLink({ origin, hotelId, hotelName, listed, voiceOnly }: { origin: string; hotelId: string; hotelName: string; listed?: boolean; voiceOnly?: boolean }) {
   const url = origin ? `${origin}/api/mcp/hotels/${hotelId}` : '';
   const message = origin
     ? `Book ${hotelName} with your AI assistant: add ${url} as a connector in ChatGPT, Claude, Grok or Le Chat, then just ask for a room. How to add it: ${origin}/assistants`
@@ -98,7 +100,19 @@ function HotelLink({ origin, hotelId, hotelName, listed }: { origin: string; hot
             title="Your hotel’s assistant link"
             description="Guests add this link to their AI assistant once. After that they can ask about your hotel and book — just by asking."
           />
-          {listed === false && (
+          {voiceOnly ? (
+            <Callout
+              tone="warning"
+              title="Voice-only hotels aren’t bookable by assistants"
+              action={
+                <Button asChild size="sm" variant="outline" className="bg-surface">
+                  <Link href="/admin/connect">Connect your PMS</Link>
+                </Button>
+              }
+            >
+              {hotelName} takes bookings in its own system, so assistants can’t find or book it on HotelOne. Keep your PMS or move everything to HotelOne to use this link.
+            </Callout>
+          ) : listed === false && (
             <Callout
               tone="warning"
               title="Your hotel is hidden from guests"
@@ -154,7 +168,7 @@ function NewKeyDialog({ created, hotelName, origin, onClose }: { created: { key:
         <DialogHeader>
           <DialogTitle>Copy your new key now</DialogTitle>
           <DialogDescription>
-            This is the only time you’ll see “{created?.record.name}”. Give it to the developer or partner it’s for, and keep it somewhere safe.
+            This is the only time you’ll see this key (“{created?.record.name}”). Give it to the developer or partner it’s for, and keep it somewhere safe.
           </DialogDescription>
         </DialogHeader>
         {created && (
@@ -171,7 +185,7 @@ function NewKeyDialog({ created, hotelName, origin, onClose }: { created: { key:
                 : 'Anyone with this key can use your hotel’s assistant tools under your name. If it leaks, revoke it and make a new one.'}
             </Callout>
             <p className="text-sm text-muted-foreground">
-              It’s sent as <code className={code}>Authorization: Bearer …</code> to <code className={cn(code, 'break-all')}>{origin}/api/mcp</code> or the REST API.
+              It’s sent as <code className={code}>Authorization: Bearer …</code> to <code className={cn(code, 'break-words')}>{origin}/api/mcp</code> or the REST API.
             </p>
           </div>
         )}
@@ -309,7 +323,7 @@ function ApiKeys({ propertyId, hotelName, origin }: { propertyId: string; hotelN
             className="mt-5"
             action={
               <Button asChild size="sm" variant="outline" className="bg-surface">
-                <Link href="/onboarding">Get started</Link>
+                <Link href="/onboarding">{LABELS.hotelSignup}</Link>
               </Button>
             }
           >
@@ -464,7 +478,7 @@ export default function AssistantsPage() {
         </div>
       ) : (
         <>
-          <HotelLink origin={origin} hotelId={propertyId} hotelName={property.name} listed={keysData?.listed} />
+          <HotelLink origin={origin} hotelId={propertyId} hotelName={property.name} listed={keysData?.listed} voiceOnly={keysData?.voiceOnly} />
 
           {canManageKeys ? (
             <ApiKeys propertyId={propertyId} hotelName={property.name} origin={origin} />

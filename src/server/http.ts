@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ZodError, type ZodTypeAny, type infer as ZodInfer } from 'zod';
 import { DomainError, badRequest } from './errors';
+import { logError } from '@/server/log';
 
 /**
  * Wraps a route handler so DomainErrors and validation errors become
@@ -32,7 +33,7 @@ export function errorResponse(e: unknown): Response {
     const msg = first ? `${first.path.join('.') || 'input'}: ${first.message}` : 'Invalid input';
     return NextResponse.json({ error: msg, message: msg, code: 'VALIDATION', details: { issues: e.issues } }, { status: 400 });
   }
-  console.error('Unhandled route error:', e);
+  logError('http', 'Unhandled route error:', e);
   return NextResponse.json(
     { error: 'Something went wrong on our side. Please try again.', message: 'Internal server error', code: 'INTERNAL' },
     { status: 500 }
@@ -57,17 +58,34 @@ export function parseQuery<S extends ZodTypeAny>(request: Request, schema: S): Z
 export const json = <T>(data: T, init?: ResponseInit) => NextResponse.json(data, init);
 
 /**
- * The caller's IP for rate limits. Vercel sets x-vercel-forwarded-for and
- * x-real-ip and overwrites X-Forwarded-For, so those can't be forged there.
- * Elsewhere, the first X-Forwarded-For hop is whatever the client sent, so
- * fall back to the LAST hop — the address the nearest proxy saw.
+ * Proxies in front of this app that append the address they saw to
+ * X-Forwarded-For: TRUSTED_PROXY_HOPS (1–10), default 1 (the nearest proxy,
+ * or Next.js itself, which fills the header with the socket address when the
+ * client sent none).
+ */
+function trustedProxyHops(): number {
+  const n = Number(process.env.TRUSTED_PROXY_HOPS);
+  return Number.isInteger(n) && n >= 1 ? Math.min(n, 10) : 1;
+}
+
+/**
+ * The caller's IP for rate limits.
+ * - On Vercel (process.env.VERCEL), x-vercel-forwarded-for, then x-real-ip:
+ *   Vercel's edge sets and overwrites both, so they can't be forged there.
+ * - Anywhere else those two headers are whatever the client sent, so they're
+ *   ignored. The address comes from X-Forwarded-For, counted
+ *   TRUSTED_PROXY_HOPS entries from the right: each trusted proxy appends the
+ *   address it saw, and anything further left was written by the client.
  */
 export function clientIp(request: Request): string {
   const h = request.headers;
-  const vercel = h.get('x-vercel-forwarded-for')?.split(',')[0]?.trim();
-  if (vercel) return vercel;
-  const real = h.get('x-real-ip')?.trim();
-  if (real) return real;
+  if (process.env.VERCEL) {
+    const vercel = h.get('x-vercel-forwarded-for')?.split(',')[0]?.trim();
+    if (vercel) return vercel;
+    const real = h.get('x-real-ip')?.trim();
+    if (real) return real;
+  }
   const hops = h.get('x-forwarded-for')?.split(',').map((s) => s.trim()).filter(Boolean) ?? [];
-  return hops[hops.length - 1] || 'unknown';
+  if (!hops.length) return 'unknown';
+  return hops[Math.max(0, hops.length - trustedProxyHops())];
 }

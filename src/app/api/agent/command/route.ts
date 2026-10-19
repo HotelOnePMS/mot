@@ -5,6 +5,7 @@ import { requireStaff } from '@/server/authz';
 import { runAgent } from '@/server/agent/engine';
 import { DomainError } from '@/server/errors';
 import { handleRoute, parseJson } from '@/server/http';
+import { logError } from '@/server/log';
 
 /** PMS look-ups through an MCP server run inside this request (and may finish after it). */
 export const maxDuration = 60;
@@ -43,7 +44,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
           send(event);
         }
       } catch (e) {
-        if (!(e instanceof DomainError)) console.error('Agent command failed:', e);
+        if (!(e instanceof DomainError)) logError('api/agent/command', 'Agent command failed:', e);
         send({ type: 'error', message: e instanceof DomainError ? e.message : 'Something went wrong. Please try again.' });
       } finally {
         controller.close();

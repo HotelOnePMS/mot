@@ -36,6 +36,7 @@ import { AgentPanel } from './AgentPanel';
 import { ShortcutStarters } from './ShortcutStarters';
 import { AgentOrb } from './Timeline';
 import type { AgentController } from './useAgent';
+import { TERMS } from '@/config/copy';
 
 const STARTERS = [
   { icon: Sun, title: 'Brief me', hint: 'Today at a glance, with alerts', command: 'brief me' },
@@ -65,7 +66,7 @@ function Hero({ send }: { send: (cmd: string) => void }) {
         <div className="flex items-center gap-3">
           <AgentOrb className="h-11 w-11 sm:h-12 sm:w-12" />
           <Badge variant="agent" size="sm" icon={Sparkles}>
-            AI front desk
+            {TERMS.agent}
           </Badge>
         </div>
         <h1 className="mt-5 text-balance text-2xl font-semibold tracking-tight sm:text-4xl">
@@ -75,12 +76,12 @@ function Hero({ send }: { send: (cmd: string) => void }) {
         <p className="mt-2 max-w-xl text-pretty text-base leading-relaxed text-muted-foreground">
           {bridged ? (
             <>
-              I’m the front-desk agent for <span className="font-medium text-foreground">{property?.name}</span>. I work in your own PMS for you — look-ups go
+              I’m the {TERMS.agent} for <span className="font-medium text-foreground">{property?.name}</span>. I work in your own PMS for you — look-ups go
               straight through, and I <span className="font-medium text-foreground">ask before changing anything</span>.
             </>
           ) : (
             <>
-              I’m the front-desk agent for <span className="font-medium text-foreground">{property?.name}</span>. Ask in plain words — I answer from live data, show
+              I’m the {TERMS.agent} for <span className="font-medium text-foreground">{property?.name}</span>. Ask in plain words — I answer from live data, show
               you the right screen for it, and <span className="font-medium text-foreground">ask before changing anything</span>.
             </>
           )}
@@ -335,7 +336,7 @@ export function AgentWorkspace() {
   return (
     <div className="h-[calc(100dvh-3.5rem)]">
       <AgentPanel
-        title="Agent"
+        title={TERMS.agent}
         empty={(send) => <Hero send={send} />}
         rail={(agent) => (bridged ? <BridgeRail agent={agent} /> : <LiveRail agent={agent} />)}
       />
