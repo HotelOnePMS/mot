@@ -29,7 +29,7 @@ export function AgentPanel({
   rail?: (agent: AgentController) => React.ReactNode;
   controllerRef?: React.MutableRefObject<AgentController | null>;
 }) {
-  const { propertyId, ctx, refresh, property, pendingCommand, takePendingCommand, can } = useConsole();
+  const { propertyId, ctx, refresh, property, pendingCommand, takePendingCommand, can, today } = useConsole();
   const agent = useAgent(propertyId, { onChange: refresh });
   const voice = useStaffVoice(agent, propertyId);
   const voiceReady = !!ctx?.agent.voiceEnabled && can('voice.use');
@@ -62,7 +62,7 @@ export function AgentPanel({
     confirm: agent.confirm,
     dismiss: agent.dismiss,
     plans: agent.plans,
-    today: ctx?.today ?? new Date().toISOString().slice(0, 10),
+    today: today || new Date().toISOString().slice(0, 10),
     busy: agent.busy,
     compact,
     latestPlan,

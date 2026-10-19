@@ -4,14 +4,14 @@ import { Suspense, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getSession, signIn } from 'next-auth/react';
-import { ArrowRight, BedDouble, Building2, CalendarCheck2, ChartLine, CircleAlert, ConciergeBell, Eye, EyeOff, Loader2, Luggage, PhoneCall, type LucideIcon } from 'lucide-react';
+import { ArrowRight, BedDouble, Building2, CalendarCheck2, ChartLine, CircleAlert, CircleCheck, ConciergeBell, Eye, EyeOff, KeyRound, Loader2, Luggage, PhoneCall, type LucideIcon } from 'lucide-react';
 import { AuthLayout } from '@/components/auth/AuthLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Field } from '@/components/ui/label';
 import { canAccessConsolePath, homeForRole, isStaffRole } from '@/lib/routes';
 import { cn } from '@/lib/utils';
-import { PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL, demoEmail } from '@/config/product';
+import { PRODUCT_NAME, demoEmail } from '@/config/product';
 
 const DEMO_ENABLED = process.env.NEXT_PUBLIC_DEMO_MODE === 'true' || (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_DEMO_MODE !== 'false');
 const DEMO_PASSWORD = 'demo1234';
@@ -43,7 +43,25 @@ function destinationFor(role: string | undefined, callback: string | null): stri
   return isStaffRole(role) ? '/admin' : homeForRole(role);
 }
 
-type FieldErrors = { email?: string; password?: string };
+type FieldErrors = { email?: string; password?: string; otp?: string };
+
+/** What the sign-in error codes from src/server/auth/signin.ts mean for the person. */
+const SIGN_IN_ERRORS: Record<string, string> = {
+  rate_limited: 'Too many attempts. Wait 15 minutes, or reset your password.',
+  mfa_invalid: 'That code didn’t work. Enter the 6-digit code your authenticator app shows now, or one of your recovery codes.',
+  sso_required: 'Your organization signs in with single sign-on. Continue with SSO below.',
+};
+
+/** Messages carried back to this page in the URL (SSO, Google, password reset). */
+function notice(params: URLSearchParams): { tone: 'error' | 'success'; text: string } | null {
+  const error = params.get('error');
+  if (error === 'SSO') return { tone: 'error', text: params.get('message')?.slice(0, 300) || 'Single sign-on didn’t work. Please try again.' };
+  if (error === 'GoogleStaff') return { tone: 'error', text: 'Hotel staff sign in with their password and two-step code, or with their organization’s single sign-on.' };
+  if (error) return { tone: 'error', text: 'Sign-in didn’t work. Please try again.' };
+  if (params.get('reset') === '1') return { tone: 'success', text: 'Your password is changed and you’ve been signed out everywhere. Sign in with the new one.' };
+  if (params.get('verified') === '1') return { tone: 'success', text: 'Your email address is verified.' };
+  return null;
+}
 
 function LoginForm() {
   const router = useRouter();
@@ -55,27 +73,43 @@ function LoginForm() {
   const [pending, setPending] = useState<string | null>(null); // 'form' or a demo email
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  // Two-step sign-in: after the password is accepted, ask for the authenticator code.
+  const [otp, setOtp] = useState('');
+  const [needsCode, setNeedsCode] = useState(false);
+  const [ssoSuggested, setSsoSuggested] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+  const otpRef = useRef<HTMLInputElement>(null);
   const loading = pending !== null;
+  const urlNotice = notice(params);
 
   function validate(): boolean {
     const next: FieldErrors = {};
     if (!email.trim()) next.email = 'Enter your email address.';
     else if (!EMAIL_RE.test(email.trim())) next.email = 'Enter an email address like name@example.com.';
     if (!password) next.password = 'Enter your password.';
+    if (needsCode && !otp.trim()) next.otp = 'Enter the code from your authenticator app.';
     setFieldErrors(next);
     if (next.email) emailRef.current?.focus();
     else if (next.password) passwordRef.current?.focus();
-    return !next.email && !next.password;
+    else if (next.otp) otpRef.current?.focus();
+    return !next.email && !next.password && !next.otp;
   }
 
-  async function login(creds: { email: string; password: string }, key: string) {
+  async function login(creds: { email: string; password: string; otp?: string }, key: string) {
     setPending(key);
     setError('');
-    const res = await signIn('credentials', { email: creds.email, password: creds.password, redirect: false });
+    const res = await signIn('credentials', { email: creds.email, password: creds.password, otp: creds.otp ?? '', redirect: false });
     if (!res || res.error) {
-      setError('That email and password don’t match an account. Check them and try again.');
+      const code = (res as { code?: string } | undefined)?.code;
+      if (code === 'mfa_required') {
+        setNeedsCode(true);
+        setPending(null);
+        setTimeout(() => otpRef.current?.focus(), 0);
+        return;
+      }
+      if (code === 'sso_required') setSsoSuggested(true);
+      setError((code && SIGN_IN_ERRORS[code]) || 'That email and password don’t match an account. Check them and try again.');
       setPending(null);
       return;
     }
@@ -87,13 +121,37 @@ function LoginForm() {
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (loading || !validate()) return;
-    void login({ email: email.trim(), password }, 'form');
+    void login({ email: email.trim(), password, otp: needsCode ? otp.trim() : undefined }, 'form');
+  }
+
+  function startSso() {
+    if (!EMAIL_RE.test(email.trim())) {
+      setFieldErrors({ email: 'Enter your work email address, then continue with SSO.' });
+      emailRef.current?.focus();
+      return;
+    }
+    setPending('sso');
+    const q = new URLSearchParams({ email: email.trim(), ...(callback ? { callbackUrl: callback } : {}) });
+    window.location.assign(`/api/sso/start?${q}`);
   }
 
   return (
     <>
       <h1 className="font-display text-3xl font-medium tracking-tight sm:text-[2rem]">Welcome back</h1>
       <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Guests and hotel teams sign in here — we’ll take you to the right place.</p>
+
+      {urlNotice && (
+        <div
+          role={urlNotice.tone === 'error' ? 'alert' : 'status'}
+          className={cn(
+            'mt-6 flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-sm',
+            urlNotice.tone === 'error' ? 'border-destructive/25 bg-destructive-soft text-destructive-soft-foreground' : 'border-success/25 bg-success-soft text-success-soft-foreground'
+          )}
+        >
+          {urlNotice.tone === 'error' ? <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> : <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />}
+          <p>{urlNotice.text}</p>
+        </div>
+      )}
 
       <form onSubmit={onSubmit} className="mt-8 space-y-5" noValidate aria-describedby={error ? 'login-error' : undefined}>
         <Field label="Email" htmlFor="email" error={fieldErrors.email}>
@@ -145,13 +203,34 @@ function LoginForm() {
             </div>
           </Field>
           {/* Outside the <label>, top-right of the field. */}
-          <a
-            href={`mailto:${PRODUCT_SUPPORT_EMAIL}?subject=${encodeURIComponent(`${PRODUCT_NAME} password reset`)}`}
+          <Link
+            href={`/forgot-password${email.trim() ? `?email=${encodeURIComponent(email.trim())}` : ''}`}
             className="absolute right-0 top-0 rounded-sm text-xs font-medium leading-5 text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Forgot password?
-          </a>
+          </Link>
         </div>
+
+        {needsCode && (
+          <Field label="Authenticator code" htmlFor="otp" error={fieldErrors.otp} hint="Open your authenticator app, or use one of your recovery codes.">
+            <Input
+              ref={otpRef}
+              id="otp"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              autoCapitalize="none"
+              spellCheck={false}
+              maxLength={12}
+              value={otp}
+              onChange={(e) => {
+                setOtp(e.target.value);
+                if (fieldErrors.otp) setFieldErrors((f) => ({ ...f, otp: undefined }));
+              }}
+              placeholder="123 456"
+              className="h-11 text-base tracking-widest md:text-sm"
+            />
+          </Field>
+        )}
 
         {error && (
           <div
@@ -165,8 +244,13 @@ function LoginForm() {
         )}
 
         <Button type="submit" size="lg" className="w-full" loading={pending === 'form'} disabled={loading}>
-          {pending === 'form' ? 'Signing in…' : 'Sign in'}
+          {pending === 'form' ? 'Signing in…' : needsCode ? 'Verify and sign in' : 'Sign in'}
           {pending !== 'form' && <ArrowRight className="h-4 w-4" aria-hidden />}
+        </Button>
+
+        <Button type="button" variant={ssoSuggested ? 'default' : 'outline'} size="lg" className="w-full" loading={pending === 'sso'} disabled={loading} onClick={startSso}>
+          <KeyRound className="h-4 w-4" aria-hidden />
+          Continue with single sign-on
         </Button>
       </form>
 

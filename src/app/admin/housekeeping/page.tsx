@@ -77,7 +77,7 @@ function ProgressRing({ done, total }: { done: number; total: number }) {
 }
 
 function MyRooms() {
-  const { ctx, refresh } = useConsole();
+  const { ctx, refresh, today } = useConsole();
   const { data, isLoading, mutate, isValidating } = useHousekeepingData();
   const [busy, setBusy] = React.useState<string | null>(null);
   const reduce = useReducedMotion();
@@ -105,7 +105,7 @@ function MyRooms() {
     <PageShell size="narrow" className="max-w-xl">
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-muted-foreground">{ctx ? fmtDay(ctx.today, 'long') : ' '}</p>
+          <p className="text-xs font-medium text-muted-foreground">{today ? fmtDay(today, 'long') : ' '}</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">My rooms</h1>
           <p className="mt-1 text-sm text-muted-foreground" aria-live="polite">
             {isLoading ? ' ' : open.length ? `${rooms(open.length)} to go — rooms for arriving guests first.` : 'All caught up. Nice work!'}
@@ -375,7 +375,7 @@ function TaskCard({ task, team, onChange }: { task: HousekeepingTaskDTO; team: T
 }
 
 function SupervisorBoard() {
-  const { ctx, refresh, can, propertyId } = useConsole();
+  const { refresh, can, propertyId, today } = useConsole();
   const { data: tasks, isLoading, mutate, isValidating } = useHousekeepingData();
   const teamUrl = usePropertyUrl('/api/admin/team', { role: 'HOUSEKEEPER' });
   const boardUrl = usePropertyUrl('/api/admin/room-board');
@@ -427,7 +427,7 @@ function SupervisorBoard() {
 
   return (
     <PageShell
-      eyebrow={ctx ? fmtDay(ctx.today, 'long') : ' '}
+      eyebrow={today ? fmtDay(today, 'long') : ' '}
       title="Housekeeping"
       description={tasks ? `${rooms(toTurn)} to turn · ${formatNumber(done.length)} done today` : ' '}
       actions={

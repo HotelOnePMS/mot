@@ -6,16 +6,21 @@ import type { AgentBlock } from '@/lib/agent/blocks';
 import { fmtDay } from '@/lib/format';
 import { formatNumber, formatPercent, money } from '@/lib/status';
 import { cn } from '@/lib/utils';
+import { useCurrency } from '@/components/hotel/currency';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { OccupancyChart } from '@/components/hotel/OccupancyChart';
 import { useAgentUI } from '../AgentUI';
 import { BlockCard, BlockHeader } from './core';
 
-const whole = (n: number) => money(n, { cents: false });
+const useWhole = () => {
+  const currency = useCurrency();
+  return (n: number) => money(n, { cents: false, currency });
+};
 
 /** Rooms left and prices for a date range, one row per room type. */
 export function AvailabilityBlock({ block }: { block: Extract<AgentBlock, { type: 'availability' }> }) {
+  const whole = useWhole();
   const id = React.useId();
   return (
     <BlockCard aria-labelledby={id}>
@@ -110,6 +115,7 @@ export function AvailabilityBlock({ block }: { block: Extract<AgentBlock, { type
 }
 
 export function OccupancyBlock({ block }: { block: Extract<AgentBlock, { type: 'occupancy' }> }) {
+  const whole = useWhole();
   const id = React.useId();
   return (
     <BlockCard aria-labelledby={id} className="p-4">
@@ -145,6 +151,7 @@ const OUTLOOK: Record<string, { label: string; variant: 'success' | 'info' | 'wa
 };
 
 export function ForecastBlock({ block }: { block: Extract<AgentBlock, { type: 'forecast' }> }) {
+  const whole = useWhole();
   const { send, busy } = useAgentUI();
   const id = React.useId();
   return (

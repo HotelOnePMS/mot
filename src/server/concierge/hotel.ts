@@ -57,7 +57,7 @@ export async function hotelDetails(propertyId: string): Promise<HotelDetails> {
 export type CheckAvailabilityResult = AvailabilityResult;
 
 /**
- * Live availability and exact prices (USD) for every active room type at a
+ * Live availability and exact prices (in the hotel's currency) for every active room type at a
  * listed hotel — the same rules and output as the guest voice tool
  * `check_availability`. Where that tool returns `{ error }` (past dates,
  * check-out not after check-in, over 30 nights) this throws DomainError 400

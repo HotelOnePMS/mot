@@ -20,12 +20,14 @@ import { frontDeskSummary, occupancySeries } from '../services/frontdesk';
 import { assignRoomCleaning, listTasks, planAutoAssign } from '../services/housekeeping';
 import { propertyAvailability } from '../services/inventory';
 import { bookingInclude, floorNumber, toBookingSummary, type BookingWithRelations } from '../services/mappers';
+import { hotelLocale } from '../services/hotels';
 import { changeRates } from '../services/rates';
 import { roomBoard, setOutOfOrder, setRoomStatus } from '../services/rooms';
 import { listTeam } from '../services/team';
 import type { PlanStep } from './plan';
 import { hasPrefs, type Intent, type RoomPrefs } from './nlu';
 import { resolveBooking, resolveRoom, resolveRoomTypes, resolveTeamMember, type ResolveCtx } from './resolve';
+import { logError } from '@/server/log';
 
 export type ToolCtx = ResolveCtx;
 
@@ -374,7 +376,7 @@ export async function runRead(ctx: ToolCtx, intent: Intent): Promise<ReadOutput>
         blocks: [
           {
             type: 'text',
-            text: `**${p.name}** · ${p.address}, ${p.city}, ${p.state} ${p.zipCode} · ${p.phone}\n${p.roomTypes.map((r) => `• ${r.name}: ${r.totalRooms} rooms from ${money(Number(r.basePrice), { cents: false })}`).join('\n')}`,
+            text: `**${p.name}** · ${p.address}, ${p.city}, ${p.state} ${p.zipCode} · ${p.phone}\n${p.roomTypes.map((r) => `• ${r.name}: ${r.totalRooms} rooms from ${money(Number(r.basePrice), { cents: false, currency: p.currency })}`).join('\n')}`,
           },
           { type: 'navigate', label: 'Open the booking site', href: `/properties/${p.id}` },
         ],
@@ -432,7 +434,7 @@ async function bookingWarnings(b: BookingWithRelations): Promise<string[]> {
   const w: string[] = [];
   if (b.notes) w.push(`Note on file: ${b.notes.split('\n').slice(-1)[0].replace(/^\[[^\]]+\]\s*/, '')}`);
   const pay = b.paymentStatus ?? 'UNPAID';
-  if (pay === 'AWAITING_PAYMENT') w.push(`Online payment hasn’t completed — collect ${money(Number(b.totalPrice))} at the desk.`);
+  if (pay === 'AWAITING_PAYMENT') w.push(`Online payment hasn’t completed — collect ${money(Number(b.totalPrice), { currency: b.currency })} at the desk.`);
   return w;
 }
 
@@ -515,7 +517,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
       const warnings: string[] = [];
       const due = toISODate(b.checkOut);
       if (due > today) warnings.push(`Early departure — due ${formatDay(due)}. Unused nights go back on sale.`);
-      if ((b.paymentStatus ?? 'UNPAID') !== 'PAID') warnings.push(`Balance ${money(Number(b.totalPrice))} — ${PAYMENT_STATUS[b.paymentStatus ?? 'UNPAID']?.label ?? 'unpaid'}. Settle before the guest leaves.`);
+      if ((b.paymentStatus ?? 'UNPAID') !== 'PAID') warnings.push(`Balance ${money(Number(b.totalPrice), { currency: b.currency })} — ${PAYMENT_STATUS[b.paymentStatus ?? 'UNPAID']?.label ?? 'unpaid'}. Settle before the guest leaves.`);
       return {
         steps: [
           {
@@ -579,7 +581,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
             tool: 'transition',
             args: { bookingId: b.id, to, note: reason },
             summary: `${verb} ${guestName(b)} (${b.code})`,
-            detail: `${b.roomType.name} · ${formatDay(toISODate(b.checkIn))}–${formatDay(toISODate(b.checkOut))} · ${money(Number(b.totalPrice))}${reason ? ` · reason: ${reason}` : ''}`,
+            detail: `${b.roomType.name} · ${formatDay(toISODate(b.checkIn))}–${formatDay(toISODate(b.checkOut))} · ${money(Number(b.totalPrice), { currency: b.currency })}${reason ? ` · reason: ${reason}` : ''}`,
           },
         ],
         warnings: to === 'CANCELLED' ? ['Cancelling releases the room back to sale. This can be reinstated by a manager.'] : to === 'NO_SHOW' ? ['The room is released for tonight.'] : [],
@@ -716,6 +718,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
       if (!intent.ranges.length) return fail('Which dates? Try “raise rates 10% next weekend” or “from Oct 20 to Oct 23”.');
       if (Math.abs(intent.percent) > 50) return fail('That’s a big swing. Changes over 50% are best done in the rate calendar.');
       const roomTypes = await resolveRoomTypes(ctx, intent.roomTypeHint);
+      const { currency } = await hotelLocale(propertyId);
       const steps: PlanStep[] = [];
       const soldOut: string[] = [];
       for (const range of intent.ranges) {
@@ -733,7 +736,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
           steps.push({
             tool: 'adjust_rates',
             args: { roomTypeId: rt.id, startDate: nights[0], endDate: nights[nights.length - 1], percent: intent.percent },
-            summary: `${rt.name} · ${formatDay(nights[0])}${nights.length > 1 ? `–${formatDay(nights[nights.length - 1])}` : ''}: ${money(before, { cents: false })} → ${money(after, { cents: false })}`,
+            summary: `${rt.name} · ${formatDay(nights[0])}${nights.length > 1 ? `–${formatDay(nights[nights.length - 1])}` : ''}: ${money(before, { cents: false, currency })} → ${money(after, { cents: false, currency })}`,
             detail: `${intent.percent > 0 ? '+' : ''}${intent.percent}% · ${row?.available ?? '?'} of ${rt.totalRooms} still to sell`,
           });
         }
@@ -813,7 +816,7 @@ export async function executeStep(ctx: OpContext, step: PlanStep): Promise<StepR
     }
   } catch (e) {
     const msg = e instanceof DomainError ? e.message : 'Something went wrong.';
-    if (!(e instanceof DomainError)) console.error('Agent step failed:', step.tool, e);
+    if (!(e instanceof DomainError)) logError('agent/tools', 'Agent step failed:', step.tool, e);
     return { ok: false, line: `${step.summary} — ${msg}` };
   }
 }

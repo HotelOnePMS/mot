@@ -139,8 +139,7 @@ function BackLink() {
 
 export default function BookingDetailPage() {
   const { bookingId } = useParams<{ bookingId: string }>();
-  const { ctx, can, askAgent } = useConsole();
-  const today = ctx?.today ?? '';
+  const { can, askAgent, today } = useConsole();
   const { data, error, isLoading } = useSWR<Detail>(`/api/admin/bookings/${bookingId}`, fetcher);
   const { data: payment } = useSWR<Payment>(can('booking.payment.view') ? `/api/admin/bookings/${bookingId}/payment` : null, fetcher);
   const { transition, pending } = useBookingActions();
@@ -484,9 +483,9 @@ export default function BookingDetailPage() {
           {/* Payment */}
           <Card className="p-5 sm:p-6">
             <SectionTitle action={<PaymentBadge status={b.paymentStatus} />}>Payment</SectionTitle>
-            <p className="mt-3 text-3xl font-semibold tracking-tight tabular">{formatMoney(b.totalPrice, 'USD', { cents: true })}</p>
+            <p className="mt-3 text-3xl font-semibold tracking-tight tabular">{formatMoney(b.totalPrice, b.currency, { cents: true })}</p>
             <p className="text-xs text-muted-foreground">
-              {formatMoney(nightly, 'USD', { cents: true })} average a night · {formatNights(b.nights)}
+              {formatMoney(nightly, b.currency, { cents: true })} average a night · {formatNights(b.nights)}
               {b.rooms > 1 ? ` × ${b.rooms} rooms` : ''}
             </p>
             {payment && (payment.cardLast4 || payment.stripeCheckoutSessionId) && (

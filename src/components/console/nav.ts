@@ -15,6 +15,7 @@ import {
   Users,
   AudioLines,
   Cable,
+  Network,
   type LucideIcon,
 } from 'lucide-react';
 import type { SetupPath } from '@/lib/dto';
@@ -65,6 +66,7 @@ const GROUPS: NavGroup[] = [
       { label: 'Properties', href: '/admin/properties', icon: Building2, paths: ALL },
       { label: 'AI assistants', href: '/admin/assistants', icon: Bot, paths: ALL },
       { label: 'Team', href: '/admin/users', icon: Users, paths: ALL },
+      { label: 'Organization', href: '/admin/organization', icon: Network, paths: ALL },
       { label: 'Activity', href: '/admin/activity', icon: History, paths: ALL },
       { label: 'Settings', href: '/admin/settings', icon: Settings2, paths: ALL },
     ],

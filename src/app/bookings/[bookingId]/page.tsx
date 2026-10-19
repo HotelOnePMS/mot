@@ -54,6 +54,9 @@ interface GuestBooking {
   guests: number;
   rooms: number;
   totalPrice: number;
+  currency: string;
+  subtotalPrice?: number;
+  charges?: { name: string; kind: string; rate: number; amount: number }[];
   notes: string | null;
   roomTypeId: string;
   property: { id: string; name: string; address: string; city: string; state: string; zipCode: string; phone: string; email: string | null; primaryColor: string | null; photos: { url: string }[] };
@@ -180,7 +183,7 @@ function ChangeDatesDialog({
         <div className="min-h-[3.25rem] rounded-xl bg-muted px-4 py-3 text-sm" aria-live="polite">
           {!changed ? (
             <p className="text-muted-foreground">
-              Now: {fmtDay(booking.checkIn, 'weekday')} – {fmtDay(booking.checkOut, 'weekday')} · {price(booking.totalPrice)}
+              Now: {fmtDay(booking.checkIn, 'weekday')} – {fmtDay(booking.checkOut, 'weekday')} · {price(booking.totalPrice, booking.currency)}
             </p>
           ) : !valid ? (
             <p className="text-muted-foreground">Check-out must be after check-in.</p>
@@ -189,7 +192,7 @@ function ChangeDatesDialog({
           ) : quote ? (
             <div className="flex items-center justify-between gap-3">
               <span>
-                {plural(nights, 'night')} · new total <span className="font-semibold tabular">{price(quote.total)}</span>
+                {plural(nights, 'night')} · new total <span className="font-semibold tabular">{price(quote.total, booking.currency)}</span>
               </span>
               <span
                 className={cn(
@@ -197,7 +200,7 @@ function ChangeDatesDialog({
                   diff > 0 ? 'bg-warning-soft text-warning-soft-foreground' : diff < 0 ? 'bg-success-soft text-success-soft-foreground' : 'bg-surface text-muted-foreground'
                 )}
               >
-                {diff === 0 ? 'Same price' : `${diff > 0 ? '+' : '−'}${price(Math.abs(diff))}`}
+                {diff === 0 ? 'Same price' : `${diff > 0 ? '+' : '−'}${price(Math.abs(diff), booking.currency)}`}
                 {diff !== 0 && <span className="sr-only">{diff > 0 ? ' more than now' : ' less than now'}</span>}
               </span>
             </div>
@@ -335,7 +338,7 @@ function BookingPage() {
     propertyName: b?.property.name ?? null,
     brand: b?.property.primaryColor ?? null,
     summary: b
-      ? `their booking page at ${b.property.name}: confirmation ${b.code}, ${BOOKING_STATUS[b.status]?.label.toLowerCase() ?? b.status.toLowerCase()}, ${b.roomType.name}, ${fmtDay(b.checkIn, 'weekday')} to ${fmtDay(b.checkOut, 'weekday')}, ${plural(b.guests, 'guest')}, ${price(b.totalPrice)} (${paymentLabel(b.paymentStatus).label.toLowerCase()})${
+      ? `their booking page at ${b.property.name}: confirmation ${b.code}, ${BOOKING_STATUS[b.status]?.label.toLowerCase() ?? b.status.toLowerCase()}, ${b.roomType.name}, ${fmtDay(b.checkIn, 'weekday')} to ${fmtDay(b.checkOut, 'weekday')}, ${plural(b.guests, 'guest')}, ${price(b.totalPrice, b.currency)} (${paymentLabel(b.paymentStatus).label.toLowerCase()})${
           b.policy.passed ? '' : `; free changes until ${b.policy.deadlineLabel}`
         }${isNew ? ' — they have just booked it' : ''}`
       : null,
@@ -522,8 +525,10 @@ function BookingPage() {
                   <li className="flex items-center gap-3">
                     <CreditCard className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                     <span>
-                      <span className="font-semibold tabular">{price(b.totalPrice)}</span>
-                      <span className="text-muted-foreground"> · {pay.label}</span>
+                      <span className="font-semibold tabular">{price(b.totalPrice, b.currency)}</span>
+                      <span className="text-muted-foreground">
+                        {b.charges?.length ? ' incl. taxes and fees' : ''} · {pay.label}
+                      </span>
                     </span>
                   </li>
                 </ul>

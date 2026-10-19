@@ -33,7 +33,7 @@ function validate(form: FormState): Errors {
   if (!form.email.trim()) e.email = 'Enter your email address.';
   else if (!EMAIL_RE.test(form.email.trim())) e.email = 'Enter an email address like name@example.com.';
   else if (isDemoEmail(form.email)) e.email = 'That address belongs to the public demo — use your own email.';
-  if (form.password.length < 8) e.password = 'Use at least 8 characters.';
+  if (form.password.length < 10) e.password = 'Use at least 10 characters.';
   return e;
 }
 
@@ -113,9 +113,9 @@ function RegisterForm() {
         <Field label="Phone (optional)" htmlFor="r-phone" hint="Only used by the hotel about your stay.">
           <Input id="r-phone" type="tel" inputMode="tel" autoComplete="tel" {...bind('phone')} />
         </Field>
-        <Field label="Password" htmlFor="r-pass" error={errors.password} hint="At least 8 characters.">
+        <Field label="Password" htmlFor="r-pass" error={errors.password} hint="At least 10 characters.">
           <div className="relative">
-            <Input id="r-pass" type={show ? 'text' : 'password'} required minLength={8} autoComplete="new-password" {...bind('password')} className={cn(inputClass, 'pr-12')} />
+            <Input id="r-pass" type={show ? 'text' : 'password'} required minLength={10} autoComplete="new-password" {...bind('password')} className={cn(inputClass, 'pr-12')} />
             <button
               type="button"
               onClick={() => setShow((s) => !s)}

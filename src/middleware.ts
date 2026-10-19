@@ -30,14 +30,16 @@ export async function middleware(request: NextRequest) {
   if (pathname === '/admin' || pathname.startsWith('/admin/')) {
     if (!token) return toLogin();
     if (!isStaffRole(role)) return NextResponse.redirect(new URL('/dashboard', request.url));
+    // The organization requires two-step sign-in and this person hasn't set it up (lib/auth.ts).
+    if (token.mfaSetup) return NextResponse.redirect(new URL('/account/security?required=1', request.url));
     if (pathname !== '/admin' && !canAccessConsolePath(role, pathname)) {
       return NextResponse.redirect(new URL(homeForRole(role), request.url));
     }
     return NextResponse.next();
   }
 
-  // Guest account pages.
-  if (pathname.startsWith('/dashboard') || pathname.startsWith('/profile') || pathname.startsWith('/bookings/')) {
+  // Guest account pages, and everyone's account security.
+  if (pathname.startsWith('/dashboard') || pathname.startsWith('/profile') || pathname.startsWith('/bookings/') || pathname.startsWith('/account')) {
     if (!token) return toLogin();
   }
 
@@ -45,5 +47,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/admin', '/admin/:path*', '/dashboard/:path*', '/dashboard', '/profile', '/bookings/:path*'],
+  matcher: ['/admin', '/admin/:path*', '/dashboard/:path*', '/dashboard', '/profile', '/bookings/:path*', '/account/:path*'],
 };

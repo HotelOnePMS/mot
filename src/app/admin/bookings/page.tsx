@@ -40,8 +40,7 @@ function useDebounced<T>(value: T, ms = 250): T {
 }
 
 export default function BookingsPage() {
-  const { ctx, propertyId } = useConsole();
-  const today = ctx?.today ?? '';
+  const { propertyId, today, currency } = useConsole();
   const [view, setView] = React.useState<View>('upcoming');
   const [text, setText] = React.useState('');
   const [roomType, setRoomType] = React.useState('all');
@@ -85,7 +84,7 @@ export default function BookingsPage() {
 
   const summary = !data
     ? 'Loading reservations…'
-    : `${formatNumber(rows.length)}${data.length >= API_LIMIT ? '+' : ''} reservation${rows.length === 1 ? '' : 's'}${booked ? ` · ${formatMoney(booked, 'USD', { cents: false })} booked` : ''}`;
+    : `${formatNumber(rows.length)}${data.length >= API_LIMIT ? '+' : ''} reservation${rows.length === 1 ? '' : 's'}${booked ? ` · ${formatMoney(booked, currency, { cents: false })} booked` : ''}`;
 
   const empty = searching
     ? {

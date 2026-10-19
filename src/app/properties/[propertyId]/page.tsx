@@ -68,6 +68,8 @@ interface PublicProperty {
   amenities: string[];
   primaryColor: string | null;
   isDemo: boolean;
+  currency: string;
+  charges: { name: string; kind: string; rate: number }[];
   voice?: { available: boolean };
   photos: Photo[];
   roomTypes: RoomType[];
@@ -186,6 +188,7 @@ function RoomCard({
   onSelect,
   onRooms,
   onOtherDates,
+  currency,
 }: {
   rt: RoomType;
   a: RoomAvailability | undefined;
@@ -196,6 +199,8 @@ function RoomCard({
   onSelect: () => void;
   onRooms: (rooms: number) => void;
   onOtherDates: () => void;
+  /** The hotel's currency. */
+  currency: string;
 }) {
   const reduce = useReducedMotion();
   const state = roomState(a);
@@ -265,10 +270,10 @@ function RoomCard({
               ) : q && state === 'bookable' ? (
                 <>
                   <p className="text-sm text-muted-foreground">
-                    <span className="text-2xl font-semibold text-foreground tabular">{price(Math.round(q.averageNightly))}</span> / night{rooms > 1 ? ' per room' : ''}
+                    <span className="text-2xl font-semibold text-foreground tabular">{price(Math.round(q.averageNightly), currency)}</span> / night{rooms > 1 ? ' per room' : ''}
                   </p>
                   <p className="text-xs text-muted-foreground tabular">
-                    {price(q.total)} total · {plural(nights, 'night')}
+                    {price(q.total, currency)} total · {plural(nights, 'night')}
                     {rooms > 1 ? ` · ${plural(rooms, 'room')}` : ''}
                   </p>
                 </>
@@ -280,7 +285,7 @@ function RoomCard({
                 <p className="text-sm text-muted-foreground">No rooms left for {fmtRange(stay.checkIn, stay.checkOut)}.</p>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  From <span className="font-semibold text-foreground tabular">{price(rt.basePrice)}</span> / night
+                  From <span className="font-semibold text-foreground tabular">{price(rt.basePrice, currency)}</span> / night
                 </p>
               )}
             </div>
@@ -322,6 +327,7 @@ function PropertyPage() {
   const reduce = useReducedMotion();
 
   const { data: p, error } = useSWR<PublicProperty>(`/api/properties/${propertyId}`, fetcher);
+  const cur = p?.currency ?? 'USD';
   const availUrl = `/api/properties/${propertyId}/availability?checkIn=${stay.checkIn}&checkOut=${stay.checkOut}&guests=${stay.guests}&rooms=${stay.rooms ?? 1}`;
   const { data: avail, error: availError, isLoading: availLoading, isValidating } = useSWR<Availability>(p ? availUrl : null, fetcher, { keepPreviousData: true });
 
@@ -363,7 +369,7 @@ function PropertyPage() {
     roomOptions: voiceRooms,
     summary: name
       ? `${name}’s page, showing ${fmtRange(stay.checkIn, stay.checkOut)} for ${plural(stay.guests, 'guest')}${(stay.rooms ?? 1) > 1 ? `, ${plural(stay.rooms ?? 1, 'room')}` : ''}${
-          avail ? (voiceCheapest ? ` — from ${price(Math.round(voiceCheapest.nightly!))} a night (${voiceCheapest.name})` : ' — nothing left for these dates') : ''
+          avail ? (voiceCheapest ? ` — from ${price(Math.round(voiceCheapest.nightly!), cur)} a night (${voiceCheapest.name})` : ' — nothing left for these dates') : ''
         }`
       : null,
     // Phones: clear the fixed booking bar (≈69px + safe area) at the bottom of the page.
@@ -442,7 +448,7 @@ function PropertyPage() {
                 <div className="min-w-0" aria-live="polite">
                   {cheapest?.quote ? (
                     <p className="text-sm text-muted-foreground">
-                      From <span className="text-lg font-semibold text-foreground tabular">{price(Math.round(cheapest.quote.averageNightly))}</span> / night
+                      From <span className="text-lg font-semibold text-foreground tabular">{price(Math.round(cheapest.quote.averageNightly), cur)}</span> / night
                     </p>
                   ) : (
                     <p className="text-sm font-medium">{avail ? 'No rooms for these dates' : 'Checking prices…'}</p>
@@ -575,6 +581,7 @@ function PropertyPage() {
                       onSelect={() => book(rt.id)}
                       onRooms={(n) => setStay({ ...stay, rooms: n })}
                       onOtherDates={otherDates}
+                      currency={cur}
                     />
                   ))}
                 </ul>
@@ -636,10 +643,10 @@ function PropertyPage() {
                   {cheapest?.quote ? (
                     <>
                       <p className="text-sm text-muted-foreground">
-                        From <span className="text-3xl font-semibold text-foreground tabular">{price(Math.round(cheapest.quote.averageNightly))}</span> / night
+                        From <span className="text-3xl font-semibold text-foreground tabular">{price(Math.round(cheapest.quote.averageNightly), cur)}</span> / night
                       </p>
                       <p className="mt-0.5 text-sm text-muted-foreground tabular">
-                        {price(cheapest.quote.total)} total · {plural(nights, 'night')}
+                        {price(cheapest.quote.total, cur)} total · {plural(nights, 'night')}
                       </p>
                     </>
                   ) : avail ? (

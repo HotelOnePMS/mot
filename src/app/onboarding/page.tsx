@@ -115,6 +115,14 @@ const PROPERTY_FIELDS = new Set(['name', 'address', 'city', 'state', 'zipCode', 
  * the person lands on the problem instead of reading a technical message.
  * `sentRooms[i]` is the form row of the i-th room type that was sent.
  */
+function browserTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
 function serverProblem(e: ApiError, path: Path, sentRooms: number[], hasLoginUrl: boolean): { step: number; key: string; message: string } | null {
   if (e.status !== 400) return null;
   // The only other 400 is the cloud browser refusing a private sign-in address; its message is already plain.
@@ -415,7 +423,7 @@ function Onboarding() {
       if (!account.lastName.trim()) e.lastName = 'Enter your last name.';
       if (!/^\S+@\S+\.\S+$/.test(account.email.trim())) e.email = 'Enter an email address, like name@yourhotel.com.';
       else if (isDemoEmail(account.email)) e.email = 'That address belongs to the public demo — use your own email.';
-      if (account.password.length < 8) e.password = 'Use at least 8 characters.';
+      if (account.password.length < 10) e.password = 'Use at least 10 characters.';
     }
     if (s === 2) {
       if (prop.name.trim().length < 2) e.name = 'Add your property’s name.';
@@ -493,7 +501,8 @@ function Onboarding() {
         json: {
           path,
           account: { ...account, email: account.email.trim() },
-          property: { ...prop, tagline: prop.tagline || null },
+          // The hotel's clock starts as this browser's time zone; Settings → Prices and time changes it and the currency.
+          property: { ...prop, tagline: prop.tagline || null, timezone: browserTimeZone() },
           roomTypes: sentRooms
             .map((i) => rooms[i])
             .map((r) => ({ name: r.name.trim(), capacity: Number(r.capacity) || 2, basePrice: Number(r.basePrice), totalRooms: Number(r.totalRooms) || 0 })),
@@ -633,7 +642,7 @@ function Onboarding() {
                       <Field label="Work email" htmlFor="o-email" error={errors.email} hint="We’ll send booking alerts and your sign-in links here.">
                         <Input id="o-email" type="email" inputMode="email" autoComplete="email" maxLength={254} spellCheck={false} value={account.email} onChange={(e) => setAcc('email', e.target.value)} />
                       </Field>
-                      <Field label="Password" htmlFor="o-pass" hint="At least 8 characters." error={errors.password}>
+                      <Field label="Password" htmlFor="o-pass" hint="At least 10 characters." error={errors.password}>
                         <div className="relative">
                           <Input
                             id="o-pass"

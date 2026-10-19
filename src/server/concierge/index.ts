@@ -2,7 +2,7 @@
  * The HotelOne concierge: platform-wide search and booking across every
  * listed hotel, with no session. Used by the global voice concierge, the MCP
  * endpoint and the REST API, so every result is compact JSON for models:
- * dates YYYY-MM-DD, money as numbers with `currency` (USD), ids included,
+ * dates YYYY-MM-DD, money as numbers with each hotel's `currency` (ISO 4217), ids included,
  * absolute URLs.
  *
  * Conventions:
@@ -51,6 +51,7 @@ export {
   type FindBookingInput,
   type AskHotelInput,
 } from './schemas';
+import { logError } from '@/server/log';
 export { CURRENCY, HOTEL_POLICY, LISTED_PROPERTY, propertyFacts, type PropertyFacts } from './facts';
 export { MAX_NIGHTS, type AvailabilityOption, type AvailabilityResult, type BookingRequestSaved } from './shared';
 export { siteUrl, absoluteUrl, checkoutPath, propertyUrl, bookingPageUrl, type CheckoutStay, type CheckoutGuest } from './urls';
@@ -75,6 +76,6 @@ export function conciergeError(e: unknown): ConciergeError {
     return { error: `Invalid arguments: ${e.issues.map((i) => `${i.path.join('.') || 'input'} ${i.message}`).join('; ')}`, code: 'VALIDATION', status: 400 };
   }
   if (e instanceof DomainError) return { error: e.message, code: e.code, status: e.status, ...(e.details ? { details: e.details } : {}) };
-  console.error('[concierge] failed', e);
+  logError('concierge', 'failed', e);
   return { error: 'That didn’t work just now — please try again shortly.', code: 'INTERNAL', status: 500 };
 }

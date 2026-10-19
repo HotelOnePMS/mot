@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { toDateString } from '@/lib/date-utils';
 import { isStripeConfigured, getStripe } from '@/lib/stripe';
+import { toMinorUnits } from '@/lib/currency';
 import { sendBookingConfirmation } from '@/server/email';
 import { handleRoute, parseJson } from '@/server/http';
 import { badRequest, unauthorized } from '@/server/errors';
@@ -49,6 +50,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
     notes: input.notes,
     paymentStatus: isStripe ? 'AWAITING_PAYMENT' : 'PAY_AT_PROPERTY',
     createdVia: isStripe ? 'Booked online — awaiting card payment' : 'Booked online — pay at property',
+    source: 'WEB',
   });
 
   if (isStripe) {
@@ -62,12 +64,13 @@ export const POST = handleRoute(async (request: NextRequest) => {
       line_items: [
         {
           price_data: {
-            currency: 'usd',
+            currency: booking.currency.toLowerCase(),
             product_data: {
               name: `${booking.property.name} — ${booking.roomType.name}`,
               description: `${input.checkIn} → ${input.checkOut}, ${input.rooms} room(s), ${input.guests} guest(s)`,
             },
-            unit_amount: Math.round(Number(booking.totalPrice) * 100),
+            // Taxes and fees are already in the total; Stripe takes the currency's minor unit (cents, or yen).
+            unit_amount: toMinorUnits(Number(booking.totalPrice), booking.currency),
           },
           quantity: 1,
         },
@@ -99,6 +102,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
     guests: input.guests,
     rooms: input.rooms,
     totalPrice: Number(booking.totalPrice).toFixed(2),
+    currency: booking.currency,
     bookingId: booking.code ?? booking.id,
     paymentStatus: 'PAY_AT_PROPERTY',
   });
@@ -113,6 +117,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
       checkOut: booking.checkOut,
       status: confirmed.status,
       totalPrice: Number(booking.totalPrice),
+      currency: booking.currency,
       paymentStatus: 'PAY_AT_PROPERTY',
     },
   });

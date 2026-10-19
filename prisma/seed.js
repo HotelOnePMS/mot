@@ -90,8 +90,12 @@ async function main() {
     prisma.user.upsert({
       where: { email },
       // Re-running repairs the shared demo logins (password, role, active).
-      update: /@(hotelone|stayos)\.demo$/.test(email) ? { password: demoHash, role, isActive: true } : {},
-      create: { email, password: demoHash, firstName, lastName, role, phone: phone || null },
+      // …and their sign-in settings, so a visitor can't lock the others out.
+      update: /@(hotelone|stayos)\.demo$/.test(email)
+        ? { password: demoHash, role, isActive: true, mfaEnabled: false, mfaSecretCipher: null, mfaRecoveryCodes: [], emailVerifiedAt: new Date() }
+        : {},
+      // .demo addresses never receive mail, so they start out verified.
+      create: { email, password: demoHash, firstName, lastName, role, phone: phone || null, emailVerifiedAt: new Date() },
     });
 
   const owner = await mkUser('owner@hotelone.demo', 'Maya', 'Chen', 'OWNER', '+1 831 555 0101');

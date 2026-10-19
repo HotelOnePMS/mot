@@ -10,7 +10,7 @@ import { DomainError, badRequest } from '../errors';
 import { isEmailConfigured, sendBookingConfirmation } from '../email';
 import { confirmPayAtProperty, createBooking as createSiteBooking } from '../services/bookings';
 import { policyFor } from '../services/guest';
-import { CURRENCY } from './facts';
+import { localeOf } from '../services/hotels';
 import { findListedHotel } from './hotel';
 import { conciergeSchemas, type BookingLinkInput, type CreateBookingInput, type FindBookingInput, type RequestBookingInput } from './schemas';
 import { bookableStay, lookupBooking, submitBookingRequest, type BookingRequestSaved } from './shared';
@@ -32,11 +32,12 @@ export interface BookingLinkResult {
     nights: number;
     guests: number;
     rooms: number;
-    /** Per room, USD. */
+    /** Room price per room per night, in `currency`. */
     averageNightly: number;
-    /** Whole stay, all rooms, USD. */
+    /** Whole stay, all rooms, taxes and fees included, in `currency`. */
     total: number;
-    currency: typeof CURRENCY;
+    /** The hotel's ISO 4217 currency. */
+    currency: string;
     /** Rooms of this type still free for every night. */
     roomsLeft: number;
   };
@@ -68,7 +69,7 @@ export async function bookingLink(input: BookingLinkInput): Promise<BookingLinkR
       rooms: a.rooms,
       averageNightly: stay.quote.averageNightly,
       total: stay.quote.total,
-      currency: CURRENCY,
+      currency: stay.quote.currency,
       roomsLeft: stay.quote.available,
     },
     expiresNote: 'The link doesn’t hold the room: availability and the price are confirmed when the guest completes checkout.',
@@ -122,9 +123,10 @@ export interface CreateBookingResult {
   /** Confirmation code the guest quotes (also used by findBooking). */
   code: string;
   status: 'CONFIRMED';
-  /** Whole stay, all rooms, USD — priced by the server from the rate calendar. */
+  /** Whole stay, all rooms, taxes and fees included — priced by the server from the rate calendar. */
   total: number;
-  currency: typeof CURRENCY;
+  /** The hotel's ISO 4217 currency. */
+  currency: string;
   paymentStatus: 'PAY_AT_PROPERTY';
   hotel: { id: string; name: string };
   roomType: { id: string; name: string };
@@ -197,6 +199,7 @@ export async function createBooking(input: CreateBookingInput): Promise<CreateBo
     notes: a.notes,
     paymentStatus: 'PAY_AT_PROPERTY',
     createdVia: `Booked by ${a.source} — pay at property`,
+    source: 'AGENT_API',
   });
   const guestEmail = a.guest.email.trim().toLowerCase();
   await prisma.booking.update({ where: { id: booking.id }, data: { guestEmail } });
@@ -216,6 +219,7 @@ export async function createBooking(input: CreateBookingInput): Promise<CreateBo
       guests: a.guests,
       rooms: a.rooms,
       totalPrice: total.toFixed(2),
+      currency: booking.currency,
       bookingId: booking.code ?? booking.id,
       paymentStatus: 'PAY_AT_PROPERTY',
     });
@@ -226,7 +230,7 @@ export async function createBooking(input: CreateBookingInput): Promise<CreateBo
     code: booking.code ?? booking.id,
     status: 'CONFIRMED',
     total,
-    currency: CURRENCY,
+    currency: booking.currency,
     paymentStatus: 'PAY_AT_PROPERTY',
     hotel: { id: hotel.id, name: booking.property.name },
     roomType: { id: booking.roomTypeId, name: booking.roomType.name },
@@ -282,7 +286,7 @@ export async function findBooking(input: FindBookingInput): Promise<FindBookingR
   if (!b) return { found: false, message: 'No booking matches that confirmation code and last name.' };
   const checkIn = toISODate(b.checkIn);
   const checkOut = toISODate(b.checkOut);
-  const policy = policyFor(checkIn);
+  const policy = policyFor(checkIn, localeOf(b.property).timezone);
   return {
     found: true,
     code: b.code ?? a.code,

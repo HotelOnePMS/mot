@@ -6,14 +6,16 @@ import { prisma } from '@/lib/prisma';
 import type { ISODate, Occupancy, RoomStatus, RoomSummary } from '@/lib/dto';
 import { ROOM_STATUS } from '@/lib/status';
 import { assertPropertyAccess, requirePermission, type Actor } from '../authz';
-import { atNoonUTC, hotelToday, toISODate } from '../dates';
+import { atNoonUTC, toISODate } from '../dates';
+import { todayAt } from './hotels';
 import { badRequest, notFound } from '../errors';
 import { recordAudit, type OpContext } from './audit';
 import { floorNumber, personName } from './mappers';
 
-export async function roomBoard(actor: Actor, propertyId: string, day: ISODate = hotelToday()): Promise<RoomSummary[]> {
+export async function roomBoard(actor: Actor, propertyId: string, requestedDay?: ISODate): Promise<RoomSummary[]> {
   requirePermission(actor, 'room.view');
   assertPropertyAccess(actor, propertyId);
+  const day = requestedDay ?? (await todayAt(propertyId));
 
   const [rooms, bookings] = await Promise.all([
     prisma.room.findMany({

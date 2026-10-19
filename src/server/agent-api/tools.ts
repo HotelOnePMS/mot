@@ -115,7 +115,7 @@ const TOOLS: ToolDef[] = [
     op: 'checkAvailability',
     annotations: READ,
     describe: ({ hotel }) =>
-      `Live availability and exact prices (USD) for every room type ${at(hotel)} for given dates and party. Suggest an option that is available and fits the party (fits_party), then use its room_type_id with get_booking_link.`,
+      `Live availability and exact prices (in the hotel’s currency, taxes and fees included) for every room type ${at(hotel)} for given dates and party. Suggest an option that is available and fits the party (fits_party), then use its room_type_id with get_booking_link.`,
     run: async (args, ctx) => ({ ...(await checkAvailability({ ...args, propertyId: property(args, ctx) } as Parameters<typeof checkAvailability>[0])) }),
   },
   {

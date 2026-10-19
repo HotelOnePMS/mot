@@ -4,14 +4,32 @@
  * Booking dates are calendar days, stored as Date at 12:00 UTC (see
  * src/lib/date-utils.ts). All day arithmetic here works on 'YYYY-MM-DD'
  * strings so the server's timezone never shifts a stay by a day.
- * "Today" is evaluated in the hotel's timezone (HOTEL_TIMEZONE, default
- * America/Los_Angeles) — a 11:30 PM walk-in is still "today" at the desk.
+ * "Today" is evaluated in the hotel's own time zone (Property.timezone,
+ * see services/hotels.ts) — a 11:30 PM walk-in is still "today" at the desk.
+ * HOTEL_TIMEZONE (default America/Los_Angeles) is the platform default for
+ * hotels that never set one and for platform-wide pages.
  */
 import { toDateString, parseBookingDate } from '@/lib/date-utils';
 
 export const HOTEL_TIMEZONE = process.env.HOTEL_TIMEZONE || 'America/Los_Angeles';
 
 export type ISODate = string; // YYYY-MM-DD
+
+/** A valid IANA time zone name ("Europe/Lisbon"). */
+export function isTimeZone(tz: unknown): tz is string {
+  if (typeof tz !== 'string' || !tz || tz.length > 64) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The hour (0–23) on the hotel's clock. */
+export function hourIn(tz: string = HOTEL_TIMEZONE, now: Date = new Date()): number {
+  return Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', hourCycle: 'h23' }).format(now));
+}
 
 export function hotelToday(now: Date = new Date(), tz: string = HOTEL_TIMEZONE): ISODate {
   // en-CA formats as YYYY-MM-DD.
@@ -48,7 +66,10 @@ export function atNoonUTC(day: ISODate): Date {
 }
 
 export function isISODate(s: unknown): s is ISODate {
-  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(`${s}T12:00:00Z`));
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  // A real calendar day: "2026-02-30" parses (as March 2), so it must also round-trip.
+  const t = Date.parse(`${s}T12:00:00Z`);
+  return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === s;
 }
 
 export function dayOfWeek(day: ISODate): number {

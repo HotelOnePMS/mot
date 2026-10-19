@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
-import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { requireStaff, type Actor } from '@/server/authz';
 import { badRequest, forbidden, notFound } from '@/server/errors';
+import { hashPassword, passwordProblem } from '@/server/auth/passwords';
 import { handleRoute, json, parseJson } from '@/server/http';
 import { assertAssignable, assertCanGrant, assertDemoLoginUnchanged, userSelect, visibleUsersWhere } from '@/server/services/users';
 
@@ -34,7 +34,7 @@ export const GET = handleRoute(async (_req: NextRequest, { params }: Params) => 
 
 const patchSchema = z.object({
   email: z.string().trim().toLowerCase().email().optional(),
-  password: z.string().min(8).optional().or(z.literal('')),
+  password: z.string().max(200).optional().or(z.literal('')),
   firstName: z.string().trim().min(1).max(60).optional(),
   lastName: z.string().trim().min(1).max(60).optional(),
   phone: z.string().trim().max(40).nullable().optional(),
@@ -58,6 +58,13 @@ export const PATCH = handleRoute(async (request: NextRequest, { params }: Params
   if (body.email && body.email !== user.email && (await prisma.user.findUnique({ where: { email: body.email } }))) {
     throw badRequest('That email is already in use.');
   }
+  if (body.password) {
+    const problem = passwordProblem(body.password, { email: body.email ?? user.email });
+    if (problem) throw badRequest(`Password: ${problem}`);
+  }
+  // A new password, a new role or deactivation ends the person's current sessions.
+  const endSessions = !!body.password || (body.role !== undefined && body.role !== user.role) || body.isActive === false;
+  const emailChanged = body.email !== undefined && body.email.toLowerCase() !== user.email.toLowerCase();
   const updated = await prisma.$transaction(async (tx) => {
     const u = await tx.user.update({
       where: { id: userId },
@@ -68,7 +75,10 @@ export const PATCH = handleRoute(async (request: NextRequest, { params }: Params
         ...(body.phone !== undefined ? { phone: body.phone || null } : {}),
         ...(body.role !== undefined ? { role: body.role } : {}),
         ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
-        ...(body.password ? { password: await bcrypt.hash(body.password, 12) } : {}),
+        ...(body.password ? { password: await hashPassword(body.password), passwordChangedAt: new Date() } : {}),
+        ...(endSessions ? { sessionVersion: { increment: 1 } } : {}),
+        // The new address hasn't been proven yet.
+        ...(emailChanged ? { emailVerifiedAt: null } : {}),
       },
     });
     if (body.assignedPropertyIds) {

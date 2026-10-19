@@ -17,6 +17,7 @@ import { hotelToday } from '../dates';
 import { extractName, parseMessage, type Intent } from '../agent/nlu';
 import { getSkill, promptSafe, recordLearnedSkill, recordRecipeOutcome, skillKey, upsertSkill, type RecipeBody, type Skill } from '../skills';
 import type { OperatorAction, OperatorRecipe } from './operator';
+import { logError } from '@/server/log';
 
 /** One logged stretch of work on one screen. */
 export interface RecipeLogEntry {
@@ -337,7 +338,7 @@ export async function learnFromTask(task: BridgeTask & { connection?: { system: 
     if (learned) await prisma.bridgeTask.update({ where: { id: task.id }, data: { payload: { ...payload, learned: learned.key } as unknown as Prisma.InputJsonValue } }).catch(() => null);
     return learned;
   } catch (e) {
-    console.error('[bridge] learning a recipe failed for task', task.id, e);
+    logError('bridge', 'learning a recipe failed for task', task.id, e);
     return null;
   }
 }

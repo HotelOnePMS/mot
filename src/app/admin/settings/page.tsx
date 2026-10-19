@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/primitives';
 import { useConsole } from '@/components/console/ConsoleProvider';
+import { PricingSettings } from '@/components/setup/PricingSettings';
 
 const FRAME = 'mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8';
 
@@ -231,6 +232,36 @@ export default function SettingsPage() {
               </div>
             </Section>
           )}
+
+          {can('charges.manage') && property && (
+            <Section title="Prices and time" description={`${property.name}’s clock, currency, and the taxes and fees on every stay.`}>
+              <PricingSettings key={property.id} propertyId={property.id} onSaved={() => void mutate('/api/admin/context')} />
+            </Section>
+          )}
+
+          <Section title="Security" description="Your password, two-step sign-in and email address.">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button asChild variant="outline">
+                <Link href="/account/security">
+                  Account security <ArrowRight aria-hidden />
+                </Link>
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                Two-step sign-in is {ctx?.user.mfaEnabled ? 'on' : 'off'}
+                {ctx?.user.emailVerified === false ? ' · email not verified' : ''}
+              </span>
+            </div>
+          </Section>
+
+          {(ctx?.orgAdminOf.length ?? 0) > 0 || ctx?.user.role === 'ADMIN' ? (
+            <Section title="Organization" description="Your hotel group: its hotels, administrators, sign-in policy, SSO and SCIM.">
+              <Button asChild variant="outline">
+                <Link href="/admin/organization">
+                  Manage organization <ArrowRight aria-hidden />
+                </Link>
+              </Button>
+            </Section>
+          ) : null}
 
           {can('property.write') && property && (
             <Section title="Property" description="Name, address, photos and your booking page’s brand color.">

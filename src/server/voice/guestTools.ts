@@ -7,11 +7,13 @@ import { prisma } from '@/lib/prisma';
 import { HOTEL_TIMEZONE, formatDay, hotelToday, isISODate, toISODate } from '../dates';
 import { DomainError, badRequest } from '../errors';
 import { policyFor } from '../services/guest';
+import { localeOf } from '../services/hotels';
 import { propertyFacts, runsOnHotelOne } from '../concierge/facts';
 import { availabilityOptions, lookupBooking, priceOptions, submitBookingRequest } from '../concierge/shared';
 import { checkoutPath } from '../concierge/urls';
 import { alertTeam } from '../services/guestRequests';
 import { useSkill as runSkill } from '../skills';
+import { logError } from '@/server/log';
 
 // Hotel facts live with the concierge (shared with the agent API and skills).
 export { propertyFacts };
@@ -59,7 +61,7 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
       // Same answer for a wrong code or a wrong name: don't confirm either alone.
       if (!b) return { found: false, say: 'I couldn’t find a booking with that code and last name.' };
       const checkIn = toISODate(b.checkIn);
-      const policy = policyFor(checkIn);
+      const policy = policyFor(checkIn, localeOf(b.property).timezone);
       return {
         found: true,
         status: b.status,
@@ -137,7 +139,8 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
   }
 }
 
-export const guestContext = () => ({ today: hotelToday(), timezone: HOTEL_TIMEZONE });
+/** "Today" and the time zone the voice tells guests, on the hotel's clock (the platform default for the concierge). */
+export const guestContext = (timezone: string = HOTEL_TIMEZONE) => ({ today: hotelToday(new Date(), timezone), timezone });
 
 /**
  * Run a tool and always return something the model can use: validation
@@ -148,7 +151,7 @@ export async function guestToolOutput(propertyId: string, name: string, args: un
   try {
     return await runGuestTool(propertyId, name, args, channel);
   } catch (e) {
-    if (!(e instanceof z.ZodError) && !(e instanceof DomainError)) console.error('voice tool failed', name, e);
+    if (!(e instanceof z.ZodError) && !(e instanceof DomainError)) logError('voice/guestTools', 'voice tool failed', name, e);
     return {
       error:
         e instanceof z.ZodError

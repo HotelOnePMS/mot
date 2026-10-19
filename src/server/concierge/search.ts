@@ -12,7 +12,7 @@ import { conciergeSchemas, type SearchHotelsInput } from './schemas';
 import { stayDateError } from './shared';
 import { absoluteUrl, propertyUrl } from './urls';
 
-/** One hotel in search results. Money in `currency` (USD), dates YYYY-MM-DD. */
+/** One hotel in search results. Money in the hotel's `currency` (ISO 4217), dates YYYY-MM-DD. */
 export interface HotelSearchResult {
   id: string;
   name: string;

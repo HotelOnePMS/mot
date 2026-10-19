@@ -3,6 +3,7 @@ import { getStripe, isStripeConfigured } from '@/lib/stripe';
 import { prisma } from '@/lib/prisma';
 import { sendBookingConfirmation } from '@/server/email';
 import { toDateString } from '@/lib/date-utils';
+import { logError } from '@/server/log';
 
 /**
  * Stripe webhook — confirms bookings after successful Checkout payment.
@@ -15,7 +16,7 @@ export async function POST(request: NextRequest) {
 
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!webhookSecret) {
-    console.error('[stripe-webhook] STRIPE_WEBHOOK_SECRET is not set');
+    logError('stripe-webhook', 'STRIPE_WEBHOOK_SECRET is not set');
     return NextResponse.json({ error: 'Webhook secret not configured' }, { status: 500 });
   }
 
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest) {
     const body = await request.text();
     event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
   } catch (err) {
-    console.error('[stripe-webhook] Signature verification failed:', err);
+    logError('stripe-webhook', 'Signature verification failed:', err);
     return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
   }
 
@@ -42,7 +43,7 @@ export async function POST(request: NextRequest) {
     };
     const bookingId = checkoutSession.metadata?.bookingId;
     if (!bookingId) {
-      console.error('[stripe-webhook] checkout.session.completed without bookingId metadata');
+      logError('stripe-webhook', 'checkout.session.completed without bookingId metadata');
       return NextResponse.json({ received: true });
     }
 
@@ -56,7 +57,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!booking) {
-      console.error(`[stripe-webhook] Booking ${bookingId} not found`);
+      logError('stripe-webhook', `Booking ${bookingId} not found`);
       return NextResponse.json({ received: true });
     }
 
@@ -87,6 +88,7 @@ export async function POST(request: NextRequest) {
         guests: booking.guests,
         rooms: booking.rooms,
         totalPrice: booking.totalPrice.toString(),
+        currency: booking.currency,
         // The short code guests can say out loud, like the pay-at-hotel confirmation.
         bookingId: booking.code ?? booking.id,
         paymentStatus: 'PAID',

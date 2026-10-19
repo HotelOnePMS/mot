@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma';
 import { money } from '@/lib/status';
 import { cleanFaqs, hotelPolicy, runsOnHotelOne } from '../concierge/facts';
 import { cleanSkillText, skillKey, type AnswerBody, type SkillAudience } from './types';
+import { logError } from '@/server/log';
 
 /** Tools discovered on a hotel's PMS MCP server (src/server/pms/tools.ts) — CONFIG rows this sync leaves alone. */
 const PMS_TOOL_KIND = 'PMS_TOOL';
@@ -37,7 +38,7 @@ export interface ConfigSyncResult {
 }
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
-const price = (n: number) => money(n, { cents: !Number.isInteger(n) });
+const price = (n: number, currency: string) => money(n, { cents: !Number.isInteger(n), currency });
 const list = (items: string[]) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
 
 /** JSON with sorted keys, so JSONB's key order never looks like a change. */
@@ -52,6 +53,7 @@ async function desiredSkills(propertyId: string): Promise<ConfigSkill[] | null> 
     where: { id: propertyId },
     select: {
       name: true,
+      currency: true,
       address: true,
       city: true,
       state: true,
@@ -112,7 +114,7 @@ async function desiredSkills(propertyId: string): Promise<ConfigSkill[] | null> 
   if (p.roomTypes.length) {
     const rooms = p.roomTypes.map((rt) => {
       const extras = rt.amenities.slice(0, 4).join(', ');
-      return `${rt.name} — sleeps ${rt.capacity}, from ${price(Number(rt.basePrice))} a night${extras ? ` (${extras})` : ''}`;
+      return `${rt.name} — sleeps ${rt.capacity}, from ${price(Number(rt.basePrice), p.currency)} a night${extras ? ` (${extras})` : ''}`;
     });
     out.push({
       key: 'rooms',
@@ -201,7 +203,7 @@ export async function ensureConfigSkills(propertyId: string): Promise<void> {
     if (n === 0) await syncConfigSkills(propertyId);
     ensured.add(propertyId);
   } catch (e) {
-    console.error('[skills] could not generate skills for', propertyId, e);
+    logError('skills', 'could not generate skills for', propertyId, e);
   }
 }
 
@@ -214,7 +216,7 @@ export function scheduleConfigSkillSync(propertyId: string): void {
   const run = () =>
     syncConfigSkills(propertyId).then(
       () => undefined,
-      (e) => console.error('[skills] config sync failed for', propertyId, e),
+      (e) => logError('skills', 'config sync failed for', propertyId, e),
     );
   try {
     after(run);

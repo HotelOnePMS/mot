@@ -11,6 +11,7 @@ import { assertPropertyAccess, can, requirePermission, scopeByProperty, type Act
 import { addDaysISO, atNoonUTC, dayBounds, diffDays, formatDay, hotelToday, isISODate, toISODate } from '../dates';
 import { badRequest, conflict, DomainError, notFound } from '../errors';
 import { recordAudit, type OpContext } from './audit';
+import { localeOf, todayAt } from './hotels';
 import { nightlyInventory, quoteStay } from './inventory';
 import { bookingInclude, floorNumber, toBookingSummary, type BookingWithRelations } from './mappers';
 
@@ -120,6 +121,10 @@ export interface CreateBookingInput {
   paymentStatus?: string;
   /** Who/what created it, for the status history. */
   createdVia?: string;
+  /** WEB | FRONT_DESK | AGENT_API | VOICE (Booking.source). */
+  source?: string;
+  /** The staff member taking a reservation at the desk. */
+  createdById?: string | null;
 }
 
 const MAX_NIGHTS = 30;
@@ -128,7 +133,6 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
   const rooms = input.rooms ?? 1;
   if (!isISODate(input.checkIn) || !isISODate(input.checkOut)) throw badRequest('Dates must be in YYYY-MM-DD format.');
   if (input.checkIn >= input.checkOut) throw badRequest('Check-out must be after check-in.');
-  if (input.checkIn < hotelToday()) throw badRequest('Check-in date cannot be in the past.');
   const nights = diffDays(input.checkIn, input.checkOut);
   if (nights > MAX_NIGHTS) throw badRequest(`Stays are limited to ${MAX_NIGHTS} nights online. Please contact the hotel for longer stays.`);
   if (!Number.isInteger(rooms) || rooms < 1 || rooms > 9) throw badRequest('Rooms must be between 1 and 9.');
@@ -136,9 +140,10 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
 
   const roomType = await prisma.roomType.findUnique({
     where: { id: input.roomTypeId },
-    select: { id: true, name: true, propertyId: true, capacity: true, isActive: true, property: { select: { isActive: true, setupPath: true, phone: true } } },
+    select: { id: true, name: true, propertyId: true, capacity: true, isActive: true, property: { select: { isActive: true, setupPath: true, phone: true, timezone: true } } },
   });
   if (!roomType || !roomType.isActive || !roomType.property.isActive) throw notFound('Room type');
+  if (input.checkIn < hotelToday(new Date(), localeOf(roomType.property).timezone)) throw badRequest('Check-in date cannot be in the past.');
   if (roomType.propertyId !== input.propertyId) throw badRequest('That room type does not belong to this property.');
   // Voice-only hotels take bookings in their own system; HotelOne only quotes them.
   if (roomType.property.setupPath === 'VOICE') throw badRequest(`This hotel takes bookings directly — please call ${roomType.property.phone}.`);
@@ -172,6 +177,11 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
               guests: input.guests,
               rooms,
               totalPrice: quote.total,
+              currency: quote.currency,
+              subtotalPrice: quote.subtotal,
+              charges: quote.charges.length ? (quote.charges as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
+              source: input.source ?? 'WEB',
+              createdById: input.createdById ?? null,
               status: 'PENDING',
               paymentStatus: input.paymentStatus ?? 'UNPAID',
               code: generateBookingCode(),
@@ -271,7 +281,7 @@ export async function checkTransition(
     return { ok: false, reason: `A ${BOOKING_STATUS[from].label.toLowerCase()} reservation can't be ${VERB[to]?.toLowerCase() ?? to.toLowerCase()}.` };
   }
   if (!can(actor, rule.perm)) return { ok: false, reason: 'Your role cannot perform this action.' };
-  const today = hotelToday();
+  const today = await todayAt(booking.propertyId);
   const checkIn = toISODate(booking.checkIn);
   const checkOut = toISODate(booking.checkOut);
   if (to === 'CHECKED_IN') {
@@ -299,7 +309,7 @@ export async function transitionBooking(
   const check = await checkTransition(ctx.actor, booking, to);
   if (!check.ok) throw badRequest(check.reason);
 
-  const today = hotelToday();
+  const today = await todayAt(booking.propertyId);
   const effects: string[] = [];
   const data: Prisma.BookingUpdateInput = { status: to };
   let historyNote = opts.note?.trim() || '';
@@ -516,7 +526,7 @@ export async function addBookingNote(ctx: OpContext, bookingIdOrCode: string, no
   if (!clean) throw badRequest('Note is empty.');
   if (clean.length > 1000) throw badRequest('Notes are limited to 1000 characters.');
   const booking = await getBookingForStaff(ctx.actor, bookingIdOrCode);
-  const stamp = `[${hotelToday()} · ${ctx.actor.name}] ${clean}`;
+  const stamp = `[${await todayAt(booking.propertyId)} · ${ctx.actor.name}] ${clean}`;
   const updated = await prisma.booking.update({
     where: { id: booking.id },
     data: { notes: booking.notes ? `${booking.notes}\n${stamp}` : stamp },

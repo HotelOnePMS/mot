@@ -71,6 +71,7 @@ export const GET = handleRoute(async (request: NextRequest) => {
         roomTypeCount: p.roomTypes.length,
         maxCapacity: p.roomTypes.reduce((m, t) => Math.max(m, t.capacity), 0),
         fromPrice,
+        currency: p.currency,
         available,
         isDemo: p.isDemo,
       };

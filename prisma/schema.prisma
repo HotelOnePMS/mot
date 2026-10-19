@@ -9,22 +9,38 @@ datasource db {
 }
 
 model User {
-  id                String              @id @default(cuid())
-  email             String              @unique
-  password          String
-  firstName         String
-  lastName          String
-  phone             String?
-  address           String?
-  city              String?
-  state             String?
-  zipCode           String?
-  country           String?
-  role              UserRole            @default(CUSTOMER)
-  isActive          Boolean             @default(true)
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
-  bookings          Booking[]
+  id                 String                   @id @default(cuid())
+  email              String                   @unique
+  password           String
+  firstName          String
+  lastName           String
+  phone              String?
+  address            String?
+  city               String?
+  state              String?
+  zipCode            String?
+  country            String?
+  role               UserRole                 @default(CUSTOMER)
+  isActive           Boolean                  @default(true)
+  /// Set when the person proved they own the address (link, password reset, Google, SSO or SCIM).
+  emailVerifiedAt    DateTime?
+  /// Two-step sign-in (TOTP). The secret is sealed with the vault; recovery codes are SHA-256 hashes.
+  mfaEnabled         Boolean                  @default(false)
+  mfaSecretCipher    String?
+  mfaRecoveryCodes   String[]                 @default([])
+  /// Identity-provider subject for SSO sign-in (unique per issuer).
+  ssoIssuer          String?
+  ssoSubject         String?
+  /// The SCIM client's id for this person.
+  scimExternalId     String?
+  /// Bumped to sign out every session (password reset, MFA change, deactivation).
+  sessionVersion     Int                      @default(0)
+  passwordChangedAt  DateTime?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  bookings           Booking[]
+  organizations      OrganizationMember[]
+  authTokens         AuthToken[]
   // Properties assigned to this user (for Owner, Manager roles)
   assignedProperties UserPropertyAssignment[]
   // Housekeeping tasks assigned to this user
@@ -32,39 +48,47 @@ model User {
   // Agentic-mode audit trail entries created by this user
   agentAuditLogs     AgentAuditLog[]
 
+  @@unique([ssoIssuer, ssoSubject])
   @@map("users")
 }
 
 model Property {
-  id          String          @id @default(cuid())
-  name        String
-  description String?
-  address     String
-  city        String
-  state       String
-  zipCode     String
-  phone       String
-  email       String?
-  amenities   String[]
-  isActive    Boolean         @default(true)
+  id             String                   @id @default(cuid())
+  name           String
+  description    String?
+  address        String
+  city           String
+  state          String
+  zipCode        String
+  phone          String
+  email          String?
+  amenities      String[]
+  isActive       Boolean                  @default(true)
   // SaaS branding / onboarding fields
-  tagline      String?
-  primaryColor String?
-  logoUrl      String?
-  type         String? // Hotel | Motel | Inn | B&B | Boutique | Other
-  isDemo       Boolean         @default(false)
+  tagline        String?
+  primaryColor   String?
+  logoUrl        String?
+  type           String? // Hotel | Motel | Inn | B&B | Boutique | Other
+  isDemo         Boolean                  @default(false)
   // Classic (traditional UI) vs Agentic (natural-language beta interface)
-  interfaceMode InterfaceMode  @default(CLASSIC)
+  interfaceMode  InterfaceMode            @default(CLASSIC)
   // How the hotel adopted StayOS: everything on StayOS, keeping their PMS, or voice only
-  setupPath     SetupPath      @default(FULL)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  bookings    Booking[]
-  photos      PropertyPhoto[]
-  roomTypes   RoomType[]
-  rooms       Room[]
+  setupPath      SetupPath                @default(FULL)
+  /// The hotel group this hotel belongs to (null = an independent hotel).
+  organizationId String?
+  organization   Organization?            @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  /// IANA time zone for the hotel's "today" and policy cut-offs (null = the platform default, HOTEL_TIMEZONE).
+  timezone       String?
+  /// ISO 4217 currency every price at this hotel is in.
+  currency       String                   @default("USD")
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  bookings       Booking[]
+  photos         PropertyPhoto[]
+  roomTypes      RoomType[]
+  rooms          Room[]
   // Users assigned to this property
-  assignedUsers UserPropertyAssignment[]
+  assignedUsers  UserPropertyAssignment[]
   // Agentic-mode audit trail
   agentAuditLogs AgentAuditLog[]
   voiceAgent     VoiceAgentConfig?
@@ -75,7 +99,10 @@ model Property {
   bridgeTasks    BridgeTask[]
   agentSkills    AgentSkill[]
   agentApiKeys   AgentApiKey[]
+  charges        PropertyCharge[]
+  nightAudits    NightAudit[]
 
+  @@index([organizationId])
   @@map("properties")
 }
 
@@ -141,40 +168,50 @@ model RoomTypePhoto {
 }
 
 model Booking {
-  id            String                 @id @default(cuid())
-  userId        String
-  propertyId    String
-  roomTypeId    String
-  checkIn       DateTime
-  checkOut      DateTime
-  guests        Int
-  rooms         Int                    @default(1)
-  totalPrice    Decimal                @db.Decimal(10, 2)
-  status        BookingStatus          @default(PENDING)
+  id                      String                 @id @default(cuid())
+  userId                  String
+  propertyId              String
+  roomTypeId              String
+  checkIn                 DateTime
+  checkOut                DateTime
+  guests                  Int
+  rooms                   Int                    @default(1)
+  totalPrice              Decimal                @db.Decimal(10, 2)
+  /// The hotel's currency when the booking was made.
+  currency                String                 @default("USD")
+  /// Room charges before taxes and fees: room revenue in reports. Bookings made before taxes were modelled have subtotal = total.
+  subtotalPrice           Decimal?               @db.Decimal(10, 2)
+  /// Taxes and fees: [{ name, kind, rate, amount }], summing to totalPrice - subtotalPrice.
+  charges                 Json?
+  /// Where the booking came from: WEB | FRONT_DESK | AGENT_API | VOICE.
+  source                  String?
+  /// Staff member who took the reservation at the desk.
+  createdById             String?
+  status                  BookingStatus          @default(PENDING)
   // Short human-friendly confirmation code staff and guests can say out loud.
-  code          String?                @unique
-  notes         String?
+  code                    String?                @unique
+  notes                   String?
   // Physical room assigned at (or before) check-in.
-  roomId        String?
+  roomId                  String?
   // Payment metadata (no raw card data is ever stored — PCI compliance).
   // Card payments go through Stripe Checkout; otherwise pay at property.
-  paymentStatus          String?               @default("UNPAID")
+  paymentStatus           String?                @default("UNPAID")
   stripeCheckoutSessionId String?
   stripePaymentIntentId   String?
-  cardLast4     String?
-  cardBrand     String?                // Visa, Mastercard, Amex, etc.
-  billingName   String?
-  billingZip    String?
+  cardLast4               String?
+  cardBrand               String? // Visa, Mastercard, Amex, etc.
+  billingName             String?
+  billingZip              String?
   /// Direct bookings by an integration's API key: the contact email it sent. Those bookings belong to a
   /// guest record made for that booking alone, never to an existing account (see src/server/concierge).
-  guestEmail    String?
-  createdAt     DateTime               @default(now())
-  updatedAt     DateTime               @updatedAt
-  statusHistory BookingStatusHistory[]
-  property      Property               @relation(fields: [propertyId], references: [id])
-  roomType      RoomType               @relation(fields: [roomTypeId], references: [id])
-  user          User                   @relation(fields: [userId], references: [id])
-  room          Room?                  @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  guestEmail              String?
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  statusHistory           BookingStatusHistory[]
+  property                Property               @relation(fields: [propertyId], references: [id])
+  roomType                RoomType               @relation(fields: [roomTypeId], references: [id])
+  user                    User                   @relation(fields: [userId], references: [id])
+  room                    Room?                  @relation(fields: [roomId], references: [id], onDelete: SetNull)
 
   @@index([propertyId, checkIn])
   @@index([propertyId, checkOut])
@@ -272,23 +309,23 @@ enum BookingStatus {
 
 // Individual room with room number
 model Room {
-  id           String             @id @default(cuid())
-  propertyId   String
-  roomTypeId   String
-  roomNumber   String
-  floor        String?
-  status       RoomStatus         @default(CLEAN)
-  isOutOfOrder Boolean            @default(false)
+  id               String             @id @default(cuid())
+  propertyId       String
+  roomTypeId       String
+  roomNumber       String
+  floor            String?
+  status           RoomStatus         @default(CLEAN)
+  isOutOfOrder     Boolean            @default(false)
   outOfOrderReason String?
-  notes        String?
+  notes            String?
   // Free-form features used for guest preferences: quiet, accessible, corner, view...
-  tags         String[]           @default([])
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  property     Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  roomType     RoomType           @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
-  housekeeping RoomHousekeeping[]
-  bookings     Booking[]
+  tags             String[]           @default([])
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  property         Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  roomType         RoomType           @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+  housekeeping     RoomHousekeeping[]
+  bookings         Booking[]
 
   @@unique([propertyId, roomNumber])
   @@map("rooms")
@@ -303,17 +340,17 @@ enum RoomStatus {
 
 // Housekeeping task for a room
 model RoomHousekeeping {
-  id          String              @id @default(cuid())
+  id          String             @id @default(cuid())
   roomId      String
   assignedTo  String?
-  status      HousekeepingStatus  @default(PENDING)
-  priority    Int                 @default(1)
+  status      HousekeepingStatus @default(PENDING)
+  priority    Int                @default(1)
   notes       String?
   completedAt DateTime?
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-  room        Room                @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  assignee    User?               @relation(fields: [assignedTo], references: [id])
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  room        Room               @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  assignee    User?              @relation(fields: [assignedTo], references: [id])
 
   @@map("room_housekeeping")
 }
@@ -346,19 +383,19 @@ enum SetupPath {
 
 /// Voice front desk settings (GPT-Live). One per property.
 model VoiceAgentConfig {
-  id           String   @id @default(cuid())
-  propertyId   String   @unique
-  enabled      Boolean  @default(true)
-  voice        String   @default("marin")
-  greeting     String?
+  id                 String   @id @default(cuid())
+  propertyId         String   @unique
+  enabled            Boolean  @default(true)
+  voice              String   @default("marin")
+  greeting           String?
   /// House style and rules for the voice ("we never quote parking prices", "always offer breakfast").
-  instructions String?
+  instructions       String?
   /// Frequently asked questions: [{ "q": string, "a": string }]
-  faqs         Json     @default("[]")
+  faqs               Json     @default("[]")
   /// Where callers are sent when a person is needed.
-  handoffPhone String?
+  handoffPhone       String?
   /// Show "Talk to us" on the public booking page.
-  guestWidget  Boolean  @default(true)
+  guestWidget        Boolean  @default(true)
   /// Hotels that keep their own system (voice only, keep your PMS): their own times ("15:00") and policy.
   /// Hotels running fully on HotelOne always quote the booking engine's policy.
   checkInTime        String?
@@ -366,32 +403,32 @@ model VoiceAgentConfig {
   cancellationPolicy String?
   /// Where new messages and booking requests from callers are emailed (comma-separated).
   notifyEmail        String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  property           Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
   @@map("voice_agent_configs")
 }
 
 /// One voice conversation (usage + outcome), guest or staff.
 model VoiceSession {
-  id              String    @id @default(cuid())
+  id            String    @id @default(cuid())
   /// Null only for GLOBAL sessions (the cross-hotel concierge) and concierge rate-limit hits.
-  propertyId      String?
-  userId          String?
-  audience        String // GUEST | STAFF (SYSTEM for concierge rate-limit hits)
+  propertyId    String?
+  userId        String?
+  audience      String // GUEST | STAFF (SYSTEM for concierge rate-limit hits)
   /// HOTEL (one hotel's agent, propertyId set) | GLOBAL (the concierge across all hotels)
-  scope           String    @default("HOTEL")
-  channel         String    @default("WEB") // WEB | PHONE | WHATSAPP | RATE_LIMIT (src/server/concierge/rateLimit.ts)
-  clientKey       String? // hashed caller (IP or caller ID + property) for guest rate limits
+  scope         String    @default("HOTEL")
+  channel       String    @default("WEB") // WEB | PHONE | WHATSAPP | RATE_LIMIT (src/server/concierge/rateLimit.ts)
+  clientKey     String? // hashed caller (IP or caller ID + property) for guest rate limits
   /// Phone calls: the caller's number as the carrier passed it (callback default).
-  callerNumber    String?
-  liveSessionId   String?
-  toolCalls       Int       @default(0)
-  summary         String?
-  startedAt       DateTime  @default(now())
-  endedAt         DateTime?
-  property        Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  callerNumber  String?
+  liveSessionId String?
+  toolCalls     Int       @default(0)
+  summary       String?
+  startedAt     DateTime  @default(now())
+  endedAt       DateTime?
+  property      Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
   @@index([propertyId, startedAt])
   @@index([clientKey, startedAt])
@@ -546,4 +583,127 @@ model AgentApiKey {
   property    Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
   @@map("agent_api_keys")
+}
+
+/// A hotel group: chain admins see every hotel in it, and its security policy
+/// (two-step sign-in, single sign-on, SCIM provisioning) applies to its staff.
+model Organization {
+  id                    String               @id @default(cuid())
+  name                  String
+  slug                  String               @unique
+  billingEmail          String?
+  /// Staff who sign in with a password must use two-step sign-in.
+  requireMfa            Boolean              @default(false)
+  /// OpenID Connect single sign-on.
+  ssoEnabled            Boolean              @default(false)
+  ssoIssuer             String?
+  ssoClientId           String?
+  /// AES-256-GCM sealed client secret (src/server/vault.ts). Never returned to clients.
+  ssoClientSecretCipher String?
+  /// Work email domains that sign in through this organization's SSO.
+  ssoDomains            String[]             @default([])
+  /// People with an SSO domain can't sign in with a password.
+  ssoEnforced           Boolean              @default(false)
+  /// Role given to people SSO or SCIM create.
+  defaultRole           UserRole             @default(FRONT_DESK)
+  /// SHA-256 of the SCIM bearer token; the token itself is shown once.
+  scimTokenHash         String?              @unique
+  scimTokenPrefix       String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  properties            Property[]
+  members               OrganizationMember[]
+
+  @@map("organizations")
+}
+
+enum OrgRole {
+  /// Sees and manages every hotel in the organization.
+  ADMIN
+  MEMBER
+}
+
+model OrganizationMember {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  role           OrgRole      @default(MEMBER)
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("organization_members")
+}
+
+/// Single-use tokens for password reset, email verification and SSO sign-in. Only the SHA-256 is stored.
+model AuthToken {
+  id        String    @id @default(cuid())
+  userId    String
+  kind      String // RESET_PASSWORD | VERIFY_EMAIL | SSO_TICKET
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind])
+  @@map("auth_tokens")
+}
+
+/// Sign-in, sign-up and reset attempts, for rate limits and lockouts. `key` is a hash (e.g. of the email or IP).
+model AuthAttempt {
+  id        String   @id @default(cuid())
+  key       String
+  ok        Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([key, createdAt])
+  @@map("auth_attempts")
+}
+
+enum ChargeKind {
+  /// Percent of the room charges (VAT, sales tax).
+  PERCENT
+  /// Per room, per night.
+  PER_ROOM_NIGHT
+  /// Per guest, per night (city tax).
+  PER_GUEST_NIGHT
+  /// Per room, once per stay (cleaning fee).
+  PER_STAY
+}
+
+/// Taxes and fees a hotel adds to every stay.
+model PropertyCharge {
+  id         String     @id @default(cuid())
+  propertyId String
+  name       String
+  kind       ChargeKind
+  /// A percentage for PERCENT, otherwise an amount in the hotel's currency.
+  amount     Decimal    @db.Decimal(10, 3)
+  isActive   Boolean    @default(true)
+  sortOrder  Int        @default(0)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  property   Property   @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId])
+  @@map("property_charges")
+}
+
+/// The front desk's end-of-day close: one per hotel per business day, with what it found and did.
+model NightAudit {
+  id           String   @id @default(cuid())
+  propertyId   String
+  businessDate DateTime @db.Date
+  closedById   String
+  closedAt     DateTime @default(now())
+  /// Counts, actions taken and open items at close.
+  summary      Json
+  notes        String?
+  property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, businessDate])
+  @@map("night_audits")
 }

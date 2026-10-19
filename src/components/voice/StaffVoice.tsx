@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { AudioLines, MicOff, PhoneOff, Mic } from 'lucide-react';
 import { speakBlocks } from '@/lib/agent/speak';
 import { cn } from '@/lib/utils';
+import { useCurrency } from '@/components/hotel/currency';
 import { Button, IconButton } from '@/components/ui/button';
 import type { AgentController } from '@/components/agent/useAgent';
 import { useLiveVoice } from './useLiveVoice';
@@ -20,6 +21,7 @@ import { VoiceOrb, VoiceStatus, voicePhase } from './VoiceOrb';
 export function useStaffVoice(agent: AgentController, propertyId: string | undefined) {
   const agentRef = React.useRef(agent);
   agentRef.current = agent;
+  const currency = useCurrency();
 
   return useLiveVoice({
     propertyId,
@@ -33,12 +35,12 @@ export function useStaffVoice(agent: AgentController, propertyId: string | undef
         for (let i = 0; i < 40 && agentRef.current.busy; i++) await new Promise((r) => setTimeout(r, 150));
         const r = await agentRef.current.send(args.request, { via: 'voice' });
         if (r.error && !r.blocks.length) return { error: r.error };
-        return speakBlocks(r.blocks);
+        return speakBlocks(r.blocks, currency);
       }
       if (call.name === 'confirm_plan') {
         const plan = a.pendingPlan;
         if (!plan) return { error: 'There is no plan waiting for confirmation.' };
-        return speakBlocks(await a.confirm(plan.token));
+        return speakBlocks(await a.confirm(plan.token), currency);
       }
       if (call.name === 'dismiss_plan') {
         const plan = a.pendingPlan;

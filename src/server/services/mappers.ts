@@ -35,6 +35,7 @@ export function toBookingSummary(b: BookingWithRelations): BookingSummary {
     roomType: { id: b.roomType.id, name: b.roomType.name },
     room: b.room ? { id: b.room.id, number: b.room.roomNumber, floor: b.room.floor } : null,
     totalPrice: Number(b.totalPrice),
+    currency: b.currency,
     paymentStatus: b.paymentStatus ?? 'UNPAID',
     notes: b.notes,
     createdAt: b.createdAt.toISOString(),
