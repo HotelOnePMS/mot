@@ -3,11 +3,13 @@ import { z } from 'zod';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { toDateString } from '@/lib/date-utils';
-import { isStripeConfigured, getStripe } from '@/lib/stripe';
 import { sendBookingConfirmation } from '@/server/email';
-import { handleRoute, parseJson } from '@/server/http';
-import { badRequest, unauthorized } from '@/server/errors';
+import { clientIp, handleRoute, parseJson } from '@/server/http';
+import { badRequest, conflict, unauthorized } from '@/server/errors';
 import { confirmationEmailAllowed, confirmPayAtProperty, createBooking } from '@/server/services/bookings';
+import { createCheckoutSession } from '@/server/payments/checkout';
+import { getPaymentTerms } from '@/server/payments/policy';
+import { publicSiteUrl } from '@/server/public-url';
 
 const createBookingSchema = z.object({
   propertyId: z.string().min(1),
@@ -17,9 +19,11 @@ const createBookingSchema = z.object({
   guests: z.coerce.number().int().min(1).max(40),
   rooms: z.coerce.number().int().min(1).max(9).default(1),
   notes: z.string().max(1000).optional().nullable(),
-  // 'pay_at_property' (default) or 'stripe'. Any client-sent price is ignored:
-  // the total is always computed on the server from the rate calendar.
-  paymentMethod: z.enum(['pay_at_property', 'stripe']).default('pay_at_property'),
+  // The guest ticked the cancellation/refund policy shown on the booking page; `policyHash` says which one.
+  // Any client-sent price or payment method is ignored: the total comes from the rate calendar and
+  // whether (and how much) to pay online comes from the hotel's payment policy.
+  acceptPolicy: z.literal(true, { errorMap: () => ({ message: 'Please accept the cancellation policy to book.' }) }),
+  policyHash: z.string().min(1),
 });
 
 export const POST = handleRoute(async (request: NextRequest) => {
@@ -32,12 +36,12 @@ export const POST = handleRoute(async (request: NextRequest) => {
   const input = await parseJson(request, createBookingSchema);
 
   // NOTE: raw card numbers / CVVs are never accepted or stored (PCI compliance).
-  // Online card payment goes through Stripe Checkout; otherwise pay at property.
-  if (input.paymentMethod === 'stripe' && !isStripeConfigured()) {
-    throw badRequest('Online card payment is not enabled. Please choose "Pay at property".');
+  // Online card payment happens on Stripe's hosted Checkout, on the hotel's own Stripe account.
+  const terms = await getPaymentTerms(input.propertyId);
+  if (input.policyHash !== terms.hash) {
+    throw conflict('The booking terms for this hotel just changed. Please review them and accept again.');
   }
 
-  const isStripe = input.paymentMethod === 'stripe';
   const booking = await createBooking({
     userId: user.id,
     propertyId: input.propertyId,
@@ -47,40 +51,39 @@ export const POST = handleRoute(async (request: NextRequest) => {
     guests: input.guests,
     rooms: input.rooms,
     notes: input.notes,
-    paymentStatus: isStripe ? 'AWAITING_PAYMENT' : 'PAY_AT_PROPERTY',
-    createdVia: isStripe ? 'Booked online — awaiting card payment' : 'Booked online — pay at property',
+    paymentStatus: 'PAY_AT_PROPERTY',
+    createdVia: 'Booked online — pay at property',
+    onlinePayment: terms.onlinePayment ? { policy: terms.policy, depositNights: terms.depositNights } : undefined,
+    policyAcceptance: { version: terms.version, hash: terms.hash, text: terms.text, ip: clientIp(request), userAgent: request.headers.get('user-agent') },
   });
 
-  if (isStripe) {
-    const stripe = getStripe();
-    // Return to the host the guest booked on (also right for preview deployments).
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || request.nextUrl.origin;
-    const checkoutSession = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      payment_method_types: ['card'],
-      customer_email: user.email,
-      line_items: [
-        {
-          price_data: {
-            currency: 'usd',
-            product_data: {
-              name: `${booking.property.name} — ${booking.roomType.name}`,
-              description: `${input.checkIn} → ${input.checkOut}, ${input.rooms} room(s), ${input.guests} guest(s)`,
-            },
-            unit_amount: Math.round(Number(booking.totalPrice) * 100),
-          },
-          quantity: 1,
-        },
-      ],
-      metadata: { bookingId: booking.id },
-      success_url: `${siteUrl}/bookings/${booking.id}?payment=success`,
-      cancel_url: `${siteUrl}/bookings/${booking.id}?payment=cancelled`,
+  // Online payment: the booking holds its rooms until Stripe confirms the payment (webhook).
+  if (booking.paymentStatus === 'AWAITING_PAYMENT') {
+    if (!terms.stripeAccountId || booking.paymentDue === null) throw badRequest('Online payment is not available for this hotel right now.');
+    const checkout = await createCheckoutSession({
+      booking: {
+        id: booking.id,
+        code: booking.code,
+        propertyId: booking.propertyId,
+        propertyName: booking.property.name,
+        roomTypeName: booking.roomType.name,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        rooms: booking.rooms,
+        guests: booking.guests,
+        paymentDue: Number(booking.paymentDue),
+        totalPrice: Number(booking.totalPrice),
+      },
+      stripeAccountId: terms.stripeAccountId,
+      guestEmail: user.email,
+      // Return to the host the guest booked on (also right for preview deployments).
+      siteUrl: process.env.NEXT_PUBLIC_SITE_URL || publicSiteUrl() || request.nextUrl.origin,
     });
-    await prisma.booking.update({ where: { id: booking.id }, data: { stripeCheckoutSessionId: checkoutSession.id } });
     return NextResponse.json({
       success: true,
       requiresPayment: true,
-      checkoutUrl: checkoutSession.url,
+      checkoutUrl: checkout.url,
+      amountDue: Number(booking.paymentDue),
       booking: { id: booking.id, code: booking.code, status: booking.status },
     });
   }

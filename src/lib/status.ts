@@ -44,7 +44,11 @@ export const PAYMENT_STATUS: Record<string, { label: string; tone: Tone }> = {
   PAY_AT_PROPERTY: { label: 'Pay at property', tone: 'neutral' },
   AWAITING_PAYMENT: { label: 'Awaiting payment', tone: 'warning' },
   EXPIRED: { label: 'Payment expired', tone: 'neutral' },
+  DEPOSIT_PAID: { label: 'Deposit paid', tone: 'info' },
+  PARTIALLY_REFUNDED: { label: 'Partly refunded', tone: 'info' },
   REFUNDED: { label: 'Refunded', tone: 'neutral' },
+  DISPUTED: { label: 'Disputed', tone: 'danger' },
+  DISPUTE_LOST: { label: 'Dispute lost', tone: 'danger' },
   FAILED: { label: 'Payment failed', tone: 'danger' },
 };
 
