@@ -1,8 +1,9 @@
 /**
  * HTTP plumbing shared by the MCP server and the REST API: CORS for
- * browser-based assistants, Origin checks, client IPs, the request's public
- * origin, rate limits (per client IP, or per API key) and a route wrapper
- * that turns every failure into the usual JSON error with CORS headers.
+ * browser-based assistants, Origin checks, client IPs, this deployment's
+ * public origin, byte-capped request bodies, rate limits (per client IP, or
+ * per API key and per hotel) and a route wrapper that turns every failure
+ * into the usual JSON error with CORS headers.
  */
 import { NextResponse } from 'next/server';
 import { PRODUCT_URL } from '@/config/product';
@@ -26,19 +27,36 @@ export const clientIp = sharedClientIp;
 const isLoopbackHost = (host: string) => /^(localhost|127(?:\.\d{1,3}){3}|\[::1\]|::1)$/i.test(host.replace(/:\d+$/, '')) || host.toLowerCase().endsWith('.localhost');
 
 /**
- * This deployment's origin as the caller reached it (X-Forwarded-Host/Proto
- * behind a proxy), for absolute URLs in discovery documents. Falls back to
- * the product domain when the request carries no usable host.
+ * This deployment's public origin, for absolute URLs in discovery documents
+ * (llms.txt, OpenAPI, agent card, MCP manifest): publicSiteUrl() — the same
+ * origin booking links use — else the product domain. Never the request's
+ * Host or X-Forwarded-* headers: a client can set those, and these documents
+ * are publicly cacheable, so a reflected host could point every assistant
+ * behind a shared cache at someone else's server.
  */
-export function requestOrigin(request: Request): string {
+export function publicOrigin(): string {
+  const configured = publicSiteUrl();
+  if (configured) {
+    try {
+      return new URL(configured).origin;
+    } catch {
+      /* not a URL: fall through */
+    }
+  }
+  return PRODUCT_URL;
+}
+
+/** Kept for existing callers: the configured public origin (publicOrigin); the request isn't consulted. */
+export function requestOrigin(_request?: Request): string {
+  return publicOrigin();
+}
+
+/** The Host the request was sent to (only ever used to make the Origin check stricter, never for URLs). */
+function requestHost(request: Request): string {
   try {
-    const url = new URL(request.url);
-    const host = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim() || request.headers.get('host') || url.host;
-    const proto = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() || url.protocol.replace(':', '');
-    if (!host || !/^[a-z0-9.-]+(:\d+)?$|^\[[0-9a-f:]+\](:\d+)?$/i.test(host)) return PRODUCT_URL;
-    return `${proto === 'http' ? 'http' : 'https'}://${host}`;
+    return request.headers.get('host') || new URL(request.url).host;
   } catch {
-    return PRODUCT_URL;
+    return '';
   }
 }
 
@@ -69,14 +87,14 @@ export function originAllowed(request: Request): boolean {
     return false;
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
-  const own = requestOrigin(request);
   // "Our own origin" comes from configuration, never from the Host header: after DNS rebinding a
   // hostile page sends a matching Host and Origin, which must not unlock a developer's local copy.
   if (configuredOrigins().has(parsed.origin)) return true;
   const list = process.env.AGENT_API_ALLOWED_ORIGINS?.split(',').map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
   if (list?.length) return list.includes('*') || list.includes(parsed.origin);
   const local = isLoopbackHost(parsed.host);
-  if (isLoopbackHost(new URL(own).host)) return local;
+  // A copy configured for (or reached on) localhost only takes localhost pages; the Host header can only tighten this.
+  if (isLoopbackHost(new URL(publicOrigin()).host) || isLoopbackHost(requestHost(request))) return local;
   return parsed.protocol === 'https:' || local;
 }
 
@@ -131,6 +149,44 @@ export function publicDocHeaders(contentType: string): Record<string, string> {
 }
 
 // ---------------------------------------------------------------------------
+// Request bodies
+// ---------------------------------------------------------------------------
+
+/** Largest JSON body the REST API reads (its bodies are a few hundred bytes). */
+export const MAX_REST_BODY_BYTES = 64 * 1024;
+/** Largest body the MCP endpoint reads (a batch of up to 20 messages). */
+export const MAX_MCP_BODY_BYTES = 256 * 1024;
+
+/**
+ * Reads a request body as UTF-8 text, refusing anything over `maxBytes`
+ * bytes: a Content-Length over the cap is refused before reading, and the
+ * stream is read with a running byte count (so a missing or understated
+ * Content-Length doesn't help), stopping as soon as the cap is passed.
+ * Shared by the MCP server and the REST API. DomainError 413
+ * PAYLOAD_TOO_LARGE.
+ */
+export async function readBodyText(request: Request, maxBytes: number): Promise<string> {
+  const tooLarge = () => new DomainError(413, 'PAYLOAD_TOO_LARGE', `Request body is too large (at most ${Math.floor(maxBytes / 1024)} KB).`);
+  const declared = request.headers.get('content-length')?.trim();
+  if (declared && /^\d+$/.test(declared) && Number(declared) > maxBytes) throw tooLarge();
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder('utf-8').decode(Buffer.concat(chunks));
+}
+
+// ---------------------------------------------------------------------------
 // Rate limits
 // ---------------------------------------------------------------------------
 
@@ -147,28 +203,68 @@ function envLimit(name: string, fallback: number): number {
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
-const LIMITS: Record<RateCategory, { anon: [number, number] | null; key: [number, number]; message: string }> = {
-  read: { anon: [envLimit('AGENT_API_READS_PER_MINUTE', 120), MINUTE], key: [600, MINUTE], message: 'Too many requests from this connection — wait a minute and try again.' },
-  lookup: { anon: [envLimit('AGENT_API_LOOKUPS_PER_HOUR', 20), HOUR], key: [200, HOUR], message: 'Too many booking lookups from this connection — try again later, or ask the guest to use the link in their confirmation email.' },
-  request: { anon: [envLimit('AGENT_API_REQUESTS_PER_HOUR', 10), HOUR], key: [60, HOUR], message: 'That’s a lot of booking requests this hour — send the guest a booking link instead (get_booking_link), or try again later.' },
-  book: { anon: null, key: [60, HOUR], message: 'That’s a lot of bookings with this API key this hour — try again later.' },
+interface LimitRule {
+  /** Per client IP without a key; null = keys only. */
+  anon: [number, number] | null;
+  /** Per API key. */
+  key: [number, number];
+  /** All of one hotel's keys together, so revoking and re-creating keys never starts a fresh allowance. */
+  keyHotel: [number, number] | null;
+  message: string;
+  keyHotelMessage?: string;
+}
+
+const LIMITS: Record<RateCategory, LimitRule> = {
+  read: { anon: [envLimit('AGENT_API_READS_PER_MINUTE', 120), MINUTE], key: [600, MINUTE], keyHotel: null, message: 'Too many requests from this connection — wait a minute and try again.' },
+  lookup: {
+    anon: [envLimit('AGENT_API_LOOKUPS_PER_HOUR', 20), HOUR],
+    key: [200, HOUR],
+    keyHotel: [envLimit('AGENT_API_KEY_HOTEL_LOOKUPS_PER_HOUR', 300), HOUR],
+    message: 'Too many booking lookups from this connection — try again later, or ask the guest to use the link in their confirmation email.',
+    keyHotelMessage: 'Too many booking lookups with this hotel’s API keys this hour — try again later.',
+  },
+  request: {
+    anon: [envLimit('AGENT_API_REQUESTS_PER_HOUR', 10), HOUR],
+    key: [60, HOUR],
+    keyHotel: [envLimit('AGENT_API_KEY_HOTEL_REQUESTS_PER_HOUR', 100), HOUR],
+    message: 'That’s a lot of booking requests this hour — send the guest a booking link instead (get_booking_link), or try again later.',
+    keyHotelMessage: 'That’s a lot of booking requests with this hotel’s API keys this hour — send the guest a booking link instead (get_booking_link), or try again later.',
+  },
+  book: {
+    anon: null,
+    key: [60, HOUR],
+    keyHotel: [envLimit('AGENT_API_KEY_HOTEL_BOOKINGS_PER_HOUR', 100), HOUR],
+    message: 'That’s a lot of bookings with this API key this hour — try again later.',
+    keyHotelMessage: 'That’s a lot of bookings with this hotel’s API keys this hour — try again later.',
+  },
 };
 
-/** Published limits (llms.txt, OpenAPI, the public page): [max, window in minutes] per category. */
+type Published = { max: number; minutes: number };
+const published = (l: [number, number] | null): Published | null => l && { max: l[0], minutes: l[1] / MINUTE };
+
+/** Published limits (llms.txt, OpenAPI, the public page): max and window in minutes per category. */
 export const PUBLISHED_LIMITS = Object.fromEntries(
-  (Object.keys(LIMITS) as RateCategory[]).map((c) => [c, { anonymous: LIMITS[c].anon && { max: LIMITS[c].anon![0], minutes: LIMITS[c].anon![1] / MINUTE }, withKey: { max: LIMITS[c].key[0], minutes: LIMITS[c].key[1] / MINUTE } }]),
-) as Record<RateCategory, { anonymous: { max: number; minutes: number } | null; withKey: { max: number; minutes: number } }>;
+  (Object.keys(LIMITS) as RateCategory[]).map((c) => [c, { anonymous: published(LIMITS[c].anon), withKey: published(LIMITS[c].key)!, perHotelWithKeys: published(LIMITS[c].keyHotel) }]),
+) as Record<RateCategory, { anonymous: Published | null; withKey: Published; perHotelWithKeys: Published | null }>;
 
 /**
- * Counts one call in a category, per API key when there is one, else per
- * client IP (the MCP server and the REST API share the buckets). Throws
- * DomainError 429 RATE_LIMITED with details.retryAfterSeconds.
+ * Counts one call in a category: per client IP without a key; with a key,
+ * per key and (for lookups, requests and bookings) per the key's hotel, all
+ * of its keys together, so churning keys doesn't reset anything (all-hotel
+ * keys share one pool). The MCP server and the REST API share the buckets.
+ * Returns the tighter allowance; throws DomainError 429 RATE_LIMITED with
+ * details.retryAfterSeconds.
  */
 export async function consumeAgentLimit(category: RateCategory, who: { key: AgentKeyContext | null; ip: string }): Promise<RateLimitResult> {
   const rule = LIMITS[category];
-  const [max, windowMs] = who.key ? rule.key : (rule.anon ?? rule.key);
-  const bucket = who.key ? `agents:${category}:key:${who.key.id}` : `agents:${category}:ip:${who.ip}`;
-  return consumeRateLimit(bucket, max, windowMs, rule.message);
+  if (!who.key) {
+    const [max, windowMs] = rule.anon ?? rule.key;
+    return consumeRateLimit(`agents:${category}:ip:${who.ip}`, max, windowMs, rule.message);
+  }
+  const perKey = await consumeRateLimit(`agents:${category}:key:${who.key.id}`, rule.key[0], rule.key[1], rule.message);
+  if (!rule.keyHotel) return perKey;
+  const perHotel = await consumeRateLimit(`agents:${category}:keyhotel:${who.key.propertyId ?? 'all-hotels'}`, rule.keyHotel[0], rule.keyHotel[1], rule.keyHotelMessage ?? rule.message);
+  return perHotel.remaining < perKey.remaining ? perHotel : perKey;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +276,7 @@ export interface AgentRequestContext {
   /** The verified API key, or null for public calls. */
   key: AgentKeyContext | null;
   ip: string;
-  /** This deployment's origin as the caller reached it. */
+  /** This deployment's configured public origin (publicOrigin). */
   origin: string;
   /** Counts a call in another category (the 'read' hit is already counted). */
   limit: (category: RateCategory) => Promise<void>;
@@ -227,7 +323,7 @@ export function agentRoute<R>(methods: string, handler: (request: Request, ctx: 
       const ctx: AgentRequestContext = {
         key,
         ip,
-        origin: requestOrigin(request),
+        origin: publicOrigin(),
         limit: async (category) => {
           results.push(await consumeAgentLimit(category, { key, ip }));
         },

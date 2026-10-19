@@ -11,7 +11,7 @@ import { paymentAmountDue, toCents, fromCents, type PaymentPolicy } from '@/lib/
 import { HOLD_MINUTES } from '../payments/config';
 import { releaseExpiredHolds } from '../payments/expiry';
 import { assertPropertyAccess, can, requirePermission, scopeByProperty, type Actor, type Permission } from '../authz';
-import { addDaysISO, atNoonUTC, dayBounds, diffDays, formatDay, hotelToday, isISODate, toISODate } from '../dates';
+import { addDaysISO, atNoonUTC, dayBounds, diffDays, eachNight, formatDay, hotelToday, isISODate, toISODate } from '../dates';
 import { badRequest, conflict, DomainError, notFound } from '../errors';
 import { recordAudit, type OpContext } from './audit';
 import { nightlyInventory, quoteStay } from './inventory';
@@ -79,6 +79,8 @@ export async function searchBookings(actor: Actor, q: BookingSearch): Promise<Bo
             { user: { firstName: { contains: text, mode: 'insensitive' } } },
             { user: { lastName: { contains: text, mode: 'insensitive' } } },
             { user: { email: { contains: text, mode: 'insensitive' } } },
+            // Direct (API-key) bookings keep the guest's contact email on the booking; the guest record has a placeholder.
+            { guestEmail: { contains: text, mode: 'insensitive' } },
             { user: { phone: { contains: text } } },
             ...nameParts(text),
           ],
@@ -134,12 +136,17 @@ export interface CreateBookingInput {
 
 const MAX_NIGHTS = 30;
 
-export async function createBooking(input: CreateBookingInput): Promise<BookingWithRelations> {
+/** How long an identical booking counts as the same request (a double tap, or voice and page both booking). */
+const DUPLICATE_WINDOW_MS = 60_000;
+
+/** `duplicate` is set when the same guest booked the same stay moments ago: that booking is returned instead. */
+export async function createBooking(input: CreateBookingInput): Promise<BookingWithRelations & { duplicate?: true }> {
   const rooms = input.rooms ?? 1;
   if (!isISODate(input.checkIn) || !isISODate(input.checkOut)) throw badRequest('Dates must be in YYYY-MM-DD format.');
   if (input.checkIn >= input.checkOut) throw badRequest('Check-out must be after check-in.');
   if (input.checkIn < hotelToday()) throw badRequest('Check-in date cannot be in the past.');
   const nights = diffDays(input.checkIn, input.checkOut);
+  if (eachNight(input.checkIn, input.checkOut).length !== nights) throw badRequest('Dates must be real calendar days.');
   if (nights > MAX_NIGHTS) throw badRequest(`Stays are limited to ${MAX_NIGHTS} nights online. Please contact the hotel for longer stays.`);
   if (!Number.isInteger(rooms) || rooms < 1 || rooms > 9) throw badRequest('Rooms must be between 1 and 9.');
   if (!Number.isInteger(input.guests) || input.guests < 1) throw badRequest('At least one guest is required.');
@@ -160,11 +167,29 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
   await releaseExpiredHolds({ roomTypeId: input.roomTypeId });
 
   // Serializable transaction: two guests racing for the last room cannot
-  // both succeed. Retries on serialization failures and code collisions.
-  for (let attempt = 0; attempt < 4; attempt++) {
+  // both succeed. Retries on serialization failures and code collisions,
+  // after a short random pause so racing requests don't collide again.
+  const ATTEMPTS = 6;
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, Math.random() * 40 * attempt));
     try {
       return await prisma.$transaction(
         async (tx) => {
+          const same = await tx.booking.findFirst({
+            where: {
+              userId: input.userId,
+              roomTypeId: input.roomTypeId,
+              checkIn: atNoonUTC(input.checkIn),
+              checkOut: atNoonUTC(input.checkOut),
+              guests: input.guests,
+              rooms,
+              paymentStatus: input.paymentStatus ?? 'UNPAID',
+              status: { not: 'CANCELLED' },
+              createdAt: { gte: new Date(Date.now() - DUPLICATE_WINDOW_MS) },
+            },
+            include: bookingInclude,
+          });
+          if (same) return { ...same, duplicate: true as const };
           const inventory = await nightlyInventory(tx, input.roomTypeId, input.checkIn, input.checkOut);
           if (inventory.minAvailable < rooms) {
             throw conflict(
@@ -224,8 +249,7 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
       const retryable =
         e instanceof Prisma.PrismaClientKnownRequestError &&
         (e.code === 'P2034' || (e.code === 'P2002' && String(e.meta?.target ?? '').includes('code')));
-      if (retryable && attempt < 3) continue;
-      throw e;
+      if (!retryable) throw e;
     }
   }
   throw new DomainError(503, 'BUSY', 'The hotel is busy right now — please try again.');

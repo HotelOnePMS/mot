@@ -11,7 +11,7 @@ import { describeElevenLabsError, elevenLabsConfigured, phoneLineStatus, phoneWe
 
 export const dynamic = 'force-dynamic';
 
-const DEMO_LOCKED = 'Phone lines aren’t available on demo hotels or with the shared demo logins. Set up your own hotel (Get started), then connect your number there.';
+const DEMO_LOCKED = 'Phone lines aren’t available on demo hotels or with the shared demo logins. Set up your own hotel, then connect your number there.';
 
 /**
  * The hotel's phone line as the console shows it. With `check`, also syncs

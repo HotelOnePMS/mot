@@ -3,11 +3,16 @@
  */
 import { prisma } from '@/lib/prisma';
 import { badRequest, notFound } from '../errors';
-import { ensureConfigSkills, listSkills, type AnswerBody } from '../skills';
+import { ensureConfigSkills, listSkills, promptSafe, type AnswerBody } from '../skills';
 import { CURRENCY, LISTED_PROPERTY, propertyFacts, type PropertyFacts } from './facts';
 import { conciergeSchemas, type CheckAvailabilityInput } from './schemas';
 import { availabilityOptions, type AvailabilityResult } from './shared';
 import { absoluteUrl, propertyUrl } from './urls';
+
+/** Longest answer title passed to a model (ask_hotel, get_hotel results). */
+export const ANSWER_TITLE_MAX = 80;
+/** A hotel-written answer title as tool results carry it: cleaned like any prompt text (one line, no tags or role prefixes), at most ANSWER_TITLE_MAX characters. */
+export const safeAnswerTitle = (title: string) => promptSafe(title, ANSWER_TITLE_MAX);
 
 /** A listed hotel's id and name, or DomainError 404. */
 export async function findListedHotel(propertyId: string): Promise<{ id: string; name: string }> {
@@ -48,7 +53,7 @@ export async function hotelDetails(propertyId: string): Promise<HotelDetails> {
     ...rest,
     currency: CURRENCY,
     photos: photos.map((p) => absoluteUrl(p.url)).filter((u): u is string => !!u),
-    skills: skills.map((s) => ({ key: s.key, title: s.title, answer: (s.body as AnswerBody).answer })),
+    skills: skills.map((s) => ({ key: s.key, title: safeAnswerTitle(s.title), answer: (s.body as AnswerBody).answer })),
     url: propertyUrl(id),
   };
 }

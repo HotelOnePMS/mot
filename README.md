@@ -113,6 +113,11 @@ Open http://localhost:3000 and use the one-click demo logins on `/login` (passwo
 | `VOICE_CONCIERGE_MAX_SESSIONS_PER_HOUR`, `VOICE_CONCIERGE_VOICE` | | Hourly ceiling for concierge web calls (default 120) and its GPT-Live voice (default `marin`) |
 | `AGENT_API_ALLOWED_ORIGINS` | | Comma-separated browser origins allowed to call `/api/mcp` and `/api/agents/v1` (empty: any https origin; server-to-server calls need none) |
 | `AGENT_API_READS_PER_MINUTE`, `AGENT_API_REQUESTS_PER_HOUR`, `AGENT_API_LOOKUPS_PER_HOUR` | | Per-IP limits for AI assistants without a key (defaults 120 / 10 / 20); raise them if hosted assistants that share IP addresses hit them |
+| `AGENT_KEYS_PER_HOTEL_DAY` | | API keys a hotel can create per day, revoked ones included (default 10) |
+| `AGENT_API_KEY_HOTEL_LOOKUPS_PER_HOUR`, `AGENT_API_KEY_HOTEL_REQUESTS_PER_HOUR`, `AGENT_API_KEY_HOTEL_BOOKINGS_PER_HOUR` | | Pools shared by all of a hotel's keys, on top of each key's own limits (defaults 300 / 100 / 100) |
+| `CONCIERGE_MAX_REQUESTS_PER_HOTEL_HOUR`, `CONCIERGE_MAX_PUBLIC_REQUESTS_PER_HOTEL_HOUR` | | Booking requests per hotel per hour from key holders and from anonymous assistants (defaults 20 / 10) |
+| `AGENT_CONFIRMATIONS_PER_HOTEL_DAY`, `AGENT_CONFIRMATIONS_PER_KEY_DAY` | | Confirmation emails for API-key bookings per hotel and per key per day (defaults 50 / 25; each address also gets at most 3 a day) |
+| `TRUSTED_PROXY_HOPS` | | Off Vercel: which X-Forwarded-For entry (counting from the right) is the client for rate limits (default 1). On Vercel its own headers are used |
 | `PMS_MCP_MODEL` | | Model that plans PMS MCP tool calls when the vendor doesn't follow the HotelOne contract (default `OPENAI_VOICE_BACKEND_MODEL`) |
 | `PMS_MCP_ALLOWED_HOSTS` | | Hosts a PMS MCP server may use despite the private-address guard (e.g. a vendor's on-premise gateway) |
 | `PMS_EVENTS_SECRET` | | Base secret for PMS event signatures (default: derived from `NEXTAUTH_SECRET`, so rotating that rotates every PMS event secret) |

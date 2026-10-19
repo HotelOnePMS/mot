@@ -3,7 +3,7 @@
  * server, called with query parameters or a JSON body.
  */
 import { badRequest } from '../errors';
-import type { AgentRequestContext } from './http';
+import { MAX_REST_BODY_BYTES, readBodyText, type AgentRequestContext } from './http';
 import type { ToolContext } from './tools';
 
 /** REST version prefix. */
@@ -16,11 +16,12 @@ export function queryArgs(request: Request, extra: Record<string, unknown> = {})
   return { ...args, ...extra };
 }
 
-/** A JSON object body as tool arguments; DomainError 400 otherwise. */
+/** A JSON object body (at most MAX_REST_BODY_BYTES) as tool arguments; DomainError 413 when larger, 400 when not a JSON object. */
 export async function bodyArgs(request: Request): Promise<Record<string, unknown>> {
+  const text = await readBodyText(request, MAX_REST_BODY_BYTES);
   let body: unknown;
   try {
-    body = await request.json();
+    body = JSON.parse(text);
   } catch {
     throw badRequest('Request body must be valid JSON.');
   }

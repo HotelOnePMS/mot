@@ -89,10 +89,11 @@ export const POST = handleRoute(async (request: NextRequest) => {
   }
 
   // Pay-at-property bookings are confirmed instantly — the guest is told so.
-  const confirmed = await confirmPayAtProperty(booking.id);
+  // A repeat of a booking made moments ago is already confirmed and emailed.
+  const confirmed = booking.duplicate ? booking : await confirmPayAtProperty(booking.id);
 
   // Accounts aren't email-verified: a handful of confirmations per hour is plenty for a real guest.
-  if (await confirmationEmailAllowed(user.id)) await sendBookingConfirmation({
+  if (!booking.duplicate && (await confirmationEmailAllowed(user.id))) await sendBookingConfirmation({
     to: user.email,
     guestName: `${user.firstName} ${user.lastName}`.trim() || user.email,
     propertyName: booking.property.name,

@@ -20,10 +20,10 @@ import { Callout, EmptyState, Skeleton } from '@/components/ui/primitives';
 import { SegmentedControl } from '@/components/ui/segmented';
 import { SmartImage } from '@/components/ui/smart-image';
 import { PublicDemoNote } from '@/components/guest/PublicDemoNote';
-import { useVoicePage, type VoiceActionResult } from '@/components/voice/page-context';
+import { useVoicePage, voiceText, type VoiceActionResult, type VoiceBookingRequest } from '@/components/voice/page-context';
 import { GuestShell } from '../../_components/guest-shell';
 import { usePropertyShell } from '../../_components/property-shell';
-import { plural, price, shiftDay } from '../../_components/format';
+import { isDay, plural, price, shiftDay } from '../../_components/format';
 
 interface PublicProperty {
   id: string;
@@ -51,6 +51,34 @@ interface GuestForm {
   email: string;
   phone: string;
   password: string;
+}
+
+/** Ids from the URL for the voice agent: well-formed ids only (dates are already checked with isDay). */
+const idOrBlank = (v: string) => (/^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : '(invalid)');
+
+/**
+ * The last booking made in this browser, so the same stay (same guest, room
+ * type, dates and party) isn't booked twice by accident within a couple of
+ * minutes — a second tab, or a voice confirm after going back to checkout.
+ * A convenience only: storage may be unavailable, and then nothing is blocked.
+ */
+const RECENT_BOOKING = 'hotelone:recent-booking';
+const RECENT_BOOKING_MS = 2 * 60_000;
+function recentBooking(key: string): { id: string; code: string | null } | null {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(RECENT_BOOKING) ?? 'null') as { key?: string; id?: string; code?: string | null; at?: number } | null;
+    if (!v || v.key !== key || typeof v.id !== 'string' || typeof v.at !== 'number' || Date.now() - v.at > RECENT_BOOKING_MS) return null;
+    return { id: v.id, code: v.code ?? null };
+  } catch {
+    return null;
+  }
+}
+function rememberBooking(key: string, id: string, code: string | null) {
+  try {
+    window.localStorage.setItem(RECENT_BOOKING, JSON.stringify({ key, id, code, at: Date.now() }));
+  } catch {
+    /* storage blocked: no duplicate check */
+  }
 }
 
 /** ["name", "email", "a password"] → "name, email and a password". */
@@ -243,8 +271,9 @@ function Checkout() {
   const shell = usePropertyShell();
   const { data: session, status } = useSession();
   const roomTypeId = params.get('roomTypeId') ?? '';
-  const checkIn = params.get('checkIn') ?? '';
-  const checkOut = params.get('checkOut') ?? '';
+  // Calendar days only: anything else in a (possibly crafted) link counts as no dates chosen.
+  const checkIn = isDay(params.get('checkIn')) ? params.get('checkIn')! : '';
+  const checkOut = isDay(params.get('checkOut')) ? params.get('checkOut')! : '';
   const guests = Number(params.get('guests')) || 2;
   const rooms = Number(params.get('rooms')) || 1;
 
@@ -260,6 +289,9 @@ function Checkout() {
   const acceptRef = React.useRef<HTMLInputElement>(null);
   const [notes, setNotes] = React.useState('');
   const [busy, setBusy] = React.useState(false);
+  // Set synchronously when a booking starts, so the Confirm button and the voice agent's
+  // confirm can't both get through before React re-renders with `busy`.
+  const booking = React.useRef(false);
   const [error, setError] = React.useState('');
   const [needDetails, setNeedDetails] = React.useState(false);
   const confirmRef = React.useRef<HTMLButtonElement>(null);
@@ -295,18 +327,31 @@ function Checkout() {
     if (focus) setTimeout(() => document.querySelector<HTMLInputElement>('#details input:not([type="hidden"])')?.focus({ preventScroll: true }), 350);
   }
 
-  /** Book it (the guest is signed in). Pay-at-hotel bookings go to the booking page; card payments to Stripe. */
-  async function submit(): Promise<{ ok: true; id: string; code: string | null } | { ok: false; error: string }> {
+  /**
+   * Book it (the guest is signed in). Pay-at-hotel bookings go to the booking page; card payments to Stripe.
+   * One at a time: a second call while one is running (or after one succeeded, while the page moves on) is refused.
+   */
+  async function submit(): Promise<{ ok: true; id: string; code: string | null; total: number | null } | { ok: false; error: string; busy?: true; duplicate?: { id: string; code: string | null } }> {
+    if (booking.current) return { ok: false, error: 'It’s already booking — wait a moment.', busy: true };
+    const stayKey = JSON.stringify([session?.user?.id ?? session?.user?.email ?? '', propertyId, roomTypeId, checkIn, checkOut, guests, rooms]);
+    const dup = recentBooking(stayKey);
+    if (dup) {
+      const message = `This stay was booked a moment ago${dup.code ? ` (confirmation code ${dup.code})` : ''}, so it wasn’t booked again.`;
+      setError(`${message} Opening that booking.`);
+      router.push(`/bookings/${dup.id}`);
+      return { ok: false, error: `${message} Its booking page is opening — tell the guest they already have it.`, duplicate: dup };
+    }
     if (!terms) return { ok: false, error: 'The booking terms are still loading — try again in a moment.' };
     if (!accepted) {
       setNeedAccept(true);
       acceptRef.current?.focus();
       return { ok: false, error: 'Please accept the cancellation policy to book.' };
     }
+    booking.current = true;
     setBusy(true);
     setError('');
     try {
-      const r = await api<{ requiresPayment: boolean; checkoutUrl?: string; booking: { id: string; code?: string | null } }>('/api/bookings', {
+      const r = await api<{ requiresPayment: boolean; checkoutUrl?: string; booking: { id: string; code?: string | null; totalPrice?: number } }>('/api/bookings', {
         method: 'POST',
         json: { propertyId, roomTypeId, checkIn, checkOut, guests, rooms, notes: notes.trim() || null, acceptPolicy: true, policyHash: terms.policyHash },
       });
@@ -314,10 +359,12 @@ function Checkout() {
         window.location.href = r.checkoutUrl;
         return { ok: false, error: 'Opening the card payment page.' };
       }
+      rememberBooking(stayKey, r.booking.id, r.booking.code ?? null);
       router.push(`/bookings/${r.booking.id}?new=1`);
-      return { ok: true, id: r.booking.id, code: r.booking.code ?? null };
+      return { ok: true, id: r.booking.id, code: r.booking.code ?? null, total: typeof r.booking.totalPrice === 'number' ? r.booking.totalPrice : null };
     } catch (e) {
       const message = (e as Error).message;
+      booking.current = false;
       setError(message);
       setBusy(false);
       return { ok: false, error: message };
@@ -332,16 +379,31 @@ function Checkout() {
   // The voice agent (the site's voice dock) sees this order and can fill in details and book on a spoken yes.
   const roomName = rt?.name ?? quote?.roomTypeName;
   const total = quote ? price(quote.total, quote.currency ?? 'USD') : null;
+  const stayWords = checkIn && checkOut ? `${fmtRange(checkIn, checkOut)}, ${plural(guests, 'guest')}${rooms > 1 ? `, ${plural(rooms, 'room')}` : ''}` : '';
+  /** "the Ocean King at The Saltwater Inn, Feb 4 – 5, 2 guests, total $289" (hotel text made safe for the agent). */
+  const orderWords = `${roomName ? `the ${voiceText(roomName, 80)}` : 'a room'}${name ? ` at ${voiceText(name, 80)}` : ''}, ${stayWords}${total ? `, total ${total}` : ''}`;
+  /** The voice agent must name the order it books; anything but what's on screen is refused. */
+  const differsFromScreen = (want: VoiceBookingRequest) =>
+    (!!want.propertyId && want.propertyId !== propertyId) ||
+    want.roomTypeId !== roomTypeId ||
+    want.checkIn !== checkIn ||
+    want.checkOut !== checkOut ||
+    want.guests !== guests ||
+    want.rooms !== rooms;
   useVoicePage({
     kind: 'checkout',
     propertyId,
     propertyName: name,
     brand: p?.primaryColor ?? shell?.primaryColor,
     stay: checkIn && checkOut ? { checkIn, checkOut, guests, rooms } : null,
+    order:
+      roomTypeId && checkIn && checkOut
+        ? { propertyId, roomTypeId, checkIn, checkOut, guests, rooms, hotel: name ?? null, room: roomName ?? null, total: quote?.total ?? null, currency: quote?.currency ?? 'USD' }
+        : null,
     summary:
       roomTypeId && checkIn && checkOut
         ? [
-            `checkout for ${roomName ? `the ${roomName}` : 'a room'}${name ? ` at ${name}` : ''}, ${fmtRange(checkIn, checkOut)}, ${plural(guests, 'guest')}${rooms > 1 ? `, ${plural(rooms, 'room')}` : ''}${total ? `, total ${total}` : ''}`,
+            `checkout for ${orderWords}`,
             unavailable ? 'this room just sold out for these dates' : '',
             status === 'loading' ? '' : signedIn ? `signed in as ${session?.user?.name ?? session?.user?.email}` : 'not signed in yet',
             method === 'stripe' ? 'card payment required to confirm' : 'paying at the hotel',
@@ -374,8 +436,15 @@ function Checkout() {
           missing,
         };
       },
-      confirmBooking: async (): Promise<VoiceActionResult> => {
-        if (busy) return { ok: false, error: 'It’s already booking — wait a moment.' };
+      confirmBooking: async (want): Promise<VoiceActionResult> => {
+        if (booking.current || busy) return { ok: false, error: 'It’s already booking — wait a moment.' };
+        if (differsFromScreen(want)) {
+          return {
+            ok: false,
+            // URL values only as ids and calendar days (a crafted link can't add words here).
+            error: `That isn’t the checkout on screen, so nothing was booked. The screen shows ${orderWords} (property_id ${idOrBlank(propertyId)}, room_type_id ${idOrBlank(roomTypeId)}, check_in ${checkIn}, check_out ${checkOut}, guests ${guests}, rooms ${rooms}). Read that back and ask the guest, or call start_booking for the room they want.`,
+          };
+        }
         if (quoteError) return { ok: false, error: `The price couldn’t be checked: ${(quoteError as Error).message}` };
         if (!quote) return { ok: false, error: 'The price is still loading — try again in a moment.' };
         if (unavailable) return { ok: false, error: 'This room just sold out for these dates — offer to check other rooms or dates.' };
@@ -390,13 +459,27 @@ function Checkout() {
           askForDetails();
           return { ok: false, error: 'The guest isn’t signed in yet. Ask them to finish “Your details” on screen — email and a password, or sign in — then you can book it.', needs: 'sign in' };
         }
+        // Last check before booking: the guest answered a read-back of this order (the dock reads the transcript).
+        if (!want.guestConfirmed) return { ok: false, error: 'Ask the guest to confirm the room, dates and total first.', needs: 'guest confirmation' };
         const r = await submit();
-        if (!r.ok) return { ok: false, error: r.error };
+        if (!r.ok) return { ok: false, error: r.error, ...(r.duplicate ? { already_booked: true, code: r.duplicate.code } : {}) };
+        const paid = r.total ?? quote.total;
+        const cur = quote.currency ?? 'USD';
+        const hotel = voiceText(name, 80) || null;
+        const room = voiceText(roomName, 80) || null;
+        // What was actually booked, for the agent to read back.
         return {
           ok: true,
-          message: `Booked — pay at the hotel. Confirmation code ${r.code ?? 'on screen'}. Their booking page is opening now${config?.emailEnabled ? ' and a confirmation email is on its way' : ''}.`,
+          message: `Booked ${room ? `the ${room}` : 'the room'}${hotel ? ` at ${hotel}` : ''}, ${stayWords}, total ${price(paid, cur)} — pay at the hotel. Confirmation code ${r.code ?? 'on screen'}. Read back the hotel, room, dates and total. Their booking page is opening now${config?.emailEnabled ? ' and a confirmation email is on its way' : ''}.`,
           code: r.code,
-          total: quote.total,
+          hotel,
+          room,
+          check_in: checkIn,
+          check_out: checkOut,
+          guests,
+          rooms,
+          total: paid,
+          currency: cur,
         };
       },
     },
@@ -455,7 +538,8 @@ function Checkout() {
                       <p className="truncate text-sm text-muted-foreground">{session?.user?.email}</p>
                     </div>
                   </div>
-                  <Button variant="ghost" size="sm" className="shrink-0" onClick={() => signOut({ redirect: false })}>
+                  {/* data-voice-avoid: the voice launcher or live pill moves off this button on phones. */}
+                  <Button data-voice-avoid variant="ghost" size="sm" className="shrink-0" onClick={() => signOut({ redirect: false })}>
                     Not you?
                   </Button>
                 </div>

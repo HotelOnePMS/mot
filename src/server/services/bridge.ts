@@ -32,6 +32,7 @@ import { open, randomToken, seal, sha256, vaultAvailable } from '../vault';
 import { scheduleMcpTask } from '../pms/run';
 import { deleteCachedTools } from '../pms/tools';
 import { displayUrl } from '../pms/url-guard';
+import { scheduleConfigSkillSync } from '../skills/config';
 import { recordAudit, type OpContext } from './audit';
 
 export const PMS_SYSTEMS = ['Cloudbeds', 'Mews', 'Oracle OPERA Cloud', 'Little Hotelier', 'RoomRaccoon', 'eZee Absolute', 'innRoad', 'WebRezPro', 'SkyTouch', 'Hotelogix', 'Other'] as const;
@@ -88,6 +89,7 @@ export async function upsertConnection(ctx: OpContext, propertyId: string, input
   // Leaving MCP: the PMS's cached tools no longer apply.
   if (existing?.mode === 'MCP') await deleteCachedTools(propertyId);
   await prisma.property.update({ where: { id: propertyId }, data: { setupPath: 'BRIDGE' } });
+  scheduleConfigSkillSync(propertyId); // the policy answer follows the setup path
   await recordAudit(ctx, propertyId, 'BRIDGE_SETUP', `${existing ? 'Updated' : 'Connected'} ${input.system} (${input.mode === 'CLOUD' ? 'cloud browser' : 'desktop connector'})`);
   return c;
 }

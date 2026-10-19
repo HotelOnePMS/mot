@@ -60,7 +60,7 @@ export function SiteFooter({ variant = 'platform', className }: { variant?: 'pla
 
   if (variant === 'guest') {
     return (
-      <footer className={cn('border-t bg-surface-sunken', className)}>
+      <footer className={cn('border-t bg-surface-sunken pb-20', className)}>
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <nav aria-label="Footer">
             <ul className="flex flex-wrap gap-x-6 gap-y-2">
@@ -82,8 +82,9 @@ export function SiteFooter({ variant = 'platform', className }: { variant?: 'pla
     );
   }
 
+  // pb-20: room for the floating voice launcher, so it never sits on the last links.
   return (
-    <footer className={cn('border-t bg-surface-sunken', className)}>
+    <footer className={cn('border-t bg-surface-sunken pb-20', className)}>
       <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 md:py-16 lg:grid-cols-[1.5fr_2fr]">
         <div className="max-w-sm">
           <Link

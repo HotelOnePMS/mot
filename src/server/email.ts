@@ -63,7 +63,18 @@ const FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, 
 const escapeHtml = (v: unknown) =>
   String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
-const oneLine = (v: string) => v.replace(/[\r\n]+/g, ' ').trim();
+// Control characters (line breaks included), zero-width characters and bidirectional overrides.
+const SUBJECT_UNSAFE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+
+/**
+ * Owner-editable text (the hotel's name) as it may appear in a subject line:
+ * control, zero-width and bidi-override characters and line breaks removed,
+ * whitespace collapsed, at most `max` characters.
+ */
+function subjectText(v: string, max = 60): string {
+  const s = String(v ?? '').replace(SUBJECT_UNSAFE, ' ').replace(/\s+/g, ' ').trim();
+  return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s;
+}
 
 const dayFormat = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 
@@ -224,7 +235,7 @@ export async function sendBookingConfirmation(data: BookingEmailData): Promise<v
     await resend.emails.send({
       from: fromAddress,
       to: data.to,
-      subject: `Booking confirmed — ${oneLine(data.propertyName)}`,
+      subject: `Booking confirmed — ${subjectText(data.propertyName) || 'your stay'}`,
       html: confirmationHtml(data),
       text: confirmationText(data),
     });
@@ -301,7 +312,7 @@ export async function sendGuestRequestAlert(data: GuestRequestAlertData): Promis
     console.log(`[email] Skipping message alert to ${data.to.join(', ')} (RESEND_API_KEY not configured)`);
     return;
   }
-  const subject = `${data.booking ? 'Booking request' : 'New message'} from ${oneLine(data.guestName)} — ${oneLine(data.propertyName)}`;
+  const subject = `${data.booking ? 'Booking request' : 'New message'} from ${subjectText(data.guestName, 40) || 'a caller'} — ${subjectText(data.propertyName) || 'your hotel'}`;
   const text = [
     `${data.booking ? 'New booking request' : 'New message'} from ${data.guestName} (${data.channel})`,
     '',

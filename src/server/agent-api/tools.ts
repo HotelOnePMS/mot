@@ -97,7 +97,7 @@ const TOOLS: ToolDef[] = [
     annotations: READ,
     globalOnly: true,
     describe: () =>
-      'Find HotelOne hotels by place (city, state, zip or area) or by name. Pass checkIn and checkOut (YYYY-MM-DD) to get live availability and the cheapest price for the stay; guests and rooms default to 2 and 1. Start here, then call check_availability for the hotel the person picks. Each hotel has an id (propertyId) for the other tools.',
+      'Find HotelOne hotels by place (city, state, zip or area), by name, or by what the person wants (query: "ocean view", "sauna", "motel"). Pass checkIn and checkOut (YYYY-MM-DD) to get live availability and the cheapest price for the stay; guests and rooms default to 2 and 1. If the result has a note, pass it on: results may be the closest places, and with no hotels in the place, places lists where HotelOne has hotels. Start here, then call check_availability for the hotel the person picks. Each hotel has an id (propertyId) for the other tools.',
     run: async (args) => ({ ...(await searchHotels(args)) }),
   },
   {
@@ -136,7 +136,9 @@ const TOOLS: ToolDef[] = [
       `For people who can’t open a link (for example on a voice call): sends a booking request to ${hotel ? hotel.name : 'the hotel'}’s team, who confirm with the guest and send a link to finish booking. Nothing is booked until then. Needs the guest’s full name and an email or phone number. ${READ_BACK}`,
     run: async (args, ctx) => {
       await ctx.limit('request');
-      return { ...(await requestBooking({ ...args, propertyId: property(args, ctx), source: 'AGENT' } as Parameters<typeof requestBooking>[0])) };
+      // Keyed partners get their own per-hotel allowance, apart from anonymous callers'.
+      const caller = ctx.key ? { keyId: ctx.key.id, keyPropertyId: ctx.key.propertyId } : null;
+      return { ...(await requestBooking({ ...args, propertyId: property(args, ctx), source: 'AGENT' } as Parameters<typeof requestBooking>[0], caller)) };
     },
   },
   {
@@ -154,7 +156,7 @@ const TOOLS: ToolDef[] = [
         throw forbidden(ctx.key.scopes.includes('book') ? 'This API key can only book at its own hotel. Use get_booking_link for other hotels.' : 'This API key can’t make bookings. Use get_booking_link or request_booking instead.');
       }
       await ctx.limit('book');
-      return { ...(await createBooking({ ...args, propertyId, source: keySource(ctx.key) } as Parameters<typeof createBooking>[0])) };
+      return { ...(await createBooking({ ...args, propertyId, source: keySource(ctx.key) } as Parameters<typeof createBooking>[0], { keyId: ctx.key.id })) };
     },
   },
   {
@@ -204,25 +206,31 @@ function offered(def: ToolDef, ctx: Pick<ToolContext, 'hotel' | 'key'>): boolean
   return true;
 }
 
+/** A topic key as it may appear in a tool description: a lowercase slug (what skill keys are), nothing else. */
+const TOPIC_KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 /**
  * The tools offered to this caller, as tools/list returns them. On a hotel's
  * server, ask_hotel lists the hotel's current answer topics (whatever it has
- * configured), so new FAQs show up without any change here.
+ * configured), so new FAQs show up without any change here. Tool
+ * descriptions are high-trust context for the guest's assistant, so they
+ * carry only the topic keys (slugs), never the hotel-written titles — those
+ * come back, cleaned, in ask_hotel and get_hotel results.
  */
 export async function listTools(ctx: Pick<ToolContext, 'hotel' | 'key'>): Promise<ListedTool[]> {
-  let topics: { key: string; title: string }[] = [];
+  let topics: string[] = [];
   if (ctx.hotel) {
     await ensureConfigSkills(ctx.hotel.id);
     const skills = await listSkills(ctx.hotel.id, { audience: 'GUEST', status: ['ACTIVE'], kinds: ['ANSWER'], includePlatform: true });
-    topics = skills.slice(0, 40).map((s) => ({ key: s.key, title: s.title }));
+    topics = [...new Set(skills.map((s) => s.key).filter((k) => k.length <= 80 && TOPIC_KEY.test(k)))].slice(0, 40);
   }
   return TOOLS.filter((t) => offered(t, ctx)).map((t) => {
     let description = t.describe(ctx);
     let inputSchema = inputSchemaFor(t, ctx.hotel);
     if (t.name === 'ask_hotel' && topics.length) {
-      description += ` Topics: ${topics.map((x) => `${x.key} (${x.title})`).join('; ')}.`;
+      description += ` Topic keys: ${topics.join(', ')}.`;
       const props = (inputSchema.properties ?? {}) as Record<string, JsonSchema>;
-      inputSchema = { ...inputSchema, properties: { ...props, topic: { ...props.topic, enum: topics.map((x) => x.key) } } };
+      inputSchema = { ...inputSchema, properties: { ...props, topic: { ...props.topic, enum: topics } } };
     }
     return { name: t.name, title: t.title, description, inputSchema, annotations: { title: t.title, ...t.annotations } };
   });

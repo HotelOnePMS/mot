@@ -30,6 +30,7 @@ import {
   rankAnswerSkills,
   recordLearnedSkill,
   skillKey,
+  upsertSkill,
   useSkill as runSkill,
   type MacroBody,
   type Skill,
@@ -104,12 +105,64 @@ export async function loadShortcuts(propertyId: string): Promise<MacroSkill[]> {
   return rows.filter((s): s is MacroSkill => s.kind === 'MACRO' && Array.isArray(s.body?.steps) && s.body.steps.length > 0);
 }
 
-const word = (w: string) => w.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]/g, '');
+/** A word as names are compared: lowercase letters and digits of any script, accents dropped. */
+const word = (w: string) =>
+  w
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/[^\p{L}\p{N}]/gu, '');
+
+/** Names that are commands the agent already understands, so a shortcut can't take them over. */
+const RESERVED_NAMES = new Set(
+  [
+    'help', 'help me', 'what can you do', 'brief', 'brief me', 'briefing', 'morning brief', 'morning briefing', 'daily brief', 'daily briefing', 'good morning',
+    'overview', 'summary', 'today', 'tonight', 'tomorrow', 'arrivals', 'arrivals today', 'departures', 'departures today', 'who is arriving', 'who is arriving today',
+    'whos arriving', 'whos arriving today', 'who is leaving', 'who is leaving today', 'whos leaving', 'whos leaving today', 'who is checking in', 'who is checking out',
+    'in house', 'who is in house', 'whos in house', 'occupancy', 'housekeeping', 'rooms', 'dirty rooms', 'activity', 'find', 'search', 'show', 'list', 'shortcuts',
+    'list shortcuts', 'my shortcuts', 'yes', 'no', 'ok', 'okay', 'confirm', 'cancel', 'stop', 'undo', 'thanks', 'thank you',
+  ].map((n) => n.split(' ').map(word).join(' ')),
+);
+/** First words of the agent's own commands ("check in…", "who is…", "show…"). */
+const COMMAND_STARTS = new Set(
+  `help brief who whos what whats which where when how is are do does can could show list find search look lookup pull open check checkin checkout cancel confirm
+  assign auto move mark add note put set take block unblock return raise lower increase decrease adjust change update give have upgrade run execute save remember
+  shortcut shortcuts macro today tonight tomorrow arrivals arriving departures departing leaving occupancy forecast housekeeping rates rooms in no yes undo stop`.split(/\s+/),
+);
+const reservedCache = new Map<string, boolean>();
+
+/**
+ * True for names a shortcut can't be called (or matched by, without "run"):
+ * the agent's own commands ("help", "brief me", "arrivals", "who is
+ * arriving today") and names that start like a command and read as one
+ * ("check in vip", "add a note"). "Late checkout" or "VIP arrival" are fine:
+ * nobody starts a built-in command with those words.
+ */
+export function reservedShortcutName(name: string): boolean {
+  const words = name.split(/\s+/).map(word).filter(Boolean);
+  if (!words.length) return false;
+  const phrase = words.join(' ');
+  if (RESERVED_NAMES.has(phrase)) return true;
+  if (!COMMAND_STARTS.has(words[0])) return false;
+  let reserved = reservedCache.get(phrase);
+  if (reserved === undefined) {
+    // It reads as a command by itself, or becomes a change once a guest is named ("add a note" + "K7Q2MD").
+    const today = hotelToday();
+    reserved = parseMessage(name, today).some((i) => i.kind !== 'unknown') || parseMessage(`${name} K7Q2MD`, today).some((i) => WRITE_KINDS.has(i.kind));
+    if (reservedCache.size > 500) reservedCache.clear();
+    reservedCache.set(phrase, reserved);
+  }
+  return reserved;
+}
 
 /**
  * The shortcut a message starts with (by title or key), and the words after
  * it. With `implicit`, a shortcut without inputs only matches when nothing
- * but "for/on/with …" follows, so ordinary commands aren't taken over.
+ * but "for/on/with …" follows, and names that are the agent's own commands
+ * (`reservedShortcutName`) don't match, so ordinary commands aren't taken
+ * over — "run …" still reaches them.
  */
 export function matchShortcut(text: string, shortcuts: MacroSkill[], opts: { implicit?: boolean } = {}): { skill: MacroSkill; rest: string } | null {
   const words = [...text.matchAll(/\S+/g)].map((m) => ({ w: word(m[0]), end: (m.index ?? 0) + m[0].length })).filter((x) => x.w);
@@ -119,6 +172,7 @@ export function matchShortcut(text: string, shortcuts: MacroSkill[], opts: { imp
       const tokens = name.split(/\s+/).map(word).filter(Boolean);
       if (!tokens.length || tokens.length > words.length) continue;
       if (!tokens.every((t, i) => words[i].w === t)) continue;
+      if (opts.implicit && reservedShortcutName(name)) continue;
       const rest = text.slice(words[tokens.length - 1].end).trim();
       const hasInputs = !!Object.keys(s.parameters?.properties ?? {}).length;
       if (opts.implicit && rest && !hasInputs) continue;
@@ -180,7 +234,82 @@ export function parseShortcutArgs(rest: string, parameters: SkillParameters | nu
 // ---------------------------------------------------------------------------
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const CODE_RE = /\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{6,8}\b/;
+
+/** Words in a guest name that only say how the guest was given ("the guest with phone …"). */
+const NOT_NAME = new Set(['phone', 'email', 'mail', 'number', 'mobile', 'cell', 'address', 'contact', 'telephone', 'tel']);
+const EMAIL_RE = /[^\s@<>()[\]{},;:"]+@[^\s@<>()[\]{},;:"]+\.[A-Za-z]{2,}/g;
+const PHONE_RE = /\+\d[\d\s().-]{5,}\d|\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g;
+const CONTACT_RE = new RegExp(`${EMAIL_RE.source}|${PHONE_RE.source}`, 'g');
+/** Capitalised words that aren't names. */
+const NOT_A_NAME = new Set(['I', 'VIP', 'OK', 'AM', 'PM', 'ASAP', 'TV', 'ID']);
+const NAME_WORD = /^[\p{Lu}][\p{L}\p{M}'’.-]*$/u;
+const nameToken = (w: string) =>
+  w
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/^#/, '')
+    .replace(/[’']s$/, '');
+
+/**
+ * Where a guest is named in a command: runs of words that are all part of
+ * the reference (its code and name words, e.g. "Jordan Smith 4NBEYC"), with
+ * a leading "the" for names ("the Smiths"). The NLU may split one guest into
+ * a code and a name ("JORDAN" + "Smith"), so they're matched together.
+ */
+function guestRuns(text: string, ref: { code?: string; name?: string }): { start: number; end: number; value: string; words: number }[] {
+  // Emails and phone numbers are handled on their own (a name word inside "jordan.smith@…" isn't a mention).
+  const skip = [...text.matchAll(EMAIL_RE), ...text.matchAll(PHONE_RE)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
+  const tokens = new Set<string>();
+  if (ref.code) tokens.add(ref.code.toLowerCase());
+  if (ref.name && /^[\p{L}\p{M}'’ .-]{2,60}$/u.test(ref.name)) {
+    for (const w of ref.name.split(/\s+/)) if (w && !NOT_NAME.has(nameToken(w))) tokens.add(nameToken(w));
+  }
+  if (!tokens.size) return [];
+  const words = [...text.matchAll(/#?[\p{L}\p{N}][\p{L}\p{M}\p{N}'’-]*/gu)]
+    .map((m) => ({ text: m[0], start: m.index ?? 0, end: (m.index ?? 0) + m[0].length }))
+    .filter((w) => !skip.some(([a, b]) => w.start < b && w.end > a));
+  const runs: { start: number; end: number; value: string; words: number }[] = [];
+  let i = 0;
+  while (i < words.length) {
+    const w = words[i];
+    if (text[w.start - 1] === '{' || !tokens.has(nameToken(w.text))) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < words.length && tokens.has(nameToken(words[j + 1].text)) && /^[\s,]+$/.test(text.slice(words[j].end, words[j + 1].start))) j++;
+    let start = w.start;
+    const before = text.slice(0, start).match(/\bthe\s+$/i);
+    if (before && ref.name) start -= before[0].length;
+    runs.push({ start, end: words[j].end, value: text.slice(w.start, words[j].end), words: j - i + 1 });
+    i = j + 1;
+  }
+  return runs;
+}
+
+/** Drops what's left of a name next to a {guest} placeholder: "{guest} Smith" → "{guest}", "Mr {guest}" → "{guest}". */
+export function stripNameResidue(text: string): string {
+  const parts = text.split(/(\s+)/);
+  const isName = (t: string | undefined) => !!t && NAME_WORD.test(t) && !NOT_A_NAME.has(t.replace(/[.]+$/, ''));
+  for (let i = 0; i < parts.length; i += 2) {
+    if (!/^\{guest\d*\}/.test(parts[i])) continue;
+    // Before: capitalised words (not the command's first word).
+    while (i >= 2 && i - 2 > 0 && isName(parts[i - 2])) {
+      parts.splice(i - 2, 2);
+      i -= 2;
+    }
+    // After, while the placeholder isn't followed by punctuation: "{guest} Smith: VIP" → "{guest}: VIP".
+    while (/^\{guest\d*\}$/.test(parts[i]) && i + 2 < parts.length) {
+      const m = parts[i + 2].match(/^(.+?)([:,.;!?]*)$/u);
+      if (!m || !isName(m[1])) break;
+      parts[i] += m[2];
+      parts.splice(i + 1, 2);
+    }
+  }
+  return parts.join('');
+}
 
 interface Generalized {
   /** Commands with {placeholders}. */
@@ -195,7 +324,11 @@ interface Generalized {
 /**
  * Replaces the guests, rooms and explicit dates in commands with
  * {guest}/{room}/{date} placeholders (numbered when there are several), the
- * same value always getting the same placeholder.
+ * same value always getting the same placeholder. A guest named by code and
+ * name together ("Jordan Smith 4NBEYC") is one {guest}; email addresses and
+ * phone numbers become {guest} placeholders too, and capitalised words left
+ * next to a {guest} ("{guest} Smith") are dropped — no personal details stay
+ * in a saved shortcut.
  */
 export function generalizeCommands(commands: string[], today: ISODate): Generalized {
   const names = new Map<string, string>();
@@ -226,12 +359,14 @@ export function generalizeCommands(commands: string[], today: ISODate): Generali
     for (const intent of intents) {
       const ref = 'ref' in intent ? intent.ref : undefined;
       if (ref?.pronoun) usesPronoun = true;
-      if (ref?.code && new RegExp(`(?:#\\s*)?\\b${escape(ref.code)}\\b`, 'i').test(text)) {
-        text = text.replace(new RegExp(`(?:#\\s*)?\\b${escape(ref.code)}\\b`, 'i'), placeholder('guest', ref.code));
-      } else if (ref?.name && !CODE_RE.test(command) && /^[A-Za-zÀ-ÿ'’ -]{2,60}$/.test(ref.name)) {
-        const re = new RegExp(`(?:\\bthe\\s+)?\\b${ref.name.split(/\s+/).map(escape).join('[\\s,]+')}\\b`, 'i');
-        const hit = text.match(re);
-        if (hit) text = text.replace(re, placeholder('guest', hit[0].replace(/^the\s+/i, '')));
+      const runs = ref ? guestRuns(text, ref) : [];
+      if (runs.length) {
+        // The first mention is the guest; later ones are replaced too when they're clearly the same guest.
+        const first = runs[0];
+        const code = ref?.code?.toLowerCase();
+        const ph = placeholder('guest', first.value);
+        const same = runs.filter((r, i) => i === 0 || r.value.toLowerCase() === first.value.toLowerCase() || r.words > 1 || (!!code && nameToken(r.value) === code));
+        for (const r of [...same].reverse()) text = `${text.slice(0, r.start)}${ph}${text.slice(r.end)}`;
       } else if (ref?.roomNumber) {
         const re = new RegExp(`\\brooms?\\s*#?\\s*${escape(ref.roomNumber)}\\b`, 'i');
         const hit = text.match(re);
@@ -243,18 +378,29 @@ export function generalizeCommands(commands: string[], today: ISODate): Generali
         if (re.test(text)) text = text.replace(re, placeholder('room', r));
       }
     }
-    return text;
+    // Contact details are always someone's: they never stay in a template.
+    text = text.replace(CONTACT_RE, (m) => placeholder('guest', m));
+    return stripNameResidue(text);
   });
   const body: MacroBody = { steps: steps.map((command) => ({ command })) };
   return { steps, parameters: parametersFor('MACRO', body), examples, usesPronoun };
 }
 
-/** The normalised shape of a command (entities as placeholders), used to spot repeats. */
+/**
+ * The normalised shape of a command (entities as placeholders), used to spot
+ * repeats. Null when it isn't a reusable template: what's left besides the
+ * placeholders still has digits, an email address or capitalised words
+ * (after the first) — usually someone's name, number or details.
+ */
 export function commandShape(command: string, today: ISODate): { shape: string; template: string } | null {
   const g = generalizeCommands([command], today);
   const template = g.steps[0].replace(/\s+/g, ' ').replace(/[.!?]+$/, '').trim();
   const shape = template.toLowerCase().replace(/[’]/g, "'");
-  if (!/[a-z]/.test(shape)) return null;
+  if (!/\p{L}/u.test(shape.replace(/\{[a-z]+\d*\}/g, ''))) return null;
+  const leftover = template.replace(/\{[a-z]+\d*\}/g, ' ');
+  if (/\d|@/.test(leftover)) return null;
+  const words = leftover.split(/[\s:;,.!?()"“”]+/).filter(Boolean);
+  if (words.slice(1).some((w) => /^\p{Lu}/u.test(w) && !NOT_A_NAME.has(w))) return null;
   return { shape, template };
 }
 
@@ -402,7 +548,36 @@ export async function recentCommandsFromAudit(actor: Actor, propertyId: string):
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** Saves the last command(s) as a shortcut (ACTIVE, LEARNED) and says how to run it. */
+/**
+ * A shortcut name made from a command template, without its placeholders:
+ * "add a note to {guest}: extra towels please" → "Add a note: extra towels
+ * please", "check in {guest} to room {room}" → "Check in", "mark {room} and
+ * {room2} clean" → "Mark clean".
+ */
+export function suggestionTitle(template: string): string {
+  const P = '\u0001';
+  const title = template
+    .replace(/\{[A-Za-z_]+\d*\}/g, P)
+    .replace(new RegExp(`${P}(?:\\s*(?:,|&|\\band\\b)\\s*${P})+`, 'gi'), P)
+    // "to {guest}", "for room {room}", "from {date}" go; "check in {guest}" keeps its "in".
+    .replace(new RegExp(`\\s*\\b(?:for|to|on|with|into|from|at|of|by|until|till)\\s+(?:the\\s+)?(?:(?:rooms?|guests?|reservation|booking|date)\\s+)?${P}`, 'gi'), '')
+    .replace(new RegExp(`\\s*\\b(?:rooms?|guests?)\\s+${P}`, 'gi'), '')
+    .replace(new RegExp(P, 'g'), '')
+    .replace(/\s+([:;,.!?])/g, '$1')
+    .replace(/([:;,])(?=[:;,.!?]|$)/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s:;,.!?–—-]+|[\s:;,–—-]+$/g, '')
+    .trim();
+  return capitalize(title || 'Suggested shortcut').slice(0, 120);
+}
+
+/**
+ * Saves the last command(s) as a shortcut (LEARNED) and says how to run it.
+ * People who manage skills save it ACTIVE; anyone else saves it SUGGESTED,
+ * for a manager to approve on the Skills page. It never overwrites a
+ * shortcut someone else made, an ACTIVE one for someone who can't approve,
+ * or a name that is one of the agent's own commands.
+ */
 export async function saveShortcut(input: { actor: Actor; propertyId: string; name: string; count: number; recent: string[]; today: ISODate }): Promise<AgentBlock[]> {
   const { actor, propertyId, today } = input;
   const commands = pickCommands(input.recent, input.count, today);
@@ -412,52 +587,85 @@ export async function saveShortcut(input: { actor: Actor; propertyId: string; na
   if (!input.name) {
     return [{ type: 'error', text: `What should I call it? Say “save that as a shortcut called …” — for example “save that as a shortcut called ${commands.length > 1 ? 'morning routine' : 'late checkout'}”.` }];
   }
-  const g = generalizeCommands(commands, today);
   const title = capitalize(input.name);
-  const key = skillKey(input.name);
-  const existing = await prisma.agentSkill.findFirst({ where: { propertyId, key }, select: { source: true, status: true } });
-  if (existing?.source === 'LEARNED' && existing.status === 'DISABLED') {
-    return [{ type: 'error', text: `A shortcut called “${title}” was switched off on the Skills page. Turn it back on there, or save this one with another name.` }];
+  if (reservedShortcutName(input.name)) {
+    return [{ type: 'error', text: `“${title}” is already something I understand, so it can’t be a shortcut name — the shortcut would take it over. Pick a name that doesn’t start like a command, such as “morning routine” or “VIP checkout”.` }];
   }
-  // Saving what was suggested approves the suggestion instead of making a twin.
+  const manage = can(actor, 'skills.manage');
+  const skillsLink: AgentBlock[] = can(actor, 'skills.view') ? [{ type: 'navigate', label: 'Open the Skills page', href: '/admin/skills' }] : [];
+  const g = generalizeCommands(commands, today);
+  const key = skillKey(input.name);
+  const existing = await prisma.agentSkill.findFirst({ where: { propertyId, key }, select: { source: true, status: true, kind: true, title: true, createdById: true } });
+  if (existing?.kind === 'MACRO') {
+    const mine = existing.source === 'LEARNED' && !!existing.createdById && existing.createdById === actor.userId;
+    if (!mine) {
+      const owner = existing.createdById ? await prisma.user.findUnique({ where: { id: existing.createdById }, select: { firstName: true, lastName: true } }) : null;
+      const by = owner ? ` (saved by ${`${owner.firstName} ${owner.lastName}`.trim()})` : '';
+      return [
+        { type: 'error', text: `There’s already a shortcut called “${existing.title}”${by}. Save this one with another name${manage ? ', or change that one on the Skills page' : ''}.` },
+        ...skillsLink,
+      ];
+    }
+    if (existing.status === 'DISABLED') {
+      return [{ type: 'error', text: `A shortcut called “${title}” was switched off on the Skills page. Turn it back on there, or save this one with another name.` }, ...skillsLink];
+    }
+    if (existing.status === 'ACTIVE' && !manage) {
+      return [{ type: 'error', text: `“${existing.title}” is already switched on for everyone, so a manager needs to change it on the Skills page. Or save this one with another name.` }, ...skillsLink];
+    }
+  }
+  // Saving what was suggested approves the suggestion (for people who can) instead of making a twin.
   const wanted = g.steps.map(normalizeStep).join('\n');
   const suggested = (await listSkills(propertyId, { status: ['SUGGESTED'], kinds: ['MACRO'] })).find(
     (s) => s.kind === 'MACRO' && s.body.steps.map((x) => normalizeStep(x.command)).join('\n') === wanted,
   );
+  if (suggested && !manage) {
+    return [{ type: 'text', text: `That’s already waiting for a manager’s OK as the suggested shortcut “${suggested.title}”. Once it’s approved, anyone can run it by name.` }, ...skillsLink];
+  }
+  const fields = {
+    propertyId,
+    title,
+    description: `Shortcut: ${g.steps.join(' → ')}`.slice(0, 500),
+    kind: 'MACRO' as const,
+    audience: 'STAFF' as const,
+    parameters: g.parameters,
+    body: { steps: g.steps.map((command) => ({ command })) },
+  };
   let skill: Skill;
   try {
-    skill = await recordLearnedSkill({
-      propertyId,
-      key: suggested && (!existing || existing.source !== 'LEARNED') ? suggested.key : key,
-      title,
-      description: `Shortcut: ${g.steps.join(' → ')}`.slice(0, 500),
-      kind: 'MACRO',
-      audience: 'STAFF',
-      parameters: g.parameters,
-      body: { steps: g.steps.map((command) => ({ command })) },
-      status: 'ACTIVE',
-      createdById: actor.userId,
-    });
+    skill =
+      suggested && existing?.kind !== 'MACRO'
+        ? await upsertSkill({ ...fields, key: suggested.key, source: 'LEARNED', status: 'ACTIVE' })
+        : await recordLearnedSkill({ ...fields, key, status: manage ? 'ACTIVE' : 'SUGGESTED', createdById: actor.userId });
   } catch (e) {
     if (e instanceof DomainError) return [{ type: 'error', text: `I couldn’t save that: ${e.message}` }];
     throw e;
   }
   if (skill.kind !== 'MACRO') return [{ type: 'error', text: 'I couldn’t save that shortcut.' }];
-  await recordAudit({ actor, source: 'agent' }, propertyId, 'SKILL_SAVE', `Saved the shortcut “${skill.title}” (${skill.body.steps.length} step${skill.body.steps.length === 1 ? '' : 's'})`, { skillKey: skill.key });
+  const pending = skill.status !== 'ACTIVE';
+  const n = skill.body.steps.length;
+  await recordAudit(
+    { actor, source: 'agent' },
+    propertyId,
+    pending ? 'SKILL_SUGGEST' : 'SKILL_SAVE',
+    `${pending ? 'Suggested' : 'Saved'} the shortcut “${skill.title}” (${n} step${n === 1 ? '' : 's'})${pending ? ' for a manager to approve' : ''}`,
+    { skillKey: skill.key },
+  );
   const hint = hintFor(skill);
   const inputs = inputNames('MACRO', skill.body, skill.parameters);
   const lines = [
-    `Saved **${skill.title}** as a shortcut. It runs:`,
-    ...skill.body.steps.map((s, i) => `• ${skill.body.steps.length > 1 ? `${i + 1}. ` : ''}${s.command}`),
+    pending
+      ? `Saved **${skill.title}** as a suggested shortcut. A manager needs to approve it on the Skills page before anyone can run it. It will run:`
+      : `Saved **${skill.title}** as a shortcut. It runs:`,
+    ...skill.body.steps.map((s, i) => `• ${n > 1 ? `${i + 1}. ` : ''}${s.command}`),
     inputs.length
-      ? `Next time say “${hint.example}” — I’ll fill in ${inputs.map((p) => `{${p}}`).join(', ')}${Object.keys(g.examples).length ? ` (this time: ${Object.entries(g.examples).map(([k, v]) => `${k} = ${v}`).join(', ')})` : ''}.`
-      : `Next time just say “${hint.example}”.`,
+      ? `${pending ? 'Once it’s approved, say' : 'Next time say'} “${hint.example}” — I’ll fill in ${inputs.map((p) => `{${p}}`).join(', ')}${Object.keys(g.examples).length ? ` (this time: ${Object.entries(g.examples).map(([k, v]) => `${k} = ${v}`).join(', ')})` : ''}.`
+      : `${pending ? 'Once it’s approved, just say' : 'Next time just say'} “${hint.example}”.`,
     ...(g.usesPronoun ? ['It says “them” or “that”, so it acts on whoever we were just talking about.'] : []),
     'Changes it makes still wait for your OK.',
   ];
   const blocks: AgentBlock[] = [{ type: 'text', text: lines.join('\n') }];
-  if (!inputs.length) blocks.push({ type: 'suggestions', items: [hint.command] });
-  if (can(actor, 'skills.view')) blocks.push({ type: 'navigate', label: 'See it on the Skills page', href: '/admin/skills' });
+  if (!inputs.length && !pending) blocks.push({ type: 'suggestions', items: [hint.command] });
+  if (can(actor, 'skills.view')) blocks.push({ type: 'navigate', label: 'See it on the Skills page', href: pending ? '/admin/skills#suggested' : '/admin/skills' });
   return blocks;
 }
 
@@ -535,7 +743,7 @@ export async function maybeSuggestShortcut(actor: Actor, propertyId: string, sha
     const skill = await recordLearnedSkill({
       propertyId,
       key,
-      title: capitalize(shape.template).slice(0, 120),
+      title: suggestionTitle(shape.template),
       description: `Suggested because it was run ${count} times in the last ${SUGGEST_WINDOW_DAYS} days. Runs: ${shape.template}`.slice(0, 500),
       kind: 'MACRO',
       audience: 'STAFF',

@@ -31,6 +31,38 @@ export interface VoiceRoomOption {
 /** What a page action reports back to the agent. `message` is written for the model to act on. */
 export type VoiceActionResult = { ok: true; message: string; [k: string]: unknown } | { ok: false; error: string; [k: string]: unknown };
 
+/** The order on a checkout page, exactly as confirming it would book it. */
+export interface VoiceOrder {
+  propertyId: string;
+  roomTypeId: string;
+  checkIn: string;
+  checkOut: string;
+  guests: number;
+  rooms: number;
+  hotel?: string | null;
+  room?: string | null;
+  /** Whole stay, all rooms, once priced. */
+  total?: number | null;
+  currency?: string | null;
+}
+
+/** What the agent asked confirm_booking to book; the checkout refuses unless it is what's on screen. */
+export interface VoiceBookingRequest {
+  /** Null on a hotel's own line (it means that hotel). */
+  propertyId: string | null;
+  roomTypeId: string;
+  checkIn: string;
+  checkOut: string;
+  guests: number;
+  rooms: number;
+  /**
+   * The guest spoke after the agent's read-back of this exact order (the dock
+   * checks the transcript). The page books only then — after its own checks
+   * (sign-in, card payment, sold out), which book nothing and come first.
+   */
+  guestConfirmed: boolean;
+}
+
 export interface VoicePageActions {
   /** Re-price the page for a stay (hotel page). */
   setStay?: (stay: VoiceStay) => void;
@@ -38,8 +70,8 @@ export interface VoicePageActions {
   selectRoom?: (roomTypeId: string, stay?: VoiceStay) => void;
   /** Fill in checkout fields; says what was filled and what's still missing. */
   fillGuest?: (details: { name?: string | null; phone?: string | null; notes?: string | null }) => VoiceActionResult | Promise<VoiceActionResult>;
-  /** Run the page's own confirm, with its own validation (checkout). */
-  confirmBooking?: () => Promise<VoiceActionResult>;
+  /** Run the page's own confirm, with its own validation (checkout); refuses unless `expected` is the order on screen. */
+  confirmBooking?: (expected: VoiceBookingRequest) => Promise<VoiceActionResult>;
 }
 
 export interface VoicePage {
@@ -58,10 +90,32 @@ export interface VoicePage {
   /**
    * Phones and tablets (below lg): px to keep clear at the bottom, on top of the
    * launcher's own 16px margin and the safe area — e.g. a fixed booking bar.
-   * In-flow buttons (checkout's confirm) use data-voice-avoid instead.
+   * In-flow buttons (checkout's confirm) use data-voice-avoid instead, and a
+   * group of controls (a stay search) data-voice-avoid-controls on its wrapper.
    */
   bottomOffset?: number;
+  /** Checkout: the order on screen (what confirm_booking would book). */
+  order?: VoiceOrder | null;
   actions?: VoicePageActions;
+}
+
+/**
+ * Page text on its way to the voice agent (hotel names, taglines, room names,
+ * anything read from the URL): data, never instructions. One line, no
+ * "[Page]" markers, brackets or control characters, and capped, so nothing a
+ * hotel or a crafted link controls can pose as a page update. Free text the
+ * guest typed into the URL (a search) should not be sent at all.
+ */
+export function voiceText(value: string | null | undefined, max = 160): string {
+  if (!value) return '';
+  const s = String(value)
+    // Newlines, other control characters and invisible direction/zero-width marks.
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]+/g, ' ')
+    .replace(/\[\s*page\s*\]/gi, ' ')
+    .replace(/[[\]{}<>]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s;
 }
 
 export interface VoicePageRegistry {

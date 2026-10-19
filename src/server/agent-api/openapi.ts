@@ -72,6 +72,8 @@ const SCHEMAS: Record<string, JsonSchema> = {
     hotels: { type: 'array', items: ref('HotelSummary') },
     matched: int('Hotels that matched before the limit.'),
     stay: nullable(obj({ checkIn: date('Arrival'), checkOut: date('Departure'), nights: int(), guests: int(), rooms: int() })),
+    note: str('Only when results are not exact matches (closest places, or the place without the query words): what to tell the person.'),
+    places: { type: 'array', description: 'Only when no hotel is in the place asked for: every town with HotelOne hotels, e.g. "Santa Cruz, CA".', items: str() },
   }),
   HotelDetails: obj(
     {
@@ -176,7 +178,7 @@ const SCHEMAS: Record<string, JsonSchema> = {
     rooms: int(),
     freeChangesUntil: nullable(str('e.g. "3:00 PM on Thu, Oct 22"; null once passed.')),
     manage: str(),
-    bookingUrl: str(undefined, { format: 'uri' }),
+    bookingUrl: nullable(str('The guest’s booking page (they sign in to change or cancel). Null for direct bookings made with an API key: follow manage instead.', { format: 'uri' })),
   }),
 };
 

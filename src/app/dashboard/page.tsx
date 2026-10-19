@@ -16,7 +16,7 @@ import { Callout, EmptyState, Skeleton } from '@/components/ui/primitives';
 import { SmartImage } from '@/components/ui/smart-image';
 import { BookingStatusBadge } from '@/components/hotel/badges';
 import { brandScope } from '@/components/guest/brand';
-import { useVoicePage } from '@/components/voice/page-context';
+import { useVoicePage, voiceText } from '@/components/voice/page-context';
 import { GuestShell } from '@/app/properties/_components/guest-shell';
 import { plural, price } from '@/app/properties/_components/format';
 
@@ -77,7 +77,7 @@ function NextTrip({ trip }: { trip: Trip }) {
                 {trip.room ? ` · ${trip.room.roomNumber}` : ''}
               </dd>
             </div>
-            <div>
+            <div data-voice-avoid>
               <dt className="text-xs text-muted-foreground">Confirmation</dt>
               <dd className="font-mono font-semibold tracking-wider">{trip.code ?? '—'}</dd>
             </div>
@@ -156,11 +156,11 @@ export default function TripsPage() {
   const cancelled = (data ?? []).filter((t) => t.status === 'CANCELLED' || t.status === 'NO_SHOW').sort((a, b) => b.checkIn.localeCompare(a.checkIn));
   const [next, ...later] = upcoming;
 
-  // The voice concierge knows the guest is looking at their trips (and the next one).
+  // The voice concierge knows the guest is looking at their trips (and the next one; hotel text as data: voiceText).
   useVoicePage({
     kind: 'trips',
     summary: data
-      ? `their trips: ${plural(upcoming.length, 'upcoming stay')}${next ? `, next at ${next.property.name} on ${fmtDay(next.checkIn, 'weekday')} (confirmation ${next.code ?? 'on screen'})` : ''}`
+      ? `their trips: ${plural(upcoming.length, 'upcoming stay')}${next ? `, next at ${voiceText(next.property.name, 80)} on ${fmtDay(next.checkIn, 'weekday')} (confirmation ${next.code ?? 'on screen'})` : ''}`
       : 'their trips',
   });
 

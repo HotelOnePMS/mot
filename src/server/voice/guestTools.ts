@@ -12,6 +12,7 @@ import { availabilityOptions, lookupBooking, priceOptions, submitBookingRequest 
 import { checkoutPath } from '../concierge/urls';
 import { alertTeam } from '../services/guestRequests';
 import { useSkill as runSkill } from '../skills';
+import { integrationManageNote } from '../concierge/booking';
 
 // Hotel facts live with the concierge (shared with the agent API and skills).
 export { propertyFacts };
@@ -68,7 +69,9 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
         check_out: formatDay(toISODate(b.checkOut), 'weekday'),
         guests: b.guests,
         free_changes_until: policy.passed ? null : policy.deadlineLabel,
-        manage: 'The guest can change dates or cancel from the link in their confirmation, or by signing in at the booking site.',
+        manage: b.guestEmail
+          ? integrationManageNote(b.property.phone)
+          : 'The guest can change dates or cancel by signing in at the booking site with the email they booked with.',
       };
     }
 
