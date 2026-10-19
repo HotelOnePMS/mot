@@ -1,10 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowRight, Bot, FileJson, KeyRound, Phone, ShieldCheck, Webhook } from 'lucide-react';
-import Navigation from '@/components/Navigation';
-import { SiteFooter } from '@/components/guest/SiteFooter';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { MarketingShell } from '@/components/marketing/MarketingShell';
+import { LABELS, SETUP_PATH_COPY } from '@/config/copy';
 import { PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL, PRODUCT_URL } from '@/config/product';
 import { CONTRACT, CONTRACT_VERSION, EVENT_TYPES } from '@/server/pms/contract';
 import { publicSiteUrl } from '@/server/public-url';
@@ -94,10 +94,9 @@ await sendHotelOneEvent(url, secret, {
 });`;
 
   return (
-    <div className="relative flex min-h-dvh flex-col overflow-x-clip bg-background">
+    <MarketingShell className="relative overflow-x-clip">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[520px] bg-[radial-gradient(ellipse_at_50%_0%,hsl(var(--primary)/0.10),transparent_65%)]" aria-hidden />
-      <Navigation variant="marketing" />
-      <main id="main" className="relative flex-1">
+      <div className="relative">
         <section className="mx-auto max-w-3xl px-4 py-14 text-center sm:px-6 sm:py-20">
           <p className="text-2xs font-semibold uppercase tracking-[0.18em] text-primary">For PMS partners</p>
           <h1 className="mt-4 text-balance font-display text-4xl font-medium leading-[1.1] tracking-tight sm:text-5xl">Connect your PMS to {PRODUCT_NAME}</h1>
@@ -116,6 +115,15 @@ await sendHotelOneEvent(url, secret, {
               </a>
             </Button>
           </div>
+          <p className="mt-6 text-sm text-muted-foreground">
+            Running a hotel?{' '}
+            <Link
+              href="/onboarding?path=bridge"
+              className="inline-flex min-h-10 items-center gap-1 rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            >
+              {SETUP_PATH_COPY.BRIDGE.cta} when you set up <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+            </Link>
+          </p>
         </section>
 
         <section className="mx-auto max-w-5xl px-4 pb-14 sm:px-6" aria-labelledby="benefits-title">
@@ -263,7 +271,7 @@ await sendHotelOneEvent(url, secret, {
               </li>
               <li>
                 <Link className="font-medium text-primary underline-offset-4 hover:underline" href="/contact">
-                  Talk to us
+                  {LABELS.contact}
                 </Link>{' '}
                 <span className="text-muted-foreground">
                   — or write to <a className="underline-offset-4 hover:underline" href={`mailto:${PRODUCT_SUPPORT_EMAIL}`}>{PRODUCT_SUPPORT_EMAIL}</a> for a test hotel
@@ -272,8 +280,7 @@ await sendHotelOneEvent(url, secret, {
             </ul>
           </div>
         </section>
-      </main>
-      <SiteFooter />
-    </div>
+      </div>
+    </MarketingShell>
   );
 }

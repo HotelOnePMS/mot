@@ -1,26 +1,31 @@
 import Link from 'next/link';
 import { Mail } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { telHref } from '@/lib/format';
 import { Logo, LogoMark } from '@/components/brand/Logo';
 import { PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL } from '@/config/product';
+import { LABELS, TERMS } from '@/config/copy';
 
-const COLUMNS = [
+type FooterLink = { href: string; label: string };
+
+// Sign-in and sign-up live in the header: one place per action.
+const COLUMNS: { title: string; links: FooterLink[] }[] = [
   {
     title: 'For hotels',
     links: [
-      { href: '/#agent', label: 'The AI front desk' },
       { href: '/#features', label: 'Features' },
+      { href: '/#agent', label: TERMS.agent },
       { href: '/#pricing', label: 'Pricing' },
-      { href: '/onboarding', label: 'Set up your hotel' },
+      { href: '/demo', label: LABELS.demo },
+      { href: '/onboarding', label: LABELS.hotelSignup },
     ],
   },
   {
     title: 'For travellers',
     links: [
-      { href: '/properties', label: 'Find a stay' },
-      { href: '/assistants', label: 'Book with AI assistants' },
-      { href: '/dashboard', label: 'My trips' },
-      { href: '/register', label: 'Create an account' },
+      { href: '/properties', label: LABELS.findStay },
+      { href: '/assistants', label: `Book with ${TERMS.assistants}` },
+      { href: '/dashboard', label: LABELS.myTrips },
     ],
   },
   {
@@ -28,43 +33,60 @@ const COLUMNS = [
     links: [
       { href: '/about', label: 'About' },
       { href: '/developers/pms', label: 'For PMS partners' },
-      { href: '/contact', label: 'Contact' },
-      { href: '/login', label: 'Sign in' },
+      { href: '/contact', label: LABELS.contact },
     ],
   },
 ];
 
-const GUEST_LINKS = [
-  { href: '/properties', label: 'Find a stay' },
-  { href: '/dashboard', label: 'My trips' },
-  { href: '/profile', label: 'Profile' },
+const GUEST_LINKS: FooterLink[] = [
+  { href: '/properties', label: LABELS.findStay },
+  { href: '/dashboard', label: LABELS.myTrips },
+  { href: '/profile', label: LABELS.profile },
   { href: '/contact', label: 'Help' },
 ];
+
+/** On a hotel's own pages: the guest's trips and the hotel itself, never other hotels or platform help. */
+function hotelLinks(hotel: FooterHotel): FooterLink[] {
+  return [
+    { href: '/dashboard', label: LABELS.myTrips },
+    ...(hotel.phone ? [{ href: telHref(hotel.phone), label: `Call ${hotel.name}` }] : []),
+    ...(hotel.email ? [{ href: `mailto:${hotel.email}`, label: `Email ${hotel.name}` }] : []),
+  ];
+}
 
 const linkClass =
   'inline-flex min-h-10 items-center rounded-sm text-sm text-muted-foreground md:min-h-0 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface-sunken';
 
-/**
- * Site footer. `platform` (default) is the full product footer; `guest` is a
- * slim traveller footer for booking pages, with a small "Powered by" line.
- */
 /** A hotel's contact details, for the footer of its own booking pages. */
 export type FooterHotel = { name: string; phone?: string | null; email?: string | null };
 
+/**
+ * Site footer. `platform` (default) is the full product footer; `guest` is a
+ * slim traveller footer for booking pages, with a small "Powered by" line.
+ * With `hotel` (white-label pages) the guest footer offers the hotel's own
+ * phone and email instead of platform links.
+ */
 export function SiteFooter({ variant = 'platform', className, hotel }: { variant?: 'platform' | 'guest'; className?: string; hotel?: FooterHotel }) {
   const year = new Date().getFullYear();
 
   if (variant === 'guest') {
+    const links = hotel ? hotelLinks(hotel) : GUEST_LINKS;
     return (
       <footer className={cn('border-t bg-surface-sunken', className)}>
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <nav aria-label="Footer">
             <ul className="flex flex-wrap gap-x-6 gap-y-2">
-              {GUEST_LINKS.map((l) => (
+              {links.map((l) => (
                 <li key={l.href}>
-                  <Link href={l.href} className={linkClass}>
-                    {l.label}
-                  </Link>
+                  {l.href.startsWith('/') ? (
+                    <Link href={l.href} className={linkClass}>
+                      {l.label}
+                    </Link>
+                  ) : (
+                    <a href={l.href} className={linkClass}>
+                      {l.label}
+                    </a>
+                  )}
                 </li>
               ))}
             </ul>
@@ -90,7 +112,8 @@ export function SiteFooter({ variant = 'platform', className, hotel }: { variant
             <Logo />
           </Link>
           <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-            A booking website in your hotel’s name, an AI front desk that answers every call and chat, and one dashboard for all your channels.
+            A booking site in your hotel’s name, an {TERMS.agent} and {TERMS.voice.toLowerCase()} that answer every call and chat, and one{' '}
+            {LABELS.console.toLowerCase()} for all your channels.
           </p>
           <a
             href={`mailto:${PRODUCT_SUPPORT_EMAIL}`}

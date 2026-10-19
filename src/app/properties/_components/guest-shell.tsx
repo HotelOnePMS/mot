@@ -42,7 +42,7 @@ export function GuestShell({
   return (
     <div style={scope.style} className={cn('flex min-h-dvh flex-col bg-background', scope.className, className)}>
       {demo && <DemoBanner />}
-      <Navigation variant="guest" brand={brand} />
+      <Navigation variant="guest" brand={brand} brandColor={brandColor} />
       <main id="main" className={cn('flex-1', mainClassName)}>
         {children}
       </main>

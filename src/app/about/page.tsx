@@ -1,10 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowRight, Building2, MessageSquareText, ShieldCheck } from 'lucide-react';
-import Navigation from '@/components/Navigation';
 import { Button } from '@/components/ui/button';
-import { SiteFooter } from '@/components/guest/SiteFooter';
 import { LogoMark } from '@/components/brand/Logo';
+import { MarketingShell } from '@/components/marketing/MarketingShell';
+import { LABELS, SETUP_PATH_COPY } from '@/config/copy';
 import { PRODUCT_NAME } from '@/config/product';
 
 export const metadata: Metadata = {
@@ -20,20 +20,19 @@ const PRINCIPLES = [
 ];
 
 const PATHS = [
-  { title: 'Run everything here', text: 'Booking site, front desk, rates and the phone agent.' },
-  { title: 'Keep your current system', text: 'The agent works alongside the software you already use.' },
-  { title: 'Just the phone agent', text: 'Answer every call and WhatsApp message, day and night.' },
+  { id: 'full', title: SETUP_PATH_COPY.FULL.title, text: 'Booking site, front desk, rates and the phone agent.' },
+  { id: 'bridge', title: SETUP_PATH_COPY.BRIDGE.title, text: 'The AI agent works alongside the software you already use.' },
+  { id: 'voice', title: SETUP_PATH_COPY.VOICE.title, text: 'Answer every call and WhatsApp message, day and night.' },
 ];
 
 export default function AboutPage() {
   return (
-    <div className="relative flex min-h-dvh flex-col overflow-x-clip bg-background">
+    <MarketingShell className="relative overflow-x-clip">
       <div
         className="pointer-events-none absolute inset-x-0 top-0 h-[600px] bg-[radial-gradient(ellipse_at_50%_0%,hsl(var(--primary)/0.12),transparent_65%)]"
         aria-hidden
       />
-      <Navigation variant="marketing" />
-      <main id="main" className="relative flex-1">
+      <div className="relative">
         <section>
           <div className="relative mx-auto max-w-3xl px-4 py-16 text-center sm:px-6 sm:py-24">
             <p className="text-2xs font-semibold uppercase tracking-[0.18em] text-primary">About {PRODUCT_NAME}</p>
@@ -75,7 +74,7 @@ export default function AboutPage() {
               <p className="mt-3 text-inverse-foreground/75">There’s no big switch-over. Pick the setup that fits your hotel today and change it later.</p>
               <ul className="mt-8 grid gap-4 sm:grid-cols-3">
                 {PATHS.map((p) => (
-                  <li key={p.title} className="border-l-2 border-highlight/70 pl-4">
+                  <li key={p.id} className="border-l-2 border-highlight/70 pl-4">
                     <p className="font-medium">{p.title}</p>
                     <p className="mt-1 text-sm leading-relaxed text-inverse-foreground/70">{p.text}</p>
                   </li>
@@ -84,7 +83,7 @@ export default function AboutPage() {
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <Button asChild size="lg" className="bg-inverse-foreground text-inverse hover:bg-inverse-foreground/90 focus-visible:ring-inverse-foreground focus-visible:ring-offset-inverse">
                   <Link href="/onboarding">
-                    Set up your hotel <ArrowRight className="h-4 w-4" aria-hidden />
+                    {LABELS.hotelSignup} <ArrowRight className="h-4 w-4" aria-hidden />
                   </Link>
                 </Button>
                 <Button
@@ -93,14 +92,13 @@ export default function AboutPage() {
                   variant="outline"
                   className="border-inverse-foreground/30 bg-transparent text-inverse-foreground hover:bg-inverse-foreground/10 focus-visible:ring-inverse-foreground focus-visible:ring-offset-inverse"
                 >
-                  <Link href="/contact">Talk to us</Link>
+                  <Link href="/contact">{LABELS.contact}</Link>
                 </Button>
               </div>
             </div>
           </div>
         </section>
-      </main>
-      <SiteFooter />
-    </div>
+      </div>
+    </MarketingShell>
   );
 }

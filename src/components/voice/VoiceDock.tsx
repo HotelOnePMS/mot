@@ -67,6 +67,9 @@ const NO_LAUNCHER = [
   /^\/login(\/|$)/,
   /^\/register(\/|$)/,
   /^\/onboarding(\/|$)/,
+  // Product pages are for hotels; travellers get the launcher on /properties.
+  /^\/$/,
+  /^\/(about|contact|demo|developers)(\/|$)/,
 ];
 /** Tools that take a property_id the browser can fill in from the hotel on screen (concierge). */
 const PROPERTY_TOOLS = new Set([

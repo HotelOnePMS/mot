@@ -18,7 +18,7 @@ The repo deploys as-is: `vercel.json` runs `scripts/vercel-build.mjs`, which
    | `NEXTAUTH_SECRET` | `openssl rand -base64 32` (sensitive) |
    | `AGENT_PLAN_SECRET` | `openssl rand -base64 32` (sensitive) |
    | `HOTELONE_VAULT_KEY` | `openssl rand -base64 32` (sensitive) — seals stored PMS logins; never rotate without re-entering them. A project that already has `STAYOS_VAULT_KEY` can keep it (still accepted); to switch names, give `HOTELONE_VAULT_KEY` the **exact same value** |
-   | `NEXT_PUBLIC_DEMO_MODE` | `true` for a public demo (one-click logins on `/login`) |
+   | `NEXT_PUBLIC_DEMO_MODE` | `true` for a public demo (one-click logins on `/demo`, the *Live demo* page) |
    | `SEED_DEMO` | `true` to create the demo hotels on the first build with a database |
    | `HOTEL_TIMEZONE` | e.g. `America/Los_Angeles` |
    | `ELEVENLABS_API_KEY` | voice front desk on ElevenLabs (preferred when set); then Console → Voice → *Check connection* creates the agents |
@@ -49,7 +49,7 @@ The repo deploys as-is: `vercel.json` runs `scripts/vercel-build.mjs`, which
 
 Answer a hotel's phone with the voice front desk. Production only: preview deployments sit behind Vercel Authentication, which would refuse ElevenLabs' webhooks (the console says so on previews).
 
-1. **Hotel in HotelOne** → the hotel's own property with its rooms and rates (that's what the voice quotes). In the public demo, demo hotels and the shared demo logins can't take a real line — sign up through *Get started*.
+1. **Hotel in HotelOne** → the hotel's own property with its rooms and rates (that's what the voice quotes). In the public demo, demo hotels and the shared demo logins can't take a real line — sign up through *Set up your hotel*.
 2. **Turn it on** → Console → *Voice* → *Phone* → **Turn on phone line** (owner or platform admin). HotelOne creates the hotel's phone agent in ElevenLabs, named `HotelOne — <hotel> phone · <ref>`; the Phone tab shows its agent ID. (Agents created before the rename keep their `StayOS — …` name until the next sync — opening the Phone tab renames the same agent in place; numbers stay assigned.)
 3. **A number for the assistant** → most countries: a local Twilio number. India: an Indian provider such as Exotel — ask ElevenLabs about India data residency first. A hotel phone system with SIP: a SIP trunk.
 4. **Point it at the agent** → a Twilio number: *Voice* → *Phone* → **Connect a number** (number, Account SID, Auth Token — Twilio confirms they own the number, then HotelOne imports it into ElevenLabs and assigns the hotel's agent; the credentials aren't stored). Platform admins can also pick any number already in the ElevenLabs account there. SIP trunk or Exotel: whoever runs the ElevenLabs account (never give hotel owners access to it, it holds every hotel's agents and calls) → ElevenLabs → *Agents* → *Phone numbers* → *Import number* → choose the agent whose ID the hotel's Phone tab shows.
