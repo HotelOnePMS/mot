@@ -24,8 +24,9 @@ import { changeRates } from '../services/rates';
 import { roomBoard, setOutOfOrder, setRoomStatus } from '../services/rooms';
 import { listTeam } from '../services/team';
 import type { PlanStep } from './plan';
-import { hasPrefs, type Intent, type RoomPrefs } from './nlu';
+import { hasPrefs, type GuestRef, type Intent, type RoomPrefs } from './nlu';
 import { resolveBooking, resolveRoom, resolveRoomTypes, resolveTeamMember, type ResolveCtx } from './resolve';
+import { guessActions, HOW_TO_TEXT } from './understand';
 
 export type ToolCtx = ResolveCtx;
 
@@ -102,7 +103,10 @@ export function statusLine(intent: Intent): string {
     case 'noShow':
       return 'Finding the reservation…';
     case 'help':
+    case 'howTo':
       return 'Here’s what I can do…';
+    case 'atDesk':
+      return 'Checking who’s due at the desk…';
     case 'unknown':
       return 'Thinking…';
     default:
@@ -166,6 +170,51 @@ function summarizeOccupancy(days: OccupancyDay[]) {
     adr: sold ? Math.round(revenue / sold) : 0,
     sold,
     capacity,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Guest pickers (no guest named yet)
+// ---------------------------------------------------------------------------
+
+const noGuestNamed = (ref: GuestRef) => !ref.code && !ref.name && !ref.roomNumber && !ref.pronoun;
+
+type PickOption = { label: string; hint?: string; command: string };
+
+function checkInOptions(arrivals: BookingSummary[]): PickOption[] {
+  return arrivals
+    .filter((b) => b.status === 'CONFIRMED' || b.status === 'PENDING')
+    .map((b) => ({ label: `Check in ${b.guest.name}`, hint: `${b.code}${b.room ? ` · room ${b.room.number}` : ''} · arriving`, command: `check in ${b.code}` }));
+}
+
+function checkOutOptions(departures: BookingSummary[], inHouse: BookingSummary[], today: ISODate): PickOption[] {
+  // Guests due out today first, then everyone else staying.
+  const due = departures.filter((b) => b.status === 'CHECKED_IN');
+  const rest = inHouse.filter((b) => !due.some((d) => d.id === b.id)).sort((a, b) => a.checkOut.localeCompare(b.checkOut));
+  return [...due, ...rest].map((b) => ({
+    label: `Check out ${b.guest.name}`,
+    hint: `${b.room ? `room ${b.room.number}` : b.code} · ${b.checkOut <= today ? 'due out today' : `due out ${formatDay(b.checkOut)}`}`,
+    command: `check out ${b.code}`,
+  }));
+}
+
+/** "Check out a guest" with nobody named: offer the people it could be instead of a dead end. */
+async function pickGuest(ctx: ToolCtx, purpose: 'checkIn' | 'checkOut'): Promise<AgentBlock> {
+  const s = await frontDeskSummary(ctx.actor, ctx.propertyId, ctx.today);
+  const options = purpose === 'checkIn' ? checkInOptions(s.arrivals) : checkOutOptions(s.departures, s.inHouse, ctx.today);
+  if (!options.length) {
+    return {
+      type: 'text',
+      text:
+        purpose === 'checkIn'
+          ? 'Nobody else is due to arrive today. If the guest has a booking, tell me their name or confirmation code; if not, ask me for availability to start a new one.'
+          : 'Nobody is checked in right now, so there’s no one to check out. If you’re looking for a booking, tell me the guest’s name or confirmation code.',
+    };
+  }
+  return {
+    type: 'clarify',
+    question: purpose === 'checkIn' ? 'Who’s checking in? Pick the guest, or tell me their name, room or confirmation code.' : 'Who’s checking out? Pick the guest, or tell me their name, room or confirmation code.',
+    options: options.slice(0, 6),
   };
 }
 
@@ -397,6 +446,40 @@ export async function runRead(ctx: ToolCtx, intent: Intent): Promise<ReadOutput>
         memory: bookingMemory(r.value),
       };
     }
+    case 'howTo':
+      return { blocks: [{ type: 'text', text: HOW_TO_TEXT[intent.topic] }] };
+    case 'atDesk': {
+      // A guest is at the desk: work out whether they're arriving or leaving, or ask.
+      if (!noGuestNamed(intent.ref)) {
+        const r = await resolveBooking(ctx, intent.ref, 'any');
+        if (!r.ok) return { blocks: [r.block] };
+        const b = toBookingSummary(r.value);
+        const options: PickOption[] =
+          b.status === 'CHECKED_IN'
+            ? [{ label: `Check out ${b.guest.name}`, hint: b.checkOut <= today ? 'due out today' : `early, due out ${formatDay(b.checkOut)}`, command: `check out ${b.code}` }]
+            : (b.status === 'CONFIRMED' || b.status === 'PENDING') && b.checkIn <= today
+              ? [{ label: `Check in ${b.guest.name}`, hint: b.room ? `room ${b.room.number}` : 'I’ll pick a ready room', command: `check in ${b.code}` }]
+              : [];
+        options.push({ label: 'Open reservation', hint: b.code, command: `show reservation ${b.code}` });
+        const where = b.status === 'CHECKED_IN' ? `is staying${b.room ? ` in room ${b.room.number}` : ''}` : b.checkIn <= today ? 'is due to arrive today' : `is booked from ${formatDay(b.checkIn)}`;
+        return { blocks: [{ type: 'clarify', question: `${b.guest.name} ${where}. What would you like to do?`, options }], memory: bookingMemory(r.value) };
+      }
+      const s = await frontDeskSummary(actor, propertyId, today);
+      const ins = checkInOptions(s.arrivals).slice(0, 3);
+      const outs = checkOutOptions(s.departures, s.inHouse, today).slice(0, 3);
+      if (!ins.length && !outs.length) {
+        return { blocks: [{ type: 'text', text: 'Nobody is due to arrive and nobody is checked in. If the guest wants a room, ask me for availability; if they have a booking, tell me their name or confirmation code.' }] };
+      }
+      return {
+        blocks: [
+          {
+            type: 'clarify',
+            question: 'Is the guest arriving or leaving? Pick them below, or tell me their name, room or confirmation code.',
+            options: [...outs, ...ins, { label: 'New guest without a booking', hint: 'rooms and prices for tonight', command: 'availability tonight' }],
+          },
+        ],
+      };
+    }
     case 'help':
       return {
         blocks: [
@@ -414,13 +497,18 @@ export async function runRead(ctx: ToolCtx, intent: Intent): Promise<ReadOutput>
           { type: 'suggestions', items: ['brief me', 'who’s arriving today?', 'which rooms need cleaning?', 'forecast the next 3 weekends'] },
         ],
       };
-    default:
+    default: {
+      const guesses = intent.kind === 'unknown' ? guessActions(intent.text) : [];
+      if (guesses.length) {
+        return { blocks: [{ type: 'clarify', question: 'I’m not sure I understood. Did you mean one of these?', options: guesses }] };
+      }
       return {
         blocks: [
           { type: 'text', text: 'I didn’t quite catch that. Here are some things I can do — or switch to Classic for the full screens. If it’s a question about the hotel, a manager can add the answer on the Skills page and I’ll know it next time.' },
           { type: 'suggestions', items: ['brief me', 'who’s arriving today?', 'which rooms need cleaning?', 'help'] },
         ],
       };
+    }
   }
 }
 
@@ -474,6 +562,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
   switch (intent.kind) {
     case 'checkIn': {
       if (!can(actor, 'booking.checkin')) return fail('Your role can’t check guests in.');
+      if (noGuestNamed(intent.ref)) return { steps: [], warnings: [], risk: 'low', blocks: [await pickGuest(ctx, 'checkIn')], abort: true };
       const r = await resolveBooking(ctx, intent.ref, 'checkIn');
       if (!r.ok) return { steps: [], warnings: [], risk: 'low', blocks: [r.block], abort: true };
       const b = r.value;
@@ -507,6 +596,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
     }
     case 'checkOut': {
       if (!can(actor, 'booking.checkout')) return fail('Your role can’t check guests out.');
+      if (noGuestNamed(intent.ref)) return { steps: [], warnings: [], risk: 'low', blocks: [await pickGuest(ctx, 'checkOut')], abort: true };
       const r = await resolveBooking(ctx, intent.ref, 'checkOut');
       if (!r.ok) return { steps: [], warnings: [], risk: 'low', blocks: [r.block], abort: true };
       const b = r.value;
