@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { staffGuard } from '@/server/guard';
+import { logError } from '@/server/log';
 
 // GET room inventory for a property
 export async function GET(
@@ -73,7 +74,7 @@ export async function GET(
 
     return NextResponse.json(inventoryWithAvailability);
   } catch (error) {
-    console.error('Error getting room inventory:', error);
+    logError('api/admin/properties/[propertyId]/inventory', 'Error getting room inventory:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
@@ -176,7 +177,7 @@ export async function POST(
       inventoryCount: updatedInventory 
     });
   } catch (error) {
-    console.error('Error updating room inventory:', error);
+    logError('api/admin/properties/[propertyId]/inventory', 'Error updating room inventory:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

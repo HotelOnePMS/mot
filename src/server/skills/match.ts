@@ -65,7 +65,7 @@ function stem(w: string): string {
   return w;
 }
 
-/** Normalised content words of a text. */
+/** Normalised content words of a text (letters and digits of any script; accents dropped). */
 export function matchTokens(text: string): string[] {
   const t = String(text ?? '')
     .toLowerCase()
@@ -77,7 +77,7 @@ export function matchTokens(text: string): string[] {
     .replace(/\bcheck[\s-]?out\b/g, 'checkout')
     .replace(/\bpolicies\b/g, 'policy');
   const out: string[] = [];
-  for (const raw of t.split(/[^a-z0-9]+/)) {
+  for (const raw of t.normalize('NFC').split(/[^\p{L}\p{N}]+/u)) {
     if (!raw || STOP.has(raw)) continue;
     const syn = SYNONYMS[raw];
     const w = syn ?? stem(raw);

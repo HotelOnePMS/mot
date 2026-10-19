@@ -21,6 +21,23 @@ export const propertySchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+/** A hotel's clock, currency, taxes and fees (Settings → Prices and time). */
+export const pricingSettingsSchema = z.object({
+  /** IANA name, or null to follow the platform default. */
+  timezone: z.string().trim().max(64).nullable(),
+  currency: z.string().trim().toUpperCase().length(3),
+  charges: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1, 'is required').max(60),
+        kind: z.enum(['PERCENT', 'PER_ROOM_NIGHT', 'PER_GUEST_NIGHT', 'PER_STAY']),
+        amount: z.coerce.number().positive('must be more than 0').max(100000),
+        isActive: z.boolean().default(true),
+      })
+    )
+    .max(12, 'at most 12 taxes and fees'),
+});
+
 
 /**
  * True for a public https:// address. The cloud bridge opens PMS sign-in pages

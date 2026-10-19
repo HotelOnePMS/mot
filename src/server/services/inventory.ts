@@ -9,8 +9,11 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import type { ISODate, StayQuote } from '@/lib/dto';
+import { roundMoney } from '@/lib/currency';
 import { atNoonUTC, eachNight, toISODate } from '../dates';
 import { badRequest, notFound } from '../errors';
+import { localeOf } from './hotels';
+import { priceStay } from './pricing';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -84,8 +87,11 @@ export async function nightlyRates(
   });
 }
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
-
+/**
+ * The price of a stay in the hotel's currency: nightly room prices, then the
+ * hotel's taxes and fees (services/pricing.ts). `total` is exactly what the
+ * booking stores and what Stripe charges.
+ */
 export async function quoteStay(
   db: Db,
   input: { roomTypeId: string; checkIn: ISODate; checkOut: ISODate; rooms?: number; guests?: number }
@@ -93,14 +99,34 @@ export async function quoteStay(
   const rooms = input.rooms ?? 1;
   const guests = input.guests ?? 1;
   if (input.checkIn >= input.checkOut) throw badRequest('Check-out must be after check-in.');
-  const roomType = await db.roomType.findUnique({ where: { id: input.roomTypeId }, select: { id: true, name: true } });
+  const roomType = await db.roomType.findUnique({
+    where: { id: input.roomTypeId },
+    select: {
+      id: true,
+      name: true,
+      property: {
+        select: {
+          timezone: true,
+          currency: true,
+          charges: { where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }], select: { name: true, kind: true, amount: true } },
+        },
+      },
+    },
+  });
   if (!roomType) throw notFound('Room type');
+  const { currency } = localeOf(roomType.property);
   const [nights, inventory] = await Promise.all([
     nightlyRates(db, input.roomTypeId, input.checkIn, input.checkOut),
     nightlyInventory(db, input.roomTypeId, input.checkIn, input.checkOut),
   ]);
+  const priced = priceStay({
+    nightly: nights.map((n) => n.price),
+    rooms,
+    guests,
+    currency,
+    charges: roomType.property.charges.map((c) => ({ name: c.name, kind: c.kind, amount: Number(c.amount) })),
+  });
   const perRoom = nights.reduce((s, n) => s + n.price, 0);
-  const subtotal = round2(perRoom * rooms);
   return {
     roomTypeId: roomType.id,
     roomTypeName: roomType.name,
@@ -109,10 +135,12 @@ export async function quoteStay(
     nights: nights.map(({ date, price }) => ({ date, price })),
     rooms,
     guests,
-    averageNightly: nights.length ? round2(perRoom / nights.length) : 0,
-    subtotal,
-    total: subtotal,
-    currency: 'USD',
+    averageNightly: nights.length ? roundMoney(perRoom / nights.length, currency) : 0,
+    subtotal: priced.subtotal,
+    charges: priced.charges,
+    chargesTotal: priced.chargesTotal,
+    total: priced.total,
+    currency,
     available: inventory.minAvailable,
   };
 }

@@ -23,6 +23,7 @@ export const GET = handleRoute(async (_req: NextRequest, { params }: Params) => 
         include: { photos: { orderBy: [{ isMain: 'desc' }, { createdAt: 'asc' }], select: { id: true, url: true, isMain: true } } },
       },
       voiceAgent: { select: { enabled: true, guestWidget: true } },
+      charges: { where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }], select: { name: true, kind: true, amount: true } },
     },
   });
   if (!p) throw notFound('Property');
@@ -43,6 +44,9 @@ export const GET = handleRoute(async (_req: NextRequest, { params }: Params) => 
       primaryColor: p.primaryColor,
       logoUrl: p.logoUrl,
       isDemo: p.isDemo,
+      currency: p.currency,
+      /** Taxes and fees added to every stay (shown before checkout). */
+      charges: p.charges.map((c) => ({ name: c.name, kind: c.kind, rate: Number(c.amount) })),
       voice: { available: voiceAvailable() && (p.voiceAgent?.enabled ?? true) && (p.voiceAgent?.guestWidget ?? true) },
       photos: p.photos,
       roomTypes: p.roomTypes.map((rt) => ({

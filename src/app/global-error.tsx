@@ -12,6 +12,8 @@ import { PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL } from '@/config/product';
 export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   React.useEffect(() => {
     console.error(error);
+    // Reported when error tracking is on (instrumentation-client.ts).
+    if (process.env.NEXT_PUBLIC_SENTRY_DSN) void import('@sentry/nextjs').then((Sentry) => Sentry.captureException(error));
   }, [error]);
 
   return (

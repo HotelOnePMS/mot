@@ -33,6 +33,7 @@ import { prisma } from '@/lib/prisma';
 import { DomainError, notFound } from '../errors';
 import { configuredPublicUrl, publicSiteUrl } from '../public-url';
 import { GUEST_AGENT_TOOLS, PHONE_TOOLS, STAFF_TOOLS, deriveVoiceKey, sameKey, type FunctionToolSpec } from './live';
+import { logError } from '@/server/log';
 
 const DEFAULT_BASE = 'https://api.elevenlabs.io';
 const BASE = (process.env.ELEVENLABS_API_BASE || DEFAULT_BASE).replace(/\/$/, '');
@@ -525,7 +526,7 @@ export async function phoneLineStatus(propertyId: string): Promise<{ agentId: st
     return { agentId, agentName: agent.name ?? phoneAgentConfig(await phoneAgentInput(propertyId), []).name, numbers };
   } catch (e) {
     if (e instanceof DomainError) throw e;
-    console.error('ElevenLabs phone line sync failed:', e instanceof ElevenLabsError ? `${e.status} ${e.detail}` : e);
+    logError('voice/elevenlabs', 'ElevenLabs phone line sync failed:', e instanceof ElevenLabsError ? `${e.status} ${e.detail}` : e);
     throw new DomainError(502, 'VOICE_UPSTREAM', describeElevenLabsError(e));
   }
 }
@@ -554,7 +555,7 @@ async function withPhoneErrors<T>(what: string, run: () => Promise<T>): Promise<
     return await run();
   } catch (e) {
     if (e instanceof DomainError) throw e;
-    console.error(`ElevenLabs ${what} failed:`, e instanceof ElevenLabsError ? `${e.status} ${e.detail}` : e);
+    logError('voice/elevenlabs', `ElevenLabs ${what} failed:`, e instanceof ElevenLabsError ? `${e.status} ${e.detail}` : e);
     throw new DomainError(502, 'VOICE_UPSTREAM', describeElevenLabsError(e));
   }
 }
@@ -731,7 +732,7 @@ export async function startElevenLabsConversation(input: {
     return { ...signed, prompt: singleModelPrompt(input.prompts), firstMessage: input.firstMessage, tools: tools.map((t) => t.name) };
   } catch (e) {
     if (e instanceof DomainError) throw e;
-    console.error('ElevenLabs conversation start failed:', e instanceof ElevenLabsError ? `${e.status} ${e.detail}` : e);
+    logError('voice/elevenlabs', 'ElevenLabs conversation start failed:', e instanceof ElevenLabsError ? `${e.status} ${e.detail}` : e);
     throw new DomainError(502, 'VOICE_UPSTREAM', describeElevenLabsError(e));
   }
 }

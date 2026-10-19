@@ -30,6 +30,7 @@ import { availabilityOptions } from '../concierge/shared';
 import { useSkill as runSkill } from '../skills';
 import { CLIENT_ONLY_TOOLS, type VoiceScope } from './live';
 import { runGuestTool } from './guestTools';
+import { isISODate } from '../dates';
 
 export interface WebVoiceSession {
   /** VoiceSession id (rate limits per conversation). */
@@ -39,7 +40,7 @@ export interface WebVoiceSession {
   pid: string | null;
 }
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be YYYY-MM-DD');
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be YYYY-MM-DD').refine(isISODate, 'must be a real date');
 const optionalId = z.string().trim().max(64).nullish();
 const optionalText = (max: number) => z.string().trim().max(max).nullish();
 const count = (max: number) => z.coerce.number().int().min(1).max(max);
@@ -142,7 +143,9 @@ export async function runWebTool(session: WebVoiceSession, name: string, raw: un
           available: h.available,
           ...(h.cheapestNightly !== undefined ? { cheapest_per_night: h.cheapestNightly, stay_total: h.stayTotal, cheapest_room_type_id: h.cheapestRoomTypeId } : {}),
         })),
-        ...(r.hotels.length === 0 ? { say: 'No hotels on HotelOne match that place yet.' } : {}),
+        ...(r.note ? { note: r.note } : {}),
+        ...(r.places ? { places_with_hotels: r.places } : {}),
+        ...(r.hotels.length === 0 ? { say: 'Say HotelOne has no hotels there yet, and offer one of places_with_hotels if it is nearby.' } : {}),
       };
     }
 
@@ -208,6 +211,10 @@ export async function runWebTool(session: WebVoiceSession, name: string, raw: un
       return {
         opened: true,
         url: pathOf(link.url),
+        // What confirm_booking takes, so the model names exactly what it books.
+        property_id: s.hotel.id,
+        room_type_id: s.roomType.id,
+        items: s.items.length > 1 ? s.items.map((i) => ({ room_type_id: i.roomType.id, rooms: i.rooms })) : null,
         hotel: s.hotel.name,
         room,
         check_in: s.checkIn,

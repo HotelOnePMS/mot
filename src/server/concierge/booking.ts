@@ -10,8 +10,9 @@ import { DomainError, badRequest } from '../errors';
 import { isEmailConfigured, sendBookingConfirmation } from '../email';
 import { confirmReservationPayAtProperty, createReservation } from '../services/bookings';
 import { policyFor } from '../services/guest';
-import { CURRENCY } from './facts';
+import { localeOf } from '../services/hotels';
 import { findListedHotel } from './hotel';
+import { consumeRateLimit } from './rateLimit';
 import { conciergeSchemas, type BookingLinkInput, type CreateBookingInput, type FindBookingInput, type RequestBookingInput } from './schemas';
 import { bookableReservation, lookupBooking, reservationRooms, stayLines, submitBookingRequest, type BookableReservation, type BookingRequestSaved } from './shared';
 import { bookingPageUrl, checkoutPath, siteUrl } from './urls';
@@ -33,11 +34,12 @@ export interface BookingLinkResult {
     guests: number;
     /** All rooms, across every room type. */
     rooms: number;
-    /** Per room, USD (averaged across room types when there are several). */
+    /** Room price per room per night, in `currency` (averaged across room types when there are several). */
     averageNightly: number;
-    /** Whole stay, all rooms, USD. */
+    /** Whole stay, all rooms, taxes and fees included, in `currency`. */
     total: number;
-    currency: typeof CURRENCY;
+    /** The hotel's ISO 4217 currency. */
+    currency: string;
     /** Rooms of this type still free for every night (the scarcest type when there are several). */
     roomsLeft: number;
     /** Every room type in the booking, in order (`roomType` is the first). */
@@ -52,7 +54,7 @@ export interface ReservationItem {
   rooms: number;
   /** Guests this room type is for (the party shared across the room types). */
   guests: number;
-  /** This room type's share of the total, USD. */
+  /** This room type's share of the total, taxes and fees included, in the booking's currency. */
   total: number;
   roomsLeft: number;
 }
@@ -95,9 +97,11 @@ export async function bookingLink(input: BookingLinkInput): Promise<BookingLinkR
       nights: stay.nights,
       guests: a.guests,
       rooms: stay.rooms,
-      averageNightly: stay.lines.length === 1 ? first.quote.averageNightly : Math.round((stay.total / (stay.nights * stay.rooms)) * 100) / 100,
+      // Room charges only (taxes and fees aside), per room per night.
+      averageNightly:
+        stay.lines.length === 1 ? first.quote.averageNightly : Math.round((stay.lines.reduce((s, l) => s + l.quote.subtotal, 0) / (stay.nights * stay.rooms)) * 100) / 100,
       total: stay.total,
-      currency: CURRENCY,
+      currency: stay.currency,
       roomsLeft: Math.min(...stay.lines.map((l) => l.quote.available)),
       items: reservationItems(stay),
     },
@@ -124,30 +128,59 @@ async function reservationOrThrow(
 /** What `requestBooking` returns: the phone line's `request_booking` result. */
 export type RequestBookingResult = BookingRequestSaved;
 
-/** Requests from assistants per hotel per hour, so one integration can't flood a team's inbox. */
-const AGENT_REQUESTS_PER_HOTEL_HOUR = () => Number(process.env.CONCIERGE_MAX_REQUESTS_PER_HOTEL_HOUR || 20);
+/** A positive whole number from the environment, else the default. */
+function envInt(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+const HOUR_MS = 3600_000;
+const DAY_MS = 24 * HOUR_MS;
+/** Requests per hotel per hour from each API key's hotel (and from the voice concierge), so one integration can't flood a team's inbox. */
+const AGENT_REQUESTS_PER_HOTEL_HOUR = () => envInt('CONCIERGE_MAX_REQUESTS_PER_HOTEL_HOUR', 20);
+/** Requests per hotel per hour from all callers without an API key together — lower, and kept apart from keyed partners'. */
+const PUBLIC_REQUESTS_PER_HOTEL_HOUR = () => envInt('CONCIERGE_MAX_PUBLIC_REQUESTS_PER_HOTEL_HOUR', 10);
+
+/** Who sent an AGENT request: the API key (its id and the hotel it belongs to, null for all-hotel keys), or null for public callers. */
+export interface RequestCaller {
+  keyId: string;
+  keyPropertyId: string | null;
+}
 
 /**
  * Sends a booking request to the hotel team — the phone line's
  * `request_booking`: the stay is validated and quoted, and the team confirms
  * with the guest and sends them the pre-filled checkout link; it isn't booked
  * until then. Needs an email or phone. `source` (AGENT, default, or VOICE) is
- * stored on the request. Requests through here are capped per hotel per hour
- * (CONCIERGE_MAX_REQUESTS_PER_HOTEL_HOUR, default 20; 429). Rule failures
- * throw DomainError 400 with the phone tool's message.
+ * stored on the request. Requests are capped per hotel per hour in separate
+ * allowances, so one group of callers can't shut the others out (429):
+ * - AGENT without a key (`caller` null): all public callers together,
+ *   CONCIERGE_MAX_PUBLIC_REQUESTS_PER_HOTEL_HOUR (default 10);
+ * - AGENT with a key: per key-owning hotel (all-hotel keys: per key),
+ *   CONCIERGE_MAX_REQUESTS_PER_HOTEL_HOUR (default 20);
+ * - VOICE: the voice concierge's own allowance (same default).
+ * Rule failures throw DomainError 400 with the phone tool's message.
  */
-export async function requestBooking(input: RequestBookingInput): Promise<RequestBookingResult> {
+export async function requestBooking(input: RequestBookingInput, caller: RequestCaller | null = null): Promise<RequestBookingResult> {
   const a = conciergeSchemas.requestBooking.parse(input);
   const hotel = await findListedHotel(a.propertyId);
-  const hourAgo = new Date(Date.now() - 3600_000);
-  // Each source has its own allowance, so assistants can't crowd out the hotel's own voice line (or the other way round).
-  const recent = await prisma.guestRequest.count({ where: { propertyId: hotel.id, source: a.source, createdAt: { gte: hourAgo } } });
-  if (recent >= AGENT_REQUESTS_PER_HOTEL_HOUR()) throw new DomainError(429, 'RATE_LIMITED', `${hotel.name} has a lot of requests right now — try again later or send the guest a booking link instead.`);
+  const hourAgo = new Date(Date.now() - HOUR_MS);
+  const busy = `${hotel.name} has a lot of requests right now — try again later or send the guest a booking link instead.`;
+  if (a.source !== 'AGENT') {
+    // The voice concierge's requests are counted from the inbox, apart from assistants'.
+    const recent = await prisma.guestRequest.count({ where: { propertyId: hotel.id, source: a.source, createdAt: { gte: hourAgo } } });
+    if (recent >= AGENT_REQUESTS_PER_HOTEL_HOUR()) throw new DomainError(429, 'RATE_LIMITED', busy);
+  }
   // One guest doesn't need more than a couple of open requests an hour; this stops one caller filling the inbox.
   const contact = [a.email ? { email: { equals: a.email.trim(), mode: 'insensitive' as const } } : null, a.phone ? { phone: a.phone.trim() } : null].filter((c) => c !== null);
   if (contact.length) {
     const same = await prisma.guestRequest.count({ where: { propertyId: hotel.id, createdAt: { gte: hourAgo }, OR: contact } });
     if (same >= 2) throw new DomainError(429, 'RATE_LIMITED', `${hotel.name} already has a request from this guest — the team will be in touch. Send a booking link if they want to book straight away.`);
+  }
+  if (a.source === 'AGENT') {
+    // Public callers share one (smaller) allowance per hotel; each key-owning hotel has its own, so anonymous traffic can't starve partners.
+    if (caller) await consumeRateLimit(`concierge:requests:${hotel.id}:keys:${caller.keyPropertyId ?? `key-${caller.keyId}`}`, AGENT_REQUESTS_PER_HOTEL_HOUR(), HOUR_MS, busy);
+    else await consumeRateLimit(`concierge:requests:${hotel.id}:public`, PUBLIC_REQUESTS_PER_HOTEL_HOUR(), HOUR_MS, busy);
   }
   const r = await submitBookingRequest(hotel.id, { ...a, email: a.email ?? null, phone: a.phone ?? null, notes: a.notes ?? null });
   if ('error' in r) throw badRequest(r.error);
@@ -164,9 +197,10 @@ export interface CreateBookingResult {
   /** Confirmation code the guest quotes (also used by findBooking). */
   code: string;
   status: 'CONFIRMED';
-  /** Whole stay, all rooms, USD — priced by the server from the rate calendar. */
+  /** Whole stay, all rooms, taxes and fees included — priced by the server from the rate calendar. */
   total: number;
-  currency: typeof CURRENCY;
+  /** The hotel's ISO 4217 currency. */
+  currency: string;
   paymentStatus: 'PAY_AT_PROPERTY';
   hotel: { id: string; name: string };
   /** The first room type (see `items` for every one). */
@@ -181,14 +215,59 @@ export interface CreateBookingResult {
   items: (ReservationItem & { bookingId: string })[];
   /** How the guest changes or cancels (they have no account here; through the hotel). */
   manage: string;
-  /** A confirmation email was handed to the mailer (false when email isn't configured or the hourly cap was hit). */
+  /** A confirmation email was handed to the mailer (false when email isn't configured or a daily cap was hit). */
   confirmationEmailSent: boolean;
 }
 
 /** Email domain of per-booking guest records: the reserved .invalid TLD is never deliverable and never an account anyone signs in to. */
 export const INTEGRATION_GUEST_DOMAIN = 'guests.hotelone.invalid';
-/** Confirmation emails one address may receive from direct bookings per day, so a key can't be used to spam someone. */
+/** Confirmation emails one address (normalised: see normalizeEmailForCap) may receive from direct bookings per day, so a key can't be used to spam someone. */
 const CONFIRMATIONS_PER_RECIPIENT_DAY = 3;
+/** Confirmation emails per API key per day (AGENT_CONFIRMATIONS_PER_KEY_DAY overrides). */
+const CONFIRMATIONS_PER_KEY_DAY = () => envInt('AGENT_CONFIRMATIONS_PER_KEY_DAY', 25);
+/** Confirmation emails per hotel per day from API-key bookings (AGENT_CONFIRMATIONS_PER_HOTEL_DAY overrides). */
+const CONFIRMATIONS_PER_HOTEL_DAY = () => envInt('AGENT_CONFIRMATIONS_PER_HOTEL_DAY', 50);
+
+/**
+ * The mailbox an address delivers to, for counting confirmations: lower-cased,
+ * without a "+tag", and for Gmail without dots (googlemail.com = gmail.com),
+ * so "Jo.Smith+1@gmail.com" and "josmith@googlemail.com" count as one person.
+ * Only for caps — mail still goes to the address as given.
+ */
+export function normalizeEmailForCap(email: string): string {
+  const e = email.trim().toLowerCase();
+  const at = e.lastIndexOf('@');
+  if (at < 1) return e;
+  let local = e.slice(0, at);
+  let domain = e.slice(at + 1).replace(/\.+$/, '');
+  local = local.split('+')[0] || local;
+  if (domain === 'googlemail.com') domain = 'gmail.com';
+  if (domain === 'gmail.com') local = local.replace(/\./g, '') || local;
+  return `${local}@${domain}`;
+}
+
+/**
+ * Whether a direct booking's confirmation email may go out: counts one send
+ * against the hotel's and the key's daily caps, then the recipient's
+ * (normalised), and says no as soon as one is used up — the hotel and key
+ * first, so a capped integration doesn't eat into someone's own allowance.
+ * Never throws: the booking is already made, so a failed check only means
+ * no email.
+ */
+async function confirmationAllowed(to: string, propertyId: string, keyId: string | null): Promise<boolean> {
+  const caps: [string, number][] = [
+    [`concierge:confirm-email:hotel:${propertyId}`, CONFIRMATIONS_PER_HOTEL_DAY()],
+    ...(keyId ? [[`concierge:confirm-email:key:${keyId}`, CONFIRMATIONS_PER_KEY_DAY()] as [string, number]] : []),
+    [`concierge:confirm-email:to:${normalizeEmailForCap(to)}`, CONFIRMATIONS_PER_RECIPIENT_DAY],
+  ];
+  try {
+    for (const [bucket, max] of caps) await consumeRateLimit(bucket, max, DAY_MS);
+    return true;
+  } catch (e) {
+    if (!(e instanceof DomainError && e.status === 429)) console.error('[concierge] confirmation email cap check failed', e);
+    return false;
+  }
+}
 
 /**
  * The guest record a direct booking belongs to: made for this booking alone
@@ -221,39 +300,46 @@ async function integrationGuest(guest: { name: string; email: string; phone?: st
  * booking service (serializable transaction, live availability, server-side
  * price = the quote) and is confirmed instantly like pay-at-property bookings
  * on the site; the guest gets the usual confirmation email when email is
- * configured (capped per recipient). The booking belongs to a guest record
+ * configured, within daily caps per hotel, per key (`opts.keyId`) and per
+ * recipient (normalised address). The booking belongs to a guest record
  * made for it alone (`integrationGuest`), never an existing account.
  * DomainError 400/404/409 (sold out).
  */
-export async function createBooking(input: CreateBookingInput): Promise<CreateBookingResult> {
+export async function createBooking(input: CreateBookingInput, opts: { keyId?: string | null } = {}): Promise<CreateBookingResult> {
   const a = conciergeSchemas.createBooking.parse(input);
   const hotel = await findListedHotel(a.propertyId);
   // Check the stay before making the guest record; the booking service re-checks inside its transaction.
   const stay = await reservationOrThrow(hotel.id, a);
   const guest = await integrationGuest(a.guest);
-  const bookings = await createReservation({
-    userId: guest.id,
-    propertyId: hotel.id,
-    lines: stay.lines.map((l) => ({ roomTypeId: l.roomType.id, rooms: l.rooms })),
-    checkIn: a.checkIn,
-    checkOut: a.checkOut,
-    guests: a.guests,
-    notes: a.notes,
-    paymentStatus: 'PAY_AT_PROPERTY',
-    createdVia: `Booked by ${a.source} — pay at property`,
-  });
+  let bookings: Awaited<ReturnType<typeof createReservation>>;
+  try {
+    bookings = await createReservation({
+      userId: guest.id,
+      propertyId: hotel.id,
+      lines: stay.lines.map((l) => ({ roomTypeId: l.roomType.id, rooms: l.rooms })),
+      checkIn: a.checkIn,
+      checkOut: a.checkOut,
+      guests: a.guests,
+      notes: a.notes,
+      paymentStatus: 'PAY_AT_PROPERTY',
+      createdVia: `Booked by ${a.source} — pay at property`,
+      source: 'AGENT_API',
+    });
+  } catch (e) {
+    // Sold out or busy: the guest record was made for this booking alone, so don't leave it behind.
+    await prisma.user.delete({ where: { id: guest.id } }).catch(() => undefined);
+    throw e;
+  }
   const [lead] = bookings;
   const ids = bookings.map((b) => b.id);
   const guestEmail = a.guest.email.trim().toLowerCase();
   await prisma.booking.updateMany({ where: { id: { in: ids } }, data: { guestEmail } });
   await confirmReservationPayAtProperty(ids);
 
-  const total = Math.round(bookings.reduce((s, b) => s + Number(b.totalPrice), 0) * 100) / 100;
+  const total = bookings.reduce((s, b) => s + Math.round(Number(b.totalPrice) * 100), 0) / 100;
   const rooms = bookings.reduce((s, b) => s + b.rooms, 0);
-  // One reservation is one confirmation email, however many room types it holds.
-  const sent = await prisma.booking.findMany({ where: { guestEmail, createdAt: { gte: new Date(Date.now() - 24 * 3600_000) } }, select: { id: true, groupCode: true } });
-  const sentToday = new Set(sent.map((b) => b.groupCode ?? b.id)).size;
-  const sendEmail = isEmailConfigured() && sentToday <= CONFIRMATIONS_PER_RECIPIENT_DAY;
+  // One reservation is one confirmation email (one send against the caps), however many room types it holds.
+  const sendEmail = isEmailConfigured() && (await confirmationAllowed(guestEmail, hotel.id, opts.keyId ?? null));
   if (sendEmail) {
     await sendBookingConfirmation({
       to: guestEmail,
@@ -266,6 +352,7 @@ export async function createBooking(input: CreateBookingInput): Promise<CreateBo
       guests: a.guests,
       rooms,
       totalPrice: total.toFixed(2),
+      currency: lead.currency,
       bookingId: lead.code ?? lead.id,
       paymentStatus: 'PAY_AT_PROPERTY',
     });
@@ -276,7 +363,7 @@ export async function createBooking(input: CreateBookingInput): Promise<CreateBo
     code: lead.code ?? lead.id,
     status: 'CONFIRMED',
     total,
-    currency: CURRENCY,
+    currency: lead.currency,
     paymentStatus: 'PAY_AT_PROPERTY',
     hotel: { id: hotel.id, name: lead.property.name },
     roomType: { id: lead.roomTypeId, name: lead.roomType.name },
@@ -299,7 +386,7 @@ export async function createBooking(input: CreateBookingInput): Promise<CreateBo
 }
 
 /** How the guest of a direct booking changes or cancels: they have no account here, so through the hotel. */
-function integrationManageNote(phone: string | null | undefined): string {
+export function integrationManageNote(phone: string | null | undefined): string {
   return `To change or cancel, the guest contacts the hotel${phone ? ` at ${phone}` : ''} with the confirmation code (free until 3 PM hotel time the day before arrival), or asks their assistant to look the booking up with the code and their last name.`;
 }
 
@@ -326,8 +413,8 @@ export type FindBookingResult =
       /** "3:00 PM on Thu, Oct 22" while free changes are still possible, else null. */
       freeChangesUntil: string | null;
       manage: string;
-      /** The guest's booking page (they sign in to change or cancel). */
-      bookingUrl: string;
+      /** The guest's booking page (they sign in to change or cancel); null for direct bookings by API key. */
+      bookingUrl: string | null;
     };
 
 /**
@@ -342,7 +429,7 @@ export async function findBooking(input: FindBookingInput): Promise<FindBookingR
   if (!b) return { found: false, message: 'No booking matches that confirmation code and last name.' };
   const checkIn = toISODate(b.checkIn);
   const checkOut = toISODate(b.checkOut);
-  const policy = policyFor(checkIn);
+  const policy = policyFor(checkIn, localeOf(b.property).timezone);
   const items = await reservationRooms(b);
   return {
     found: true,
@@ -360,6 +447,7 @@ export async function findBooking(input: FindBookingInput): Promise<FindBookingR
     manage: b.guestEmail
       ? integrationManageNote(b.property.phone)
       : 'The guest can change dates or cancel by signing in at the booking site with the email they booked with.',
-    bookingUrl: bookingPageUrl(b.id),
+    // Direct bookings have no account to sign in to, so no booking page for them.
+    bookingUrl: b.guestEmail ? null : bookingPageUrl(b.id),
   };
 }

@@ -20,7 +20,8 @@
 import OpenAI from 'openai';
 import type { PmsConnection } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { hotelToday, type ISODate } from '../dates';
+import { type ISODate } from '../dates';
+import { todayAt } from '../services/hotels';
 import { CONTRACT_BY_NAME, adaptArgs, isForbiddenTool, isReadOnlyTool, matchContract, operationForTool, type ContractMapping, type ContractOperationName } from './contract';
 import { clientFor, isMcpConnection } from './connection';
 import { McpError } from './errors';
@@ -28,6 +29,7 @@ import { eventFacts, formatRange } from './events';
 import { needsReservation, planTask, type PlannedOperation, type ReservationRef } from './intent';
 import type { JsonSchema, McpCallResult, McpClient, McpTool } from './mcp-client';
 import { cacheTools, disabledToolNames, listCachedTools, recordToolUse, sanitiseText } from './tools';
+import { logError } from '@/server/log';
 
 export const MAX_TOOL_CALLS = 8;
 export const TASK_TIMEOUT_MS = 60_000;
@@ -429,7 +431,7 @@ async function runLlm(ctx: RunContext): Promise<McpTaskResult> {
         { timeout: Math.min(30_000, remaining) },
       );
     } catch (e) {
-      console.error('[pms-mcp] planner request failed:', (e as Error).message);
+      logError('pms-mcp', 'planner request failed:', (e as Error).message);
       return { status: 'FAILED', summary: 'The PMS planner couldn’t reach the AI model. Try again in a moment.', calls: ctx.calls, engine: 'llm', error: 'Model request failed' };
     }
     previous = res.id;
@@ -484,7 +486,7 @@ export async function executeMcpTask(task: McpTaskInput, opts: ExecuteOptions = 
   }
   if (connection.status === 'PAUSED') return { status: 'NEEDS_HELP', summary: `The ${connection.system} connection is paused. Resume it on the Your PMS page.`, calls, engine: 'none' };
   const propertyName = opts.propertyName ?? (await prisma.property.findUnique({ where: { id: task.propertyId }, select: { name: true } }))?.name ?? 'the hotel';
-  const today = opts.today ?? hotelToday();
+  const today = opts.today ?? (await todayAt(task.propertyId));
   const change = isChangeKind(task.kind);
 
   let client: McpClient;
@@ -547,7 +549,7 @@ export async function executeMcpTask(task: McpTaskInput, opts: ExecuteOptions = 
     return result;
   } catch (e) {
     const msg = e instanceof McpError ? e.message : 'Something went wrong talking to the PMS.';
-    if (!(e instanceof McpError)) console.error('[pms-mcp] task failed:', e);
+    if (!(e instanceof McpError)) logError('pms-mcp', 'task failed:', e);
     return {
       status: e instanceof McpError && e.code === 'PROTOCOL' && /look-up|isn’t a tool/.test(e.message) ? 'NEEDS_HELP' : 'FAILED',
       summary: e instanceof McpError && e.code === 'AUTH' ? `${connection.system} refused HotelOne’s token. A manager can reconnect it on the Your PMS page.` : msg,

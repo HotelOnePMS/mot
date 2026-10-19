@@ -17,6 +17,13 @@ const nextConfig: NextConfig = {
       { source: '/housekeeping', destination: '/admin/housekeeping', permanent: false },
       { source: '/agent', destination: '/admin/agent', permanent: false },
       { source: '/owner', destination: '/admin/dashboard', permanent: false },
+      // Addresses people guess.
+      { source: '/pricing', destination: '/#pricing', permanent: false },
+      { source: '/features', destination: '/#features', permanent: false },
+      { source: '/get-started', destination: '/onboarding', permanent: false },
+      { source: '/signin', destination: '/login', permanent: false },
+      { source: '/sign-in', destination: '/login', permanent: false },
+      { source: '/trips', destination: '/dashboard', permanent: false },
     ];
   },
   async headers() {

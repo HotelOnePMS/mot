@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import useSWR from 'swr';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { toast } from 'sonner';
@@ -26,10 +26,12 @@ import {
 } from 'lucide-react';
 import type { BookingStatus, StayQuote } from '@/lib/dto';
 import { api, fetcher } from '@/lib/fetcher';
-import { addDays, fmtDay, localToday, nightsBetween } from '@/lib/format';
+import { addDays, fmtDay, localToday, nightsBetween, telHref } from '@/lib/format';
+import { loginUrl } from '@/lib/routes';
 import { BOOKING_STATUS, paymentLabel } from '@/lib/status';
 import { cn } from '@/lib/utils';
 import { PRODUCT_NAME } from '@/config/product';
+import { LABELS } from '@/config/copy';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -39,7 +41,7 @@ import { SmartImage } from '@/components/ui/smart-image';
 import { BookingStatusBadge } from '@/components/hotel/badges';
 import { brandScope } from '@/components/guest/brand';
 import { DateField } from '@/components/guest/StaySearch';
-import { useVoicePage } from '@/components/voice/page-context';
+import { useVoicePage, voiceText } from '@/components/voice/page-context';
 import { GuestShell } from '@/app/properties/_components/guest-shell';
 import { plural, price } from '@/app/properties/_components/format';
 
@@ -54,6 +56,9 @@ interface GuestBooking {
   guests: number;
   rooms: number;
   totalPrice: number;
+  currency: string;
+  subtotalPrice?: number;
+  charges?: { name: string; kind: string; rate: number; amount: number }[];
   notes: string | null;
   roomTypeId: string;
   property: { id: string; name: string; address: string; city: string; state: string; zipCode: string; phone: string; email: string | null; primaryColor: string | null; photos: { url: string }[] };
@@ -188,7 +193,7 @@ function ChangeDatesDialog({
         <div className="min-h-[3.25rem] rounded-xl bg-muted px-4 py-3 text-sm" aria-live="polite">
           {!changed ? (
             <p className="text-muted-foreground">
-              Now: {fmtDay(booking.checkIn, 'weekday')} – {fmtDay(booking.checkOut, 'weekday')} · {price(booking.totalPrice)}
+              Now: {fmtDay(booking.checkIn, 'weekday')} – {fmtDay(booking.checkOut, 'weekday')} · {price(booking.totalPrice, booking.currency)}
             </p>
           ) : !valid ? (
             <p className="text-muted-foreground">Check-out must be after check-in.</p>
@@ -197,7 +202,7 @@ function ChangeDatesDialog({
           ) : quote ? (
             <div className="flex items-center justify-between gap-3">
               <span>
-                {plural(nights, 'night')} · new total <span className="font-semibold tabular">{price(quote.total)}</span>
+                {plural(nights, 'night')} · new total <span className="font-semibold tabular">{price(quote.total, booking.currency)}</span>
               </span>
               <span
                 className={cn(
@@ -205,7 +210,7 @@ function ChangeDatesDialog({
                   diff > 0 ? 'bg-warning-soft text-warning-soft-foreground' : diff < 0 ? 'bg-success-soft text-success-soft-foreground' : 'bg-surface text-muted-foreground'
                 )}
               >
-                {diff === 0 ? 'Same price' : `${diff > 0 ? '+' : '−'}${price(Math.abs(diff))}`}
+                {diff === 0 ? 'Same price' : `${diff > 0 ? '+' : '−'}${price(Math.abs(diff), booking.currency)}`}
                 {diff !== 0 && <span className="sr-only">{diff > 0 ? ' more than now' : ' less than now'}</span>}
               </span>
             </div>
@@ -277,7 +282,7 @@ function CancelDialog({ b, open, onOpenChange, onDone }: { b: GuestBooking; open
           <p className="font-semibold">This can’t be undone.</p>
           <p>
             Your room is released to other guests. Cancelling is free —{' '}
-            {b.paymentStatus === 'PAID' ? 'you paid online, so the hotel will arrange your refund.' : 'nothing has been charged.'}
+            {b.paymentStatus === 'PAID' || b.paymentStatus === 'DEPOSIT_PAID' ? 'you paid online, so the hotel will arrange your refund according to its policy.' : 'nothing has been charged.'}
           </p>
         </Callout>
         <Field label="Reason" optional htmlFor="cancel-reason" hint="Helps the hotel — only they can see it.">
@@ -320,11 +325,16 @@ function LoadingState() {
 
 function BookingPage() {
   const { bookingId } = useParams<{ bookingId: string }>();
+  const pathname = usePathname();
   const params = useSearchParams();
   const router = useRouter();
   const reduce = useReducedMotion();
   const { status } = useSession();
-  const { data: b, error, mutate } = useSWR<GuestBooking>(status === 'authenticated' ? `/api/bookings/${bookingId}` : null, fetcher);
+  // Back from Stripe, the payment can take a few seconds to be confirmed by Stripe's webhook: keep checking until it is.
+  const returnedFromPayment = params.get('payment') === 'success';
+  const { data: b, error, mutate } = useSWR<GuestBooking>(status === 'authenticated' ? `/api/bookings/${bookingId}` : null, fetcher, {
+    refreshInterval: (latest) => (returnedFromPayment && latest?.paymentStatus === 'AWAITING_PAYMENT' ? 2000 : 0),
+  });
   const { data: config } = useSWR<{ emailEnabled: boolean }>('/api/config', fetcher);
   const [changeOpen, setChangeOpen] = React.useState(false);
   const [cancelOpen, setCancelOpen] = React.useState(params.get('action') === 'cancel');
@@ -332,20 +342,23 @@ function BookingPage() {
   const isNew = params.get('new') === '1';
   const payment = params.get('payment');
 
+  // Signed out: sign in and come back here, query included (?action=cancel from the email still opens the dialog).
   React.useEffect(() => {
-    if (status === 'unauthenticated') router.replace(`/login?callbackUrl=${encodeURIComponent(`/bookings/${bookingId}`)}`);
-  }, [status, router, bookingId]);
+    if (status !== 'unauthenticated') return;
+    const search = params.toString();
+    router.replace(loginUrl(search ? `${pathname}?${search}` : pathname));
+  }, [status, router, pathname, params]);
 
-  // The voice front desk (the site's voice dock) knows which booking is on screen.
+  // The voice front desk (the site's voice dock) knows which booking is on screen (hotel text as data: voiceText).
   useVoicePage({
     kind: 'booking',
     propertyId: b?.property.id ?? null,
     propertyName: b?.property.name ?? null,
     brand: b?.property.primaryColor ?? null,
     summary: b
-      ? `their booking page at ${b.property.name}: confirmation ${b.reservation?.code ?? b.code}, ${BOOKING_STATUS[b.status]?.label.toLowerCase() ?? b.status.toLowerCase()}, ${b.roomType.name}${
-          b.reservation ? ` (one of ${b.reservation.lines.length} room types in this booking, ${price(b.reservation.totalPrice)} in all)` : ''
-        }, ${fmtDay(b.checkIn, 'weekday')} to ${fmtDay(b.checkOut, 'weekday')}, ${plural(b.guests, 'guest')}, ${price(b.totalPrice)} (${paymentLabel(b.paymentStatus).label.toLowerCase()})${
+      ? `their booking page at ${voiceText(b.property.name, 80)}: confirmation ${b.reservation?.code ?? b.code}, ${BOOKING_STATUS[b.status]?.label.toLowerCase() ?? b.status.toLowerCase()}, ${voiceText(b.roomType.name, 80)}${
+          b.reservation ? ` (one of ${b.reservation.lines.length} room types in this booking, ${price(b.reservation.totalPrice, b.currency)} in all)` : ''
+        }, ${fmtDay(b.checkIn, 'weekday')} to ${fmtDay(b.checkOut, 'weekday')}, ${plural(b.guests, 'guest')}, ${price(b.totalPrice, b.currency)} (${paymentLabel(b.paymentStatus).label.toLowerCase()})${
           b.policy.passed ? '' : `; free changes until ${b.policy.deadlineLabel}`
         }${isNew ? ' — they have just booked it' : ''}`
       : null,
@@ -382,7 +395,8 @@ function BookingPage() {
   const daysToGo = nightsBetween(today, b.checkIn);
   const pay = paymentLabel(b.paymentStatus);
   const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${b.property.name}, ${b.property.address}, ${b.property.city}, ${b.property.state}`)}`;
-  const justBooked = !cancelled && (isNew || payment === 'success');
+  const confirmingPayment = payment === 'success' && b.paymentStatus === 'AWAITING_PAYMENT';
+  const justBooked = !cancelled && !confirmingPayment && (isNew || payment === 'success');
   const cancelBlocked = params.get('action') === 'cancel' && !b.canCancel && !cancelled;
   const countdown =
     b.status === 'CHECKED_IN'
@@ -421,13 +435,17 @@ function BookingPage() {
   };
 
   return (
-    <GuestShell brandColor={b.property.primaryColor} brand={{ name: b.property.name, href: `/properties/${b.property.id}` }}>
+    <GuestShell
+      brandColor={b.property.primaryColor}
+      brand={{ name: b.property.name, href: `/properties/${b.property.id}` }}
+      hotel={{ name: b.property.name, phone: b.property.phone, email: b.property.email }}
+    >
       <div className="mx-auto max-w-7xl px-4 pb-16 sm:px-6">
         <Link
           href="/dashboard"
           className="-ml-1 mt-3 inline-flex min-h-10 items-center gap-1.5 rounded-md px-1 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <ArrowLeft className="h-4 w-4" aria-hidden /> My trips
+          <ArrowLeft className="h-4 w-4" aria-hidden /> {LABELS.myTrips}
         </Link>
 
         {justBooked && (
@@ -455,9 +473,14 @@ function BookingPage() {
             </div>
           </motion.div>
         )}
+        {confirmingPayment && !cancelled && (
+          <Callout tone="info" className="mt-3" role="status">
+            We’re waiting for your bank to confirm the payment. This usually takes a few seconds; this page updates by itself.
+          </Callout>
+        )}
         {payment === 'cancelled' && b.paymentStatus === 'AWAITING_PAYMENT' && (
           <Callout tone="warning" className="mt-3" role="alert">
-            Payment wasn’t completed, so this booking isn’t confirmed yet. Book again and choose “Pay at the hotel”, or contact {b.property.name}.
+            Payment wasn’t completed, so this booking isn’t confirmed yet. The rooms are held for a short time. Book again to try another card, or contact {b.property.name}.
           </Callout>
         )}
 
@@ -535,8 +558,10 @@ function BookingPage() {
                   <li className="flex items-center gap-3">
                     <CreditCard className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                     <span>
-                      <span className="font-semibold tabular">{price(b.totalPrice)}</span>
-                      <span className="text-muted-foreground"> · {pay.label}</span>
+                      <span className="font-semibold tabular">{price(b.totalPrice, b.currency)}</span>
+                      <span className="text-muted-foreground">
+                        {b.charges?.length ? ' incl. taxes and fees' : ''} · {pay.label}
+                      </span>
                     </span>
                   </li>
                 </ul>
@@ -546,7 +571,7 @@ function BookingPage() {
                       Also in this booking
                       <span className="font-normal text-muted-foreground">
                         {' '}
-                        · {plural(b.reservation.rooms, 'room')} in all · {price(b.reservation.totalPrice)} total
+                        · {plural(b.reservation.rooms, 'room')} in all · {price(b.reservation.totalPrice, b.currency)} total
                       </span>
                     </p>
                     <ul className="mt-2 space-y-1.5">
@@ -557,7 +582,7 @@ function BookingPage() {
                             {l.rooms > 1 ? ` × ${l.rooms}` : ''}
                           </Link>
                           <span className="text-muted-foreground tabular">
-                            {l.status === 'CANCELLED' || l.status === 'NO_SHOW' ? (BOOKING_STATUS[l.status]?.label ?? l.status) : `${plural(l.guests, 'guest')} · ${price(l.totalPrice)}`}
+                            {l.status === 'CANCELLED' || l.status === 'NO_SHOW' ? (BOOKING_STATUS[l.status]?.label ?? l.status) : `${plural(l.guests, 'guest')} · ${price(l.totalPrice, b.currency)}`}
                           </span>
                         </li>
                       ))}
@@ -585,7 +610,16 @@ function BookingPage() {
                     <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
                     <span>
                       The free change window closed at {b.policy.deadlineLabel}. To change or cancel now, contact {b.property.name}
-                      {b.property.phone ? ` on ${b.property.phone}` : ''}.
+                      {b.property.phone && (
+                        <>
+                          {' '}
+                          on{' '}
+                          <a href={telHref(b.property.phone)} className="rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            {b.property.phone}
+                          </a>
+                        </>
+                      )}
+                      .
                     </span>
                   </p>
                 ) : (
@@ -640,7 +674,7 @@ function BookingPage() {
                   </a>
                 </Button>
                 <Button asChild variant="outline" className="h-11 justify-start">
-                  <a href={`tel:${b.property.phone}`}>
+                  <a href={telHref(b.property.phone)}>
                     <Phone aria-hidden /> <span className="sr-only">Call the hotel: </span>
                     {b.property.phone}
                   </a>
@@ -665,7 +699,7 @@ function BookingPage() {
               )}
               {justBooked && (
                 <p className="mt-4 flex items-start gap-2 text-xs text-muted-foreground">
-                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden /> You can find this booking any time under My trips.
+                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden /> You can find this booking any time under {LABELS.myTrips}.
                 </p>
               )}
             </section>

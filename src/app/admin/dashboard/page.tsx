@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useCurrency } from '@/components/hotel/currency';
 import Link from 'next/link';
 import useSWR from 'swr';
 import { useSearchParams } from 'next/navigation';
@@ -157,6 +158,7 @@ function Checklist({ items, welcome, propertyId }: { items: DashboardData['check
 }
 
 function ForecastCard({ days }: { days: OccupancyDay[] }) {
+  const currency = useCurrency();
   const avg = days.length ? Math.round(days.reduce((s, d) => s + d.occupancyPct, 0) / days.length) : 0;
   const revenue = days.reduce((s, d) => s + d.revenue, 0);
   const weekendDays = days.filter((d) => [5, 6].includes(weekday(d.date)));
@@ -173,7 +175,7 @@ function ForecastCard({ days }: { days: OccupancyDay[] }) {
       <SectionHeader
         id="forecast-title"
         title={`Next ${days.length} nights`}
-        description={`${avg}% average occupancy · ${money(revenue, { cents: false })} on the books`}
+        description={`${avg}% average occupancy · ${money(revenue, { cents: false, currency })} on the books`}
         action={
           <Button asChild variant="ghost" size="sm" className="-mr-2">
             <Link href="/admin/rate-calendar">
@@ -312,7 +314,7 @@ function DashboardSkeleton() {
 }
 
 function Dashboard() {
-  const { ctx, property } = useConsole();
+  const { ctx, property, today, currency } = useConsole();
   const params = useSearchParams();
   const welcome = params.get('welcome') === '1';
   const url = usePropertyUrl('/api/admin/dashboard');
@@ -322,7 +324,7 @@ function Dashboard() {
 
   return (
     <PageShell
-      eyebrow={ctx ? fmtDay(ctx.today, 'long') : ' '}
+      eyebrow={today ? fmtDay(today, 'long') : ' '}
       title={firstName ? `${greeting()}, ${firstName}` : 'Overview'}
       description={property ? `Here’s how ${property.name} is doing today.` : undefined}
       actions={
@@ -368,14 +370,14 @@ function Dashboard() {
             <StatTile
               className={TILE}
               label="Booked this month"
-              value={money(data.revenue.monthToDate, { cents: false })}
+              value={money(data.revenue.monthToDate, { cents: false, currency })}
               hint={plural(data.revenue.monthBookings, 'reservation')}
               icon={CircleDollarSign}
             />
             <StatTile
               className={TILE}
               label="Next 30 days"
-              value={money(data.revenue.next30Days, { cents: false })}
+              value={money(data.revenue.next30Days, { cents: false, currency })}
               hint={`${plural(data.revenue.next30Bookings, 'stay')} booked`}
               icon={TrendingUp}
             />

@@ -27,8 +27,9 @@ import {
 import type { StayQuote } from '@/lib/dto';
 import { MAX_RESERVATION_LINES, MAX_RESERVATION_ROOMS, linesFromParams, setLineParams, totalRooms, type BookingLine } from '@/lib/booking-lines';
 import { fetcher } from '@/lib/fetcher';
-import { fmtRange, nightsBetween } from '@/lib/format';
+import { fmtRange, nightsBetween, telHref } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { LABELS } from '@/config/copy';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -36,11 +37,11 @@ import { Callout, EmptyState, Skeleton } from '@/components/ui/primitives';
 import { SmartImage } from '@/components/ui/smart-image';
 import { StaySearch, defaultStay, type StayQuery } from '@/components/guest/StaySearch';
 import { brandScope } from '@/components/guest/brand';
-import { useVoicePage } from '@/components/voice/page-context';
+import { useVoicePage, voiceText } from '@/components/voice/page-context';
 import { useVoiceDock } from '@/components/voice/VoiceDock';
 import { GuestShell } from '../_components/guest-shell';
 import { usePropertyShell } from '../_components/property-shell';
-import { plural, price } from '../_components/format';
+import { isDay, plural, price } from '../_components/format';
 
 interface Photo {
   id: string;
@@ -71,6 +72,8 @@ interface PublicProperty {
   amenities: string[];
   primaryColor: string | null;
   isDemo: boolean;
+  currency: string;
+  charges: { name: string; kind: string; rate: number }[];
   voice?: { available: boolean };
   photos: Photo[];
   roomTypes: RoomType[];
@@ -94,7 +97,7 @@ function readStay(params: URLSearchParams): StayQuery {
   const d = defaultStay();
   const checkIn = params.get('checkIn');
   const checkOut = params.get('checkOut');
-  const ok = !!checkIn && !!checkOut && checkOut > checkIn;
+  const ok = isDay(checkIn) && isDay(checkOut) && checkOut > checkIn;
   return {
     checkIn: ok ? checkIn! : d.checkIn,
     checkOut: ok ? checkOut! : d.checkOut,
@@ -196,6 +199,7 @@ function RoomCard({
   onCombine,
   onRooms,
   onOtherDates,
+  currency,
 }: {
   rt: RoomType;
   a: RoomAvailability | undefined;
@@ -214,6 +218,8 @@ function RoomCard({
   onCombine: (rooms: number) => void;
   onRooms: (rooms: number) => void;
   onOtherDates: () => void;
+  /** The hotel's currency. */
+  currency: string;
 }) {
   const reduce = useReducedMotion();
   const state = roomState(a);
@@ -285,19 +291,19 @@ function RoomCard({
               ) : q && combining && combinable ? (
                 <>
                   <p className="text-sm text-muted-foreground">
-                    <span className="text-2xl font-semibold text-foreground tabular">{price(Math.round(q.averageNightly))}</span> / night per room
+                    <span className="text-2xl font-semibold text-foreground tabular">{price(Math.round(q.averageNightly), currency)}</span> / night per room
                   </p>
                   <p className="text-xs text-muted-foreground tabular">
-                    {price(perRoomTotal(a)!)} per room · {plural(nights, 'night')} · sleeps {rt.capacity}
+                    {price(perRoomTotal(a)!, currency)} per room · {plural(nights, 'night')} · sleeps {rt.capacity}
                   </p>
                 </>
               ) : q && state === 'bookable' ? (
                 <>
                   <p className="text-sm text-muted-foreground">
-                    <span className="text-2xl font-semibold text-foreground tabular">{price(Math.round(q.averageNightly))}</span> / night{rooms > 1 ? ' per room' : ''}
+                    <span className="text-2xl font-semibold text-foreground tabular">{price(Math.round(q.averageNightly), currency)}</span> / night{rooms > 1 ? ' per room' : ''}
                   </p>
                   <p className="text-xs text-muted-foreground tabular">
-                    {price(q.total)} total · {plural(nights, 'night')}
+                    {price(q.total, currency)} total · {plural(nights, 'night')}
                     {rooms > 1 ? ` · ${plural(rooms, 'room')}` : ''}
                   </p>
                 </>
@@ -309,13 +315,14 @@ function RoomCard({
                 <p className="text-sm text-muted-foreground">No rooms left for {fmtRange(stay.checkIn, stay.checkOut)}.</p>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  From <span className="font-semibold text-foreground tabular">{price(rt.basePrice)}</span> / night
+                  From <span className="font-semibold text-foreground tabular">{price(rt.basePrice, currency)}</span> / night
                 </p>
               )}
             </div>
+            {/* data-voice-avoid (here and below): the voice launcher or live pill moves off the room's buttons. */}
             {combining && combinable ? (
               selected > 0 ? (
-                <div className="flex items-center gap-1 rounded-xl border border-brand bg-brand-soft p-1" role="group" aria-label={`${rt.name} rooms in your booking`}>
+                <div data-voice-avoid className="flex items-center gap-1 rounded-xl border border-brand bg-brand-soft p-1" role="group" aria-label={`${rt.name} rooms in your booking`}>
                   <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => onCombine(selected - 1)} aria-label={selected === 1 ? `Remove ${rt.name}` : `One less ${rt.name}`}>
                     <Minus aria-hidden />
                   </Button>
@@ -327,27 +334,27 @@ function RoomCard({
                   </Button>
                 </div>
               ) : (
-                <Button variant="outline" className="h-11" onClick={() => onCombine(1)}>
+                <Button data-voice-avoid variant="outline" className="h-11" onClick={() => onCombine(1)}>
                   <Plus aria-hidden /> Add<span className="sr-only"> {rt.name} to your booking</span>
                 </Button>
               )
             ) : (
               <div className="flex flex-wrap items-center gap-2">
                 {combinable && state !== 'sold-out' && (
-                  <Button variant="outline" className="h-11" onClick={() => onCombine(1)}>
+                  <Button data-voice-avoid variant="outline" className="h-11" onClick={() => onCombine(1)}>
                     <Plus aria-hidden /> Add<span className="sr-only"> a {rt.name} to a booking with other room types</span>
                   </Button>
                 )}
                 {state === 'bookable' ? (
-                  <Button variant="brand" className="h-11 px-5" onClick={onSelect}>
+                  <Button data-voice-avoid variant="brand" className="h-11 px-5" onClick={onSelect}>
                     Select<span className="sr-only"> {rt.name}</span>
                   </Button>
                 ) : state === 'too-small' && neededRooms <= 9 ? (
-                  <Button variant="outline" className="h-11" onClick={() => onRooms(neededRooms)}>
+                  <Button data-voice-avoid variant="outline" className="h-11" onClick={() => onRooms(neededRooms)}>
                     Search {plural(neededRooms, 'room')}
                   </Button>
                 ) : state === 'sold-out' ? (
-                  <Button variant="outline" className="h-11" onClick={onOtherDates}>
+                  <Button data-voice-avoid variant="outline" className="h-11" onClick={onOtherDates}>
                     Try other dates
                   </Button>
                 ) : null}
@@ -378,6 +385,7 @@ function PropertyPage() {
   const reduce = useReducedMotion();
 
   const { data: p, error } = useSWR<PublicProperty>(`/api/properties/${propertyId}`, fetcher);
+  const cur = p?.currency ?? 'USD';
   const availUrl = `/api/properties/${propertyId}/availability?checkIn=${stay.checkIn}&checkOut=${stay.checkOut}&guests=${stay.guests}&rooms=${stay.rooms ?? 1}`;
   const { data: avail, error: availError, isLoading: availLoading, isValidating } = useSWR<Availability>(p ? availUrl : null, fetcher, { keepPreviousData: true });
 
@@ -425,11 +433,13 @@ function PropertyPage() {
 
   const name = p?.name ?? shell?.name;
   const brandColor = p?.primaryColor ?? shell?.primaryColor;
+  const isDemo = p?.isDemo ?? shell?.isDemo;
   const scope = brandScope(brandColor);
   const directoryHref = `/properties?${new URLSearchParams({ checkIn: stay.checkIn, checkOut: stay.checkOut, guests: String(stay.guests) })}`;
   const dock = useVoiceDock();
 
   // The voice front desk (the dock in the root layout) sees this stay and can re-price the page or open checkout.
+  // Hotel text (names) goes through voiceText: it is data for the agent, never instructions.
   const voiceRooms = (avail?.roomTypes ?? []).map((r) => ({ id: r.id, name: r.name, sleeps: r.capacity, available: roomState(r) === 'bookable', nightly: r.quote?.averageNightly ?? null, total: r.quote?.total ?? null }));
   const voiceCheapest = voiceRooms.filter((r) => r.available && r.nightly !== null).sort((a, b) => a.nightly! - b.nightly!)[0];
   useVoicePage({
@@ -440,9 +450,9 @@ function PropertyPage() {
     stay: { checkIn: stay.checkIn, checkOut: stay.checkOut, guests: stay.guests, rooms: stay.rooms ?? 1 },
     roomOptions: voiceRooms,
     summary: name
-      ? `${name}’s page, showing ${fmtRange(stay.checkIn, stay.checkOut)} for ${plural(stay.guests, 'guest')}${(stay.rooms ?? 1) > 1 ? `, ${plural(stay.rooms ?? 1, 'room')}` : ''}${
-          avail ? (voiceCheapest ? ` — from ${price(Math.round(voiceCheapest.nightly!))} a night (${voiceCheapest.name})` : ' — nothing left for these dates') : ''
-        }${selection.length ? `; the guest has picked ${selection.map((l) => `${l.rooms} × ${p?.roomTypes.find((r) => r.id === l.roomTypeId)?.name ?? 'a room'}`).join(', ')} to book together` : ''}`
+      ? `${voiceText(name, 80)}’s page, showing ${fmtRange(stay.checkIn, stay.checkOut)} for ${plural(stay.guests, 'guest')}${(stay.rooms ?? 1) > 1 ? `, ${plural(stay.rooms ?? 1, 'room')}` : ''}${
+          avail ? (voiceCheapest ? ` — from ${price(Math.round(voiceCheapest.nightly!), cur)} a night (${voiceText(voiceCheapest.name, 80)})` : ' — nothing left for these dates') : ''
+        }${selection.length ? `; the guest has picked ${selection.map((l) => `${l.rooms} × ${voiceText(p?.roomTypes.find((r) => r.id === l.roomTypeId)?.name ?? 'a room', 80)}`).join(', ')} to book together` : ''}`
       : null,
     // Phones: clear the fixed booking bar (≈69px + safe area) at the bottom of the page.
     bottomOffset: p ? 64 : 0,
@@ -472,7 +482,7 @@ function PropertyPage() {
               description="It may have moved or paused online booking. Browse other stays, or contact the hotel directly."
               action={
                 <Button asChild variant="default">
-                  <Link href="/properties">Browse stays</Link>
+                  <Link href="/properties">{LABELS.findStay}</Link>
                 </Button>
               }
             />
@@ -534,7 +544,7 @@ function PropertyPage() {
             <span className="min-w-0 truncate">
               {l.rt!.name} × {l.rooms}
             </span>
-            <span className="tabular text-muted-foreground">{perRoomTotal(l.a) !== null ? price(l.rooms * perRoomTotal(l.a)!) : '…'}</span>
+            <span className="tabular text-muted-foreground">{perRoomTotal(l.a) !== null ? price(l.rooms * perRoomTotal(l.a)!, cur) : '…'}</span>
           </li>
         ))}
       </ul>
@@ -542,7 +552,7 @@ function PropertyPage() {
         <span className="text-sm text-muted-foreground">
           {plural(pickedRooms, 'room')} · sleeps {pickedSleeps} · {plural(nights, 'night')}
         </span>
-        <span className="text-lg font-semibold tabular">{pickedTotal !== null ? price(pickedTotal) : ''}</span>
+        <span className="text-lg font-semibold tabular">{pickedTotal !== null ? price(pickedTotal, cur) : ''}</span>
       </div>
       {pickedProblem && (
         <p className="mt-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning-soft-foreground" role="status">
@@ -569,6 +579,8 @@ function PropertyPage() {
     <GuestShell
       brandColor={brandColor}
       brand={name ? { name, href: `/properties/${propertyId}` } : undefined}
+      hotel={name ? { name, phone: p?.phone, email: p?.email } : undefined}
+      demo={isDemo}
       mainClassName="pb-12 lg:pb-16"
       // Room below the footer for the fixed booking bar (and the "Talk to us" button above it) on phones.
       className={cn('lg:pb-0', p ? (voice ? 'pb-40' : 'pb-24') : '')}
@@ -581,11 +593,11 @@ function PropertyPage() {
                 <div className="min-w-0" aria-live="polite">
                   {combining ? (
                     <p className="text-sm text-muted-foreground">
-                      <span className="text-lg font-semibold text-foreground tabular">{pickedTotal !== null ? price(pickedTotal) : '…'}</span> · {plural(pickedRooms, 'room')}
+                      <span className="text-lg font-semibold text-foreground tabular">{pickedTotal !== null ? price(pickedTotal, cur) : '…'}</span> · {plural(pickedRooms, 'room')}
                     </p>
                   ) : cheapest?.quote ? (
                     <p className="text-sm text-muted-foreground">
-                      From <span className="text-lg font-semibold text-foreground tabular">{price(Math.round(cheapest.quote.averageNightly))}</span> / night
+                      From <span className="text-lg font-semibold text-foreground tabular">{price(Math.round(cheapest.quote.averageNightly), cur)}</span> / night
                     </p>
                   ) : (
                     <p className="text-sm font-medium">{avail ? 'No rooms for these dates' : 'Checking prices…'}</p>
@@ -674,8 +686,8 @@ function PropertyPage() {
               </>
             )}
 
-            {/* Rooms */}
-            <section ref={roomsRef} className="mt-12 scroll-mt-24" aria-labelledby="rooms-heading" aria-busy={availLoading || isValidating}>
+            {/* Rooms (the header's "Rooms" link lands here, clear of the sticky header) */}
+            <section id="rooms" ref={roomsRef} className="mt-12 scroll-mt-24" aria-labelledby="rooms-heading" aria-busy={availLoading || isValidating}>
               <h2 id="rooms-heading" className="font-display text-3xl tracking-tight">
                 Choose your room
               </h2>
@@ -683,7 +695,8 @@ function PropertyPage() {
                 {fmtRange(stay.checkIn, stay.checkOut)} · {plural(nights, 'night')} · {plural(stay.guests, 'guest')}
                 {rooms > 1 ? ` · ${plural(rooms, 'room')}` : ''}
               </p>
-              <div ref={searchRef} data-stay-search className="mt-5 scroll-mt-24 lg:hidden">
+              {/* data-voice-avoid-controls: the voice launcher or live pill folds or moves up off each control here (steppers, dates). */}
+              <div ref={searchRef} data-stay-search data-voice-avoid-controls className="mt-5 scroll-mt-24 lg:hidden">
                 <StaySearch value={stay} onSubmit={(v) => setStay(v)} showDestination={false} showRooms submitLabel="Update" compact pending={isValidating && !!avail} />
               </div>
               {p && roomTypes.length > 1 && (
@@ -719,7 +732,21 @@ function PropertyPage() {
                   <EmptyState
                     icon={BedDouble}
                     title="Rooms coming soon"
-                    description={`${p.name} hasn’t published its rooms online yet. Call them to book${p.phone ? ` on ${p.phone}` : ''}.`}
+                    description={
+                      <>
+                        {p.name} hasn’t published its rooms online yet. Call them to book
+                        {p.phone && (
+                          <>
+                            {' '}
+                            on{' '}
+                            <a href={telHref(p.phone)} className="rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                              {p.phone}
+                            </a>
+                          </>
+                        )}
+                        .
+                      </>
+                    }
                   />
                 </div>
               ) : (
@@ -740,6 +767,7 @@ function PropertyPage() {
                       onCombine={(n) => combine(rt.id, n)}
                       onRooms={(n) => setStay({ ...stay, rooms: n })}
                       onOtherDates={otherDates}
+                      currency={cur}
                     />
                   ))}
                 </ul>
@@ -780,12 +808,15 @@ function PropertyPage() {
                     <li className="flex items-start gap-2.5">
                       <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> Free changes and cancellation until 3:00 PM the day before you arrive
                     </li>
-                    <li className="flex items-start gap-2.5">
-                      <Phone className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-                      <a href={`tel:${p.phone}`} className="rounded-sm text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                        {p.phone}
-                      </a>
-                    </li>
+                    {p.phone && (
+                      <li className="flex items-start gap-2.5">
+                        <Phone className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                        <a href={telHref(p.phone)} className="rounded-sm text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                          <span className="sr-only">Call {p.name}: </span>
+                          {p.phone}
+                        </a>
+                      </li>
+                    )}
                   </ul>
                 </section>
               </div>
@@ -802,10 +833,10 @@ function PropertyPage() {
                   {cheapest?.quote ? (
                     <>
                       <p className="text-sm text-muted-foreground">
-                        From <span className="text-3xl font-semibold text-foreground tabular">{price(Math.round(cheapest.quote.averageNightly))}</span> / night
+                        From <span className="text-3xl font-semibold text-foreground tabular">{price(Math.round(cheapest.quote.averageNightly), cur)}</span> / night
                       </p>
                       <p className="mt-0.5 text-sm text-muted-foreground tabular">
-                        {price(cheapest.quote.total)} total · {plural(nights, 'night')}
+                        {price(cheapest.quote.total, cur)} total · {plural(nights, 'night')}
                       </p>
                     </>
                   ) : avail ? (
@@ -834,7 +865,7 @@ function PropertyPage() {
               </div>
               <p className="flex items-center justify-center gap-1.5 px-2 text-center text-xs text-muted-foreground">
                 <Lock className="h-3.5 w-3.5" aria-hidden />
-                {(p?.isDemo ?? shell?.isDemo) ? 'Demo hotel — nothing is charged' : 'Secure booking · no booking fees'}
+                {isDemo ? 'Demo hotel — nothing is charged' : 'Secure booking · no booking fees'}
               </p>
               {p && voice && dock && (
                 <div className="rounded-2xl border bg-card p-4 shadow-xs">
@@ -862,7 +893,13 @@ function PropertyPage() {
 function PropertyFallback() {
   const shell = usePropertyShell();
   return (
-    <GuestShell brandColor={shell?.primaryColor} brand={shell ? { name: shell.name, href: `/properties/${shell.id}` } : undefined} mainClassName="pb-12 lg:pb-16">
+    <GuestShell
+      brandColor={shell?.primaryColor}
+      brand={shell ? { name: shell.name, href: `/properties/${shell.id}` } : undefined}
+      hotel={shell ? { name: shell.name } : undefined}
+      demo={shell?.isDemo}
+      mainClassName="pb-12 lg:pb-16"
+    >
       <div className="mx-auto max-w-7xl px-4 sm:px-6" role="status" aria-label="Loading the hotel">
         <div className="mt-3 h-10" />
         <Skeleton className="mt-3 w-full rounded-2xl" style={GALLERY_HEIGHT} />

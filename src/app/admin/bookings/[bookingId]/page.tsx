@@ -10,7 +10,6 @@ import {
   CalendarClock,
   Check,
   Copy,
-  CreditCard,
   DoorOpen,
   LogIn,
   LogOut,
@@ -28,7 +27,7 @@ import {
 } from 'lucide-react';
 import type { ActivityEntry, BookingStatus, BookingSummary } from '@/lib/dto';
 import { fetcher } from '@/lib/fetcher';
-import { fmtDay, formatMoney, formatNights, formatPhone, formatPhonesIn, nightsBetween, relativeDay, telHref, timeAgo } from '@/lib/format';
+import { fmtDay, formatNights, formatPhone, formatPhonesIn, nightsBetween, relativeDay, telHref, timeAgo } from '@/lib/format';
 import { BOOKING_STATUS } from '@/lib/status';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -44,7 +43,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { BookingStatusBadge, PaymentBadge, SourceBadge } from '@/components/hotel/badges';
+import { BookingStatusBadge, SourceBadge } from '@/components/hotel/badges';
+import { BookingPayments } from '@/components/payments/BookingPayments';
 import { AssignRoomDialog, CheckInDialog, CheckOutDialog, ConfirmDialog, NoteDialog } from '@/components/frontdesk/dialogs';
 import { useBookingActions } from '@/components/frontdesk/useBookingActions';
 import { useConsole } from '@/components/console/ConsoleProvider';
@@ -55,14 +55,6 @@ interface Detail {
   history: { id: string; status: BookingStatus; notes: string | null; createdAt: string }[];
   activity: ActivityEntry[];
   actions: BookingStatus[];
-}
-
-interface Payment {
-  paymentStatus: string;
-  cardLast4: string | null;
-  cardBrand: string | null;
-  billingName: string | null;
-  stripeCheckoutSessionId: string | null;
 }
 
 type DialogKind = 'checkin' | 'checkout' | 'note' | 'assign' | 'noshow' | 'cancel' | 'reinstate';
@@ -139,10 +131,8 @@ function BackLink() {
 
 export default function BookingDetailPage() {
   const { bookingId } = useParams<{ bookingId: string }>();
-  const { ctx, can, askAgent } = useConsole();
-  const today = ctx?.today ?? '';
+  const { can, askAgent, today } = useConsole();
   const { data, error, isLoading } = useSWR<Detail>(`/api/admin/bookings/${bookingId}`, fetcher);
-  const { data: payment } = useSWR<Payment>(can('booking.payment.view') ? `/api/admin/bookings/${bookingId}/payment` : null, fetcher);
   const { transition, pending } = useBookingActions();
   const [dialog, setDialog] = React.useState<DialogKind | null>(null);
   const { copy, copied } = useCopy();
@@ -194,7 +184,6 @@ export default function BookingDetailPage() {
   const closed = b.status === 'CHECKED_OUT' || b.status === 'CANCELLED' || b.status === 'NO_SHOW';
   const reinstatable = (b.status === 'CANCELLED' || b.status === 'NO_SHOW') && has('CONFIRMED') && can('booking.reinstate');
   const notes = parseNotes(b.notes);
-  const nightly = b.nights ? b.totalPrice / b.nights / Math.max(1, b.rooms) : b.totalPrice;
   const stayProgress =
     b.status === 'CHECKED_IN' && today ? Math.min(1, Math.max(0, nightsBetween(b.checkIn, today) / Math.max(1, b.nights))) : b.status === 'CHECKED_OUT' ? 1 : 0;
   const late = !!today && (b.status === 'CONFIRMED' || b.status === 'PENDING') && b.checkIn < today;
@@ -483,24 +472,8 @@ export default function BookingDetailPage() {
             </ul>
           </Card>
 
-          {/* Payment */}
-          <Card className="p-5 sm:p-6">
-            <SectionTitle action={<PaymentBadge status={b.paymentStatus} />}>Payment</SectionTitle>
-            <p className="mt-3 text-3xl font-semibold tracking-tight tabular">{formatMoney(b.totalPrice, 'USD', { cents: true })}</p>
-            <p className="text-xs text-muted-foreground">
-              {formatMoney(nightly, 'USD', { cents: true })} average a night · {formatNights(b.nights)}
-              {b.rooms > 1 ? ` × ${b.rooms} rooms` : ''}
-            </p>
-            {payment && (payment.cardLast4 || payment.stripeCheckoutSessionId) && (
-              <p className="mt-4 flex items-center gap-2 rounded-lg bg-muted/60 px-3 py-2 text-sm">
-                <CreditCard className="size-4 text-muted-foreground" aria-hidden />
-                {payment.cardLast4 ? `${payment.cardBrand ?? 'Card'} ending ${payment.cardLast4}` : 'Paid online by card'}
-              </p>
-            )}
-            {b.paymentStatus !== 'PAID' && b.status !== 'CANCELLED' && b.status !== 'NO_SHOW' && (
-              <p className="mt-4 text-sm text-muted-foreground">The balance is collected at the property, on arrival.</p>
-            )}
-          </Card>
+          {/* Payment, risk flags and refunds */}
+          <BookingPayments booking={b} />
 
           {/* Agent (AI feature) */}
           {can('agent.use') && !closed && (

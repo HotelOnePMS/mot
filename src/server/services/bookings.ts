@@ -8,10 +8,14 @@ import { prisma } from '@/lib/prisma';
 import type { BookingStatus, BookingSummary, ISODate } from '@/lib/dto';
 import { BOOKING_STATUS } from '@/lib/status';
 import { MAX_RESERVATION_LINES, MAX_RESERVATION_ROOMS, normalizeLines, splitParty, totalRooms, type BookingLine } from '@/lib/booking-lines';
+import { paymentAmountDue, toCents, fromCents, type PaymentPolicy } from '@/lib/payments';
+import { HOLD_MINUTES } from '../payments/config';
+import { releaseExpiredHolds } from '../payments/expiry';
 import { assertPropertyAccess, can, requirePermission, scopeByProperty, type Actor, type Permission } from '../authz';
-import { addDaysISO, atNoonUTC, dayBounds, diffDays, formatDay, hotelToday, isISODate, toISODate } from '../dates';
+import { addDaysISO, atNoonUTC, dayBounds, diffDays, eachNight, formatDay, hotelToday, isISODate, toISODate } from '../dates';
 import { badRequest, conflict, DomainError, notFound } from '../errors';
 import { recordAudit, type OpContext } from './audit';
+import { localeOf, todayAt } from './hotels';
 import { nightlyInventory, quoteStay } from './inventory';
 import { bookingInclude, floorNumber, toBookingSummary, type BookingWithRelations } from './mappers';
 
@@ -79,6 +83,8 @@ export async function searchBookings(actor: Actor, q: BookingSearch): Promise<Bo
             { user: { firstName: { contains: text, mode: 'insensitive' } } },
             { user: { lastName: { contains: text, mode: 'insensitive' } } },
             { user: { email: { contains: text, mode: 'insensitive' } } },
+            // Direct (API-key) bookings keep the guest's contact email on the booking; the guest record has a placeholder.
+            { guestEmail: { contains: text, mode: 'insensitive' } },
             { user: { phone: { contains: text } } },
             ...nameParts(text),
           ],
@@ -121,8 +127,19 @@ export interface CreateBookingInput {
   rooms?: number;
   notes?: string | null;
   paymentStatus?: string;
+  /**
+   * Online payment: the booking is held (PENDING, AWAITING_PAYMENT) until the
+   * amount due now is paid. The amount is worked out from the server's quote.
+   */
+  onlinePayment?: { policy: PaymentPolicy; depositNights: number };
+  /** The cancellation/refund policy the guest accepted, recorded with the booking. */
+  policyAcceptance?: { version: string; hash: string; text: string; ip?: string | null; userAgent?: string | null };
   /** Who/what created it, for the status history. */
   createdVia?: string;
+  /** WEB | FRONT_DESK | AGENT_API | VOICE (Booking.source). */
+  source?: string;
+  /** The staff member taking a reservation at the desk. */
+  createdById?: string | null;
 }
 
 /** A reservation of one or more room types for the same stay and guest. */
@@ -132,11 +149,37 @@ export interface CreateReservationInput extends Omit<CreateBookingInput, 'roomTy
 
 const MAX_NIGHTS = 30;
 
+/** How long an identical booking counts as the same request (a double tap, or voice and page both booking). */
+const DUPLICATE_WINDOW_MS = 60_000;
+
+/** A booking row, flagged when it is the same guest's identical booking from moments ago (returned instead of a new one). */
+export type CreatedBooking = BookingWithRelations & { duplicate?: true };
+
 /** A single-room-type booking (one line of `createReservation`). */
-export async function createBooking(input: CreateBookingInput): Promise<BookingWithRelations> {
+export async function createBooking(input: CreateBookingInput): Promise<CreatedBooking> {
   const { roomTypeId, rooms, ...rest } = input;
   const [booking] = await createReservation({ ...rest, lines: [{ roomTypeId, rooms: rooms ?? 1 }] });
   return booking;
+}
+
+/**
+ * The guest's reservation from moments ago with exactly these lines and party
+ * split, lead first; null if there is none. A single line only matches a
+ * single booking, several lines only a whole group.
+ */
+function sameReservation(recent: BookingWithRelations[], lines: BookingLine[], party: number[]): BookingWithRelations[] | null {
+  const want = lines.map((l, i) => `${l.roomTypeId}:${l.rooms}:${party[i]}`).sort().join(',');
+  const groups = new Map<string, BookingWithRelations[]>();
+  for (const b of recent) {
+    const key = b.groupCode ?? `single:${b.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), b]);
+  }
+  for (const rows of groups.values()) {
+    if (rows.length !== lines.length || (lines.length > 1) !== !!rows[0].groupCode) continue;
+    if (rows.map((b) => `${b.roomTypeId}:${b.rooms}:${b.guests}`).sort().join(',') !== want) continue;
+    return [...rows].sort((a, b) => Number(b.code === b.groupCode) - Number(a.code === a.groupCode));
+  }
+  return null;
 }
 
 /**
@@ -145,14 +188,17 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
  * each priced by the server and checked against live inventory. With several
  * lines, every row carries the first row's code as `groupCode`, and that is
  * the code the guest is given. The party is shared out across the lines
- * (`splitParty`). Returns the rows in line order; the first is the lead.
+ * (`splitParty`). With online payment, every row is held (AWAITING_PAYMENT,
+ * the same `expiresAt`) until the one card payment for the reservation
+ * arrives; each row's `paymentDue` is its share of that payment. Returns the
+ * rows in line order; the first is the lead.
  */
-export async function createReservation(input: CreateReservationInput): Promise<BookingWithRelations[]> {
+export async function createReservation(input: CreateReservationInput): Promise<CreatedBooking[]> {
   const lines = normalizeLines(input.lines);
   if (!isISODate(input.checkIn) || !isISODate(input.checkOut)) throw badRequest('Dates must be in YYYY-MM-DD format.');
   if (input.checkIn >= input.checkOut) throw badRequest('Check-out must be after check-in.');
-  if (input.checkIn < hotelToday()) throw badRequest('Check-in date cannot be in the past.');
   const nights = diffDays(input.checkIn, input.checkOut);
+  if (eachNight(input.checkIn, input.checkOut).length !== nights) throw badRequest('Dates must be real calendar days.');
   if (nights > MAX_NIGHTS) throw badRequest(`Stays are limited to ${MAX_NIGHTS} nights online. Please contact the hotel for longer stays.`);
   if (!lines.length) throw badRequest('Choose a room.');
   if (lines.length > MAX_RESERVATION_LINES) throw badRequest(`One booking can include up to ${MAX_RESERVATION_LINES} room types.`);
@@ -162,7 +208,7 @@ export async function createReservation(input: CreateReservationInput): Promise<
 
   const found = await prisma.roomType.findMany({
     where: { id: { in: lines.map((l) => l.roomTypeId) } },
-    select: { id: true, name: true, propertyId: true, capacity: true, isActive: true, property: { select: { isActive: true, setupPath: true, phone: true } } },
+    select: { id: true, name: true, propertyId: true, capacity: true, isActive: true, property: { select: { isActive: true, setupPath: true, phone: true, timezone: true } } },
   });
   const types = lines.map((l) => found.find((t) => t.id === l.roomTypeId));
   for (const roomType of types) {
@@ -172,6 +218,7 @@ export async function createReservation(input: CreateReservationInput): Promise<
     if (roomType.property.setupPath === 'VOICE') throw badRequest(`This hotel takes bookings directly — please call ${roomType.property.phone}.`);
   }
   const roomTypes = types as NonNullable<(typeof types)[number]>[];
+  if (input.checkIn < hotelToday(new Date(), localeOf(roomTypes[0].property).timezone)) throw badRequest('Check-in date cannot be in the past.');
   const party = splitParty(
     input.guests,
     lines.map((l, i) => ({ rooms: l.rooms, capacity: roomTypes[i].capacity }))
@@ -187,14 +234,38 @@ export async function createReservation(input: CreateReservationInput): Promise<
     );
   }
 
+  // Unpaid online bookings past their hold free their rooms before we count what is left.
+  for (const line of lines) await releaseExpiredHolds({ roomTypeId: line.roomTypeId });
+
   // Serializable transaction: two guests racing for the last room cannot
-  // both succeed. Retries on serialization failures and code collisions.
-  for (let attempt = 0; attempt < 4; attempt++) {
+  // both succeed. Retries on serialization failures and code collisions,
+  // after a short random pause so racing requests don't collide again.
+  const ATTEMPTS = 6;
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, Math.random() * 40 * attempt));
     try {
       return await prisma.$transaction(
         async (tx) => {
+          // The same guest booking the same stay moments ago (a double tap, or voice and page both booking) gets that booking back.
+          const recent = await tx.booking.findMany({
+            where: {
+              userId: input.userId,
+              propertyId: input.propertyId,
+              roomTypeId: { in: lines.map((l) => l.roomTypeId) },
+              checkIn: atNoonUTC(input.checkIn),
+              checkOut: atNoonUTC(input.checkOut),
+              paymentStatus: input.paymentStatus ?? 'UNPAID',
+              status: { not: 'CANCELLED' },
+              createdAt: { gte: new Date(Date.now() - DUPLICATE_WINDOW_MS) },
+            },
+            include: bookingInclude,
+          });
+          const same = sameReservation(recent, lines, party);
+          if (same) return same.map((b) => ({ ...b, duplicate: true as const }));
+
           const leadCode = generateBookingCode();
-          const created: BookingWithRelations[] = [];
+          const holdUntil = new Date(Date.now() + HOLD_MINUTES * 60_000);
+          const priced = [];
           for (const [i, line] of lines.entries()) {
             const roomType = roomTypes[i];
             const inventory = await nightlyInventory(tx, line.roomTypeId, input.checkIn, input.checkOut);
@@ -207,6 +278,21 @@ export async function createReservation(input: CreateReservationInput): Promise<
               );
             }
             const quote = await quoteStay(tx, { roomTypeId: line.roomTypeId, checkIn: input.checkIn, checkOut: input.checkOut, rooms: line.rooms, guests: party[i] });
+            const due = input.onlinePayment
+              ? paymentAmountDue({
+                  policy: input.onlinePayment.policy,
+                  depositNights: input.onlinePayment.depositNights,
+                  nightlyCents: quote.nights.map((n) => toCents(n.price)),
+                  rooms: line.rooms,
+                  totalCents: toCents(quote.total),
+                })
+              : null;
+            priced.push({ line, quote, dueCents: due?.dueNowCents ?? 0 });
+          }
+          // One card payment covers every room type, so the whole reservation is held until it is paid.
+          const online = priced.some((x) => x.dueCents > 0);
+          const created: BookingWithRelations[] = [];
+          for (const [i, { line, quote, dueCents }] of priced.entries()) {
             created.push(
               await tx.booking.create({
                 data: {
@@ -218,8 +304,27 @@ export async function createReservation(input: CreateReservationInput): Promise<
                   guests: party[i],
                   rooms: line.rooms,
                   totalPrice: quote.total,
+                  currency: quote.currency,
+                  subtotalPrice: quote.subtotal,
+                  charges: quote.charges.length ? (quote.charges as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
+                  source: input.source ?? 'WEB',
+                  createdById: input.createdById ?? null,
                   status: 'PENDING',
-                  paymentStatus: input.paymentStatus ?? 'UNPAID',
+                  paymentStatus: online ? 'AWAITING_PAYMENT' : (input.paymentStatus ?? 'UNPAID'),
+                  ...(online ? { paymentDue: fromCents(dueCents), expiresAt: holdUntil } : {}),
+                  ...(input.policyAcceptance
+                    ? {
+                        policyAcceptance: {
+                          create: {
+                            version: input.policyAcceptance.version,
+                            hash: input.policyAcceptance.hash,
+                            text: input.policyAcceptance.text,
+                            ip: input.policyAcceptance.ip ?? null,
+                            userAgent: input.policyAcceptance.userAgent?.slice(0, 300) ?? null,
+                          },
+                        },
+                      }
+                    : {}),
                   code: i === 0 ? leadCode : generateBookingCode(),
                   groupCode: lines.length > 1 ? leadCode : null,
                   // Special requests are for the whole party: kept on the lead line.
@@ -227,7 +332,12 @@ export async function createReservation(input: CreateReservationInput): Promise<
                   statusHistory: {
                     create: {
                       status: 'PENDING',
-                      notes: [input.createdVia ?? 'Booking created', lines.length > 1 ? `part of reservation ${leadCode} (${lines.length} room types)` : null].filter(Boolean).join(' · '),
+                      notes: [
+                        online ? 'Booked online — awaiting card payment' : (input.createdVia ?? 'Booking created'),
+                        lines.length > 1 ? `part of reservation ${leadCode} (${lines.length} room types)` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · '),
                     },
                   },
                 },
@@ -243,8 +353,7 @@ export async function createReservation(input: CreateReservationInput): Promise<
       const retryable =
         e instanceof Prisma.PrismaClientKnownRequestError &&
         (e.code === 'P2034' || (e.code === 'P2002' && String(e.meta?.target ?? '').includes('code')));
-      if (retryable && attempt < 3) continue;
-      throw e;
+      if (!retryable) throw e;
     }
   }
   throw new DomainError(503, 'BUSY', 'The hotel is busy right now — please try again.');
@@ -339,7 +448,7 @@ export async function checkTransition(
     return { ok: false, reason: `A ${BOOKING_STATUS[from].label.toLowerCase()} reservation can't be ${VERB[to]?.toLowerCase() ?? to.toLowerCase()}.` };
   }
   if (!can(actor, rule.perm)) return { ok: false, reason: 'Your role cannot perform this action.' };
-  const today = hotelToday();
+  const today = await todayAt(booking.propertyId);
   const checkIn = toISODate(booking.checkIn);
   const checkOut = toISODate(booking.checkOut);
   if (to === 'CHECKED_IN') {
@@ -367,7 +476,7 @@ export async function transitionBooking(
   const check = await checkTransition(ctx.actor, booking, to);
   if (!check.ok) throw badRequest(check.reason);
 
-  const today = hotelToday();
+  const today = await todayAt(booking.propertyId);
   const effects: string[] = [];
   const data: Prisma.BookingUpdateInput = { status: to };
   let historyNote = opts.note?.trim() || '';
@@ -584,7 +693,7 @@ export async function addBookingNote(ctx: OpContext, bookingIdOrCode: string, no
   if (!clean) throw badRequest('Note is empty.');
   if (clean.length > 1000) throw badRequest('Notes are limited to 1000 characters.');
   const booking = await getBookingForStaff(ctx.actor, bookingIdOrCode);
-  const stamp = `[${hotelToday()} · ${ctx.actor.name}] ${clean}`;
+  const stamp = `[${await todayAt(booking.propertyId)} · ${ctx.actor.name}] ${clean}`;
   const updated = await prisma.booking.update({
     where: { id: booking.id },
     data: { notes: booking.notes ? `${booking.notes}\n${stamp}` : stamp },

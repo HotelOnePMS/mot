@@ -8,9 +8,11 @@ import { getSession, signIn, signOut, useSession } from 'next-auth/react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArrowLeft, Building2, CalendarDays, Check, CreditCard, Lock, ShieldCheck, UserRound, Users } from 'lucide-react';
 import type { StayQuote } from '@/lib/dto';
-import { linesFromParams, setLineParams, totalRooms } from '@/lib/booking-lines';
+import { linesFromParams, setLineParams, splitParty, totalRooms } from '@/lib/booking-lines';
 import { api, fetcher } from '@/lib/fetcher';
 import { fmtDay, fmtRange } from '@/lib/format';
+import { fromCents, paymentAmountDue, toCents, type AmountDue, type PaymentPolicy } from '@/lib/payments';
+import { isStaffRole } from '@/lib/routes';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,22 +22,31 @@ import { Callout, EmptyState, Skeleton } from '@/components/ui/primitives';
 import { SegmentedControl } from '@/components/ui/segmented';
 import { SmartImage } from '@/components/ui/smart-image';
 import { PublicDemoNote } from '@/components/guest/PublicDemoNote';
-import { useVoicePage, type VoiceActionResult } from '@/components/voice/page-context';
+import { orderItemsKey, useVoicePage, voiceText, type VoiceActionResult, type VoiceBookingRequest } from '@/components/voice/page-context';
 import { GuestShell } from '../../_components/guest-shell';
 import { usePropertyShell } from '../../_components/property-shell';
-import { plural, price, shiftDay } from '../../_components/format';
+import { isDay, plural, price, shiftDay } from '../../_components/format';
 
 interface PublicProperty {
   id: string;
   name: string;
   city: string;
   state: string;
+  phone: string;
+  email: string | null;
   primaryColor: string | null;
   isDemo: boolean;
   roomTypes: { id: string; name: string; capacity: number; photos: { url: string }[] }[];
 }
 
-type PaymentMethod = 'pay_at_property' | 'stripe';
+/** How the guest pays at this hotel and the policy they accept (GET /api/properties/:id/payment-terms). */
+interface PaymentTerms {
+  policy: PaymentPolicy;
+  depositNights: number;
+  onlinePayment: boolean;
+  policyText: string;
+  policyHash: string;
+}
 
 /** The new-guest form; lives in Checkout so links (guestName/guestEmail/guestPhone) and the voice agent can fill it. */
 interface GuestForm {
@@ -46,13 +57,66 @@ interface GuestForm {
   password: string;
 }
 
+/** Ids from the URL for the voice agent: well-formed ids only (dates are already checked with isDay). */
+const idOrBlank = (v: string) => (/^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : '(invalid)');
+
+/**
+ * The last booking made in this browser, so the same stay (same guest, room
+ * type, dates and party) isn't booked twice by accident within a couple of
+ * minutes — a second tab, or a voice confirm after going back to checkout.
+ * A convenience only: storage may be unavailable, and then nothing is blocked.
+ */
+const RECENT_BOOKING = 'hotelone:recent-booking';
+const RECENT_BOOKING_MS = 2 * 60_000;
+function recentBooking(key: string): { id: string; code: string | null } | null {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(RECENT_BOOKING) ?? 'null') as { key?: string; id?: string; code?: string | null; at?: number } | null;
+    if (!v || v.key !== key || typeof v.id !== 'string' || typeof v.at !== 'number' || Date.now() - v.at > RECENT_BOOKING_MS) return null;
+    return { id: v.id, code: v.code ?? null };
+  } catch {
+    return null;
+  }
+}
+function rememberBooking(key: string, id: string, code: string | null) {
+  try {
+    window.localStorage.setItem(RECENT_BOOKING, JSON.stringify({ key, id, code, at: Date.now() }));
+  } catch {
+    /* storage blocked: no duplicate check */
+  }
+}
+
 /** ["name", "email", "a password"] → "name, email and a password". */
 const listWords = (words: string[]) => (words.length > 1 ? `${words.slice(0, -1).join(', ')} and ${words.at(-1)}` : (words[0] ?? ''));
 
 /** "Jamie Lee Smith" → first "Jamie", last "Lee Smith". */
+/** "US dollars", "Euro (EUR)": the currency the hotel prices in. */
+function currencyName(code: string): string {
+  if (code === 'USD') return 'US dollars';
+  try {
+    const name = new Intl.DisplayNames(['en'], { type: 'currency' }).of(code);
+    return name && name !== code ? `${name} (${code})` : code;
+  } catch {
+    return code;
+  }
+}
+
 function splitName(full: string): { firstName: string; lastName: string } {
   const [firstName = '', ...rest] = full.trim().split(/\s+/);
   return { firstName, lastName: rest.join(' ') };
+}
+
+/** The taxes and fees of several quotes, added up per charge (same name, kind and rate), in first-seen order. */
+function sumCharges(quotes: StayQuote[]) {
+  const out = new Map<string, { key: string; name: string; kind: string; rate: number; cents: number }>();
+  for (const q of quotes) {
+    for (const c of q.charges ?? []) {
+      const key = `${c.name}|${c.kind}|${c.rate}`;
+      const row = out.get(key) ?? { key, name: c.name, kind: c.kind, rate: c.rate, cents: 0 };
+      row.cents += toCents(c.amount);
+      out.set(key, row);
+    }
+  }
+  return [...out.values()].map((c) => ({ ...c, amount: fromCents(c.cents) }));
 }
 
 const STEPS = ['Room and dates', 'Your details', 'Review and book'] as const;
@@ -205,7 +269,7 @@ function GuestAuth({ onDone, form, setForm }: { onDone: () => void; form: GuestF
             </Field>
           )}
         </div>
-        <Field label="Password" htmlFor="g-pass" hint={mode === 'register' ? 'At least 8 characters. You’ll use it to manage your booking.' : undefined}>
+        <Field label="Password" htmlFor="g-pass" hint={mode === 'register' ? 'At least 10 characters. You’ll use it to manage your booking.' : undefined}>
           <Input
             id="g-pass"
             type="password"
@@ -239,23 +303,37 @@ function Checkout() {
   const lines = React.useMemo(() => linesFromParams(params), [params]);
   const multi = lines.length > 1;
   const roomTypeId = lines[0]?.roomTypeId ?? '';
-  const checkIn = params.get('checkIn') ?? '';
-  const checkOut = params.get('checkOut') ?? '';
+  // Calendar days only: anything else in a (possibly crafted) link counts as no dates chosen.
+  const checkIn = isDay(params.get('checkIn')) ? params.get('checkIn')! : '';
+  const checkOut = isDay(params.get('checkOut')) ? params.get('checkOut')! : '';
   const guests = Number(params.get('guests')) || 2;
   const rooms = lines.length ? totalRooms(lines) : Number(params.get('rooms')) || 1;
 
   const { data: p } = useSWR<PublicProperty>(`/api/properties/${propertyId}`, fetcher);
+  // Several room types share the party out as the server does (per-guest fees follow it).
+  const party = React.useMemo(
+    () => (multi && p ? splitParty(guests, lines.map((l) => ({ rooms: l.rooms, capacity: p.roomTypes.find((r) => r.id === l.roomTypeId)?.capacity ?? 0 }))) : null),
+    [multi, p, guests, lines]
+  );
   // A quote per room type; the booking endpoint charges exactly their sum.
-  const quoteUrls = lines.map((l) => `/api/quote?roomTypeId=${l.roomTypeId}&checkIn=${checkIn}&checkOut=${checkOut}&guests=${multi ? 1 : guests}&rooms=${l.rooms}`);
-  const { data: quotes, error: quoteError } = useSWR<StayQuote[]>(lines.length && checkIn && checkOut ? ['quotes', ...quoteUrls] : null, () =>
+  const quoteUrls = lines.map(
+    (l, i) => `/api/quote?roomTypeId=${encodeURIComponent(l.roomTypeId)}&checkIn=${checkIn}&checkOut=${checkOut}&guests=${multi ? (party?.[i] ?? 1) : guests}&rooms=${l.rooms}`
+  );
+  const { data: quotes, error: quoteError } = useSWR<StayQuote[]>(lines.length && checkIn && checkOut && (!multi || p) ? ['quotes', ...quoteUrls] : null, () =>
     Promise.all(quoteUrls.map((u) => fetcher<StayQuote>(u)))
   );
   const quote = quotes?.[0];
-  const total = quotes ? quotes.reduce((s, q) => s + q.total, 0) : null;
-  const { data: config } = useSWR<{ stripeEnabled: boolean; emailEnabled?: boolean }>('/api/config', fetcher);
-  const [payment, setPayment] = React.useState<PaymentMethod>('pay_at_property');
+  const total = quotes ? fromCents(quotes.reduce((s, q) => s + toCents(q.total), 0)) : null;
+  const { data: config } = useSWR<{ emailEnabled?: boolean }>('/api/config', fetcher);
+  const { data: terms } = useSWR<PaymentTerms>(`/api/properties/${propertyId}/payment-terms`, fetcher);
+  const [accepted, setAccepted] = React.useState(false);
+  const [needAccept, setNeedAccept] = React.useState(false);
+  const acceptRef = React.useRef<HTMLInputElement>(null);
   const [notes, setNotes] = React.useState('');
   const [busy, setBusy] = React.useState(false);
+  // Set synchronously when a booking starts, so the Confirm button and the voice agent's
+  // confirm can't both get through before React re-renders with `busy`.
+  const booking = React.useRef(false);
   const [error, setError] = React.useState('');
   const [needDetails, setNeedDetails] = React.useState(false);
   const confirmRef = React.useRef<HTMLButtonElement>(null);
@@ -282,9 +360,24 @@ function Checkout() {
   const sleeps = p ? lines.reduce((s, l) => s + l.rooms * (p.roomTypes.find((r) => r.id === l.roomTypeId)?.capacity ?? 0), 0) : null;
   const tooSmall = multi && sleeps !== null && (sleeps < guests || guests < lines.length);
   const tooSmallText = guests < lines.length ? 'Each room type needs at least one guest.' : `These rooms don’t sleep ${plural(guests, 'guest')}.`;
-  const stripe = !!config?.stripeEnabled;
-  const method: PaymentMethod = stripe ? payment : 'pay_at_property';
+  // What is charged now (a deposit or the whole stay) follows the hotel's payment policy, never the guest's choice.
+  // Worked out per room type, as the server does, and paid together.
+  const due = React.useMemo<AmountDue | null>(() => {
+    if (!terms || !quotes || quotes.length !== lines.length) return null;
+    const parts = quotes.map((q, i) =>
+      paymentAmountDue({ policy: terms.policy, depositNights: terms.depositNights, nightlyCents: q.nights.map((n) => toCents(n.price)), rooms: lines[i].rooms, totalCents: toCents(q.total) })
+    );
+    const dueNowCents = parts.reduce((s, x) => s + x.dueNowCents, 0);
+    const balanceCents = parts.reduce((s, x) => s + x.balanceCents, 0);
+    return { dueNowCents, balanceCents, kind: dueNowCents === 0 ? 'NONE' : balanceCents > 0 ? 'DEPOSIT' : 'FULL' };
+  }, [terms, quotes, lines]);
+  const payNow = !!terms?.onlinePayment && !!due && due.dueNowCents > 0;
+  const method = payNow ? 'stripe' : 'pay_at_property';
   const name = p?.name ?? shell?.name;
+  // The hotel's own chrome, as on its page: header, contact footer and the demo banner.
+  const brandColor = p?.primaryColor ?? shell?.primaryColor;
+  const hotel = name ? { name, phone: p?.phone, email: p?.email } : undefined;
+  const isDemo = p?.isDemo ?? shell?.isDemo;
 
   React.useEffect(() => {
     if (signedIn) setNeedDetails(false);
@@ -297,23 +390,44 @@ function Checkout() {
     if (focus) setTimeout(() => document.querySelector<HTMLInputElement>('#details input:not([type="hidden"])')?.focus({ preventScroll: true }), 350);
   }
 
-  /** Book it (the guest is signed in). Pay-at-hotel bookings go to the booking page; card payments to Stripe. */
-  async function submit(): Promise<{ ok: true; id: string; code: string | null } | { ok: false; error: string }> {
+  /**
+   * Book it (the guest is signed in). Pay-at-hotel bookings go to the booking page; card payments to Stripe.
+   * One at a time: a second call while one is running (or after one succeeded, while the page moves on) is refused.
+   */
+  async function submit(): Promise<{ ok: true; id: string; code: string | null; total: number | null } | { ok: false; error: string; busy?: true; duplicate?: { id: string; code: string | null } }> {
+    if (booking.current) return { ok: false, error: 'It’s already booking — wait a moment.', busy: true };
+    const stayKey = JSON.stringify([session?.user?.id ?? session?.user?.email ?? '', propertyId, lines, checkIn, checkOut, guests, rooms]);
+    const dup = recentBooking(stayKey);
+    if (dup) {
+      const message = `This stay was booked a moment ago${dup.code ? ` (confirmation code ${dup.code})` : ''}, so it wasn’t booked again.`;
+      setError(`${message} Opening that booking.`);
+      router.push(`/bookings/${dup.id}`);
+      return { ok: false, error: `${message} Its booking page is opening — tell the guest they already have it.`, duplicate: dup };
+    }
+    if (!terms) return { ok: false, error: 'The booking terms are still loading — try again in a moment.' };
+    if (!accepted) {
+      setNeedAccept(true);
+      acceptRef.current?.focus();
+      return { ok: false, error: 'Please accept the cancellation policy to book.' };
+    }
+    booking.current = true;
     setBusy(true);
     setError('');
     try {
-      const r = await api<{ requiresPayment: boolean; checkoutUrl?: string; booking: { id: string; code?: string | null } }>('/api/bookings', {
+      const r = await api<{ requiresPayment: boolean; checkoutUrl?: string; booking: { id: string; code?: string | null; totalPrice?: number } }>('/api/bookings', {
         method: 'POST',
-        json: { propertyId, lines, checkIn, checkOut, guests, notes: notes.trim() || null, paymentMethod: method },
+        json: { propertyId, lines, checkIn, checkOut, guests, notes: notes.trim() || null, acceptPolicy: true, policyHash: terms.policyHash },
       });
       if (r.requiresPayment && r.checkoutUrl) {
         window.location.href = r.checkoutUrl;
         return { ok: false, error: 'Opening the card payment page.' };
       }
+      rememberBooking(stayKey, r.booking.id, r.booking.code ?? null);
       router.push(`/bookings/${r.booking.id}?new=1`);
-      return { ok: true, id: r.booking.id, code: r.booking.code ?? null };
+      return { ok: true, id: r.booking.id, code: r.booking.code ?? null, total: typeof r.booking.totalPrice === 'number' ? r.booking.totalPrice : null };
     } catch (e) {
       const message = (e as Error).message;
+      booking.current = false;
       setError(message);
       setBusy(false);
       return { ok: false, error: message };
@@ -328,20 +442,38 @@ function Checkout() {
   // The voice agent (the site's voice dock) sees this order and can fill in details and book on a spoken yes.
   const roomName = roomsLabel ?? rt?.name ?? quote?.roomTypeName;
   const totalText = total !== null ? price(total, quote?.currency ?? 'USD') : null;
+  const stayWords = checkIn && checkOut ? `${fmtRange(checkIn, checkOut)}, ${plural(guests, 'guest')}${rooms > 1 ? `, ${plural(rooms, 'room')}` : ''}` : '';
+  /** "the Ocean King at The Saltwater Inn, Feb 4 – 5, 2 guests, total $289" (hotel text made safe for the agent). */
+  const orderWords = `${roomName ? (multi ? `${voiceText(roomName, 160)} booked together` : `the ${voiceText(roomName, 80)}`) : 'a room'}${name ? ` at ${voiceText(name, 80)}` : ''}, ${stayWords}${totalText ? `, total ${totalText}` : ''}`;
+  /** Several room types as the voice agent names them: room_type_id and rooms each (null for one). */
+  const items = multi ? lines.map((l) => ({ roomTypeId: l.roomTypeId, rooms: l.rooms })) : null;
+  /** The voice agent must name the order it books; anything but what's on screen is refused. */
+  const differsFromScreen = (want: VoiceBookingRequest) =>
+    (!!want.propertyId && want.propertyId !== propertyId) ||
+    want.roomTypeId !== roomTypeId ||
+    want.checkIn !== checkIn ||
+    want.checkOut !== checkOut ||
+    want.guests !== guests ||
+    want.rooms !== rooms ||
+    orderItemsKey(want.items) !== orderItemsKey(items);
   useVoicePage({
     kind: 'checkout',
     propertyId,
     propertyName: name,
-    brand: p?.primaryColor ?? shell?.primaryColor,
+    brand: brandColor,
     stay: checkIn && checkOut ? { checkIn, checkOut, guests, rooms } : null,
+    order:
+      roomTypeId && checkIn && checkOut
+        ? { propertyId, roomTypeId, items, checkIn, checkOut, guests, rooms, hotel: name ?? null, room: roomName ?? null, total, currency: quote?.currency ?? 'USD' }
+        : null,
     summary:
       lines.length && checkIn && checkOut
         ? [
-            `checkout for ${roomName ? (multi ? `${roomName} booked together` : `the ${roomName}`) : 'a room'}${name ? ` at ${name}` : ''}, ${fmtRange(checkIn, checkOut)}, ${plural(guests, 'guest')}${rooms > 1 ? `, ${plural(rooms, 'room')}` : ''}${totalText ? `, total ${totalText}` : ''}`,
+            `checkout for ${orderWords}`,
             unavailable ? soldOutText.replace(/\.$/, '') : '',
             tooSmall ? `${tooSmallText.replace(/\.$/, '')} — they need to add a room` : '',
             status === 'loading' ? '' : signedIn ? `signed in as ${session?.user?.name ?? session?.user?.email}` : 'not signed in yet',
-            method === 'stripe' ? 'card payment selected' : 'paying at the hotel',
+            method === 'stripe' ? 'card payment required to confirm' : 'paying at the hotel',
           ]
             .filter(Boolean)
             .join('; ')
@@ -371,26 +503,51 @@ function Checkout() {
           missing,
         };
       },
-      confirmBooking: async (): Promise<VoiceActionResult> => {
-        if (busy) return { ok: false, error: 'It’s already booking — wait a moment.' };
+      confirmBooking: async (want): Promise<VoiceActionResult> => {
+        if (booking.current || busy) return { ok: false, error: 'It’s already booking — wait a moment.' };
+        if (differsFromScreen(want)) {
+          return {
+            ok: false,
+            // URL values only as ids and calendar days (a crafted link can't add words here).
+            error: `That isn’t the checkout on screen, so nothing was booked. The screen shows ${orderWords} (property_id ${idOrBlank(propertyId)}, room_type_id ${idOrBlank(roomTypeId)}, check_in ${checkIn}, check_out ${checkOut}, guests ${guests}, rooms ${rooms}). Read that back and ask the guest, or call start_booking for the room they want.`,
+          };
+        }
         if (quoteError) return { ok: false, error: `The price couldn’t be checked: ${(quoteError as Error).message}` };
         if (!quote) return { ok: false, error: 'The price is still loading — try again in a moment.' };
         if (unavailable) return { ok: false, error: `${soldOutText} Offer to check other rooms or dates.` };
         if (tooSmall) return { ok: false, error: `${tooSmallText} Offer to add a room.` };
+        if (!accepted) {
+          setNeedAccept(true);
+          return { ok: false, error: 'The guest needs to tick the box accepting the cancellation policy on screen first. Never accept it on their behalf.' };
+        }
         if (method === 'stripe') {
-          return { ok: false, error: 'Card payment is selected. Ask the guest to tap “Continue to payment” on screen, or to choose “Pay at the hotel” so you can book it. Never take card details by voice.' };
+          return { ok: false, error: 'Card payment is selected. Ask the guest to tap “Continue to payment” on screen. Never take card details by voice.' };
         }
         if (!signedIn) {
           askForDetails();
           return { ok: false, error: 'The guest isn’t signed in yet. Ask them to finish “Your details” on screen — email and a password, or sign in — then you can book it.', needs: 'sign in' };
         }
+        // Last check before booking: the guest answered a read-back of this order (the dock reads the transcript).
+        if (!want.guestConfirmed) return { ok: false, error: 'Ask the guest to confirm the room, dates and total first.', needs: 'guest confirmation' };
         const r = await submit();
-        if (!r.ok) return { ok: false, error: r.error };
+        if (!r.ok) return { ok: false, error: r.error, ...(r.duplicate ? { already_booked: true, code: r.duplicate.code } : {}) };
+        const paid = r.total ?? total ?? quote.total;
+        const cur = quote.currency ?? 'USD';
+        const hotel = voiceText(name, 80) || null;
+        const room = voiceText(roomName, multi ? 160 : 80) || null;
+        // What was actually booked, for the agent to read back.
         return {
           ok: true,
-          message: `Booked — pay at the hotel. Confirmation code ${r.code ?? 'on screen'}. Their booking page is opening now${config?.emailEnabled ? ' and a confirmation email is on its way' : ''}.`,
+          message: `Booked ${room ? (multi ? `${room}, one booking` : `the ${room}`) : 'the room'}${hotel ? ` at ${hotel}` : ''}, ${stayWords}, total ${price(paid, cur)} — pay at the hotel. Confirmation code ${r.code ?? 'on screen'}. Read back the hotel, room, dates and total. Their booking page is opening now${config?.emailEnabled ? ' and a confirmation email is on its way' : ''}.`,
           code: r.code,
-          total,
+          hotel,
+          room,
+          check_in: checkIn,
+          check_out: checkOut,
+          guests,
+          rooms,
+          total: paid,
+          currency: cur,
         };
       },
     },
@@ -398,7 +555,7 @@ function Checkout() {
 
   if (!lines.length || !checkIn || !checkOut) {
     return (
-      <GuestShell brandColor={shell?.primaryColor} brand={shell ? { name: shell.name, href: `/properties/${propertyId}` } : undefined}>
+      <GuestShell brandColor={brandColor} brand={name ? { name, href: `/properties/${propertyId}` } : undefined} hotel={hotel} demo={isDemo}>
         <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
           <h1 className="sr-only">Confirm and book</h1>
           <div className="mx-auto max-w-xl rounded-2xl border bg-card">
@@ -421,10 +578,13 @@ function Checkout() {
   const deadline = fmtDay(shiftDay(checkIn, -1), 'weekday');
   const cur = quote?.currency ?? 'USD';
   const totalLabel = total !== null ? price(total, cur) : '';
+  // Several room types: each one's room charges, then the hotel's taxes and fees added up across them.
+  const multiCharges = multi && quotes ? sumCharges(quotes) : [];
   const nightsCount = quote?.nights.length ?? 0;
 
   return (
-    <GuestShell brandColor={p?.primaryColor ?? shell?.primaryColor} brand={name ? { name, href: `/properties/${propertyId}` } : undefined}>
+    // The hotel's name goes back to its page with this stay still chosen.
+    <GuestShell brandColor={brandColor} brand={name ? { name, href: back } : undefined} hotel={hotel} demo={isDemo}>
       <div className="mx-auto max-w-7xl px-4 pb-16 sm:px-6">
         <Link
           href={back}
@@ -441,18 +601,26 @@ function Checkout() {
               {status === 'loading' ? (
                 <Skeleton className="h-16 rounded-xl" />
               ) : signedIn ? (
-                <div className="flex items-center justify-between gap-3 rounded-xl bg-muted px-4 py-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <UserRound className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{session?.user?.name}</p>
-                      <p className="truncate text-sm text-muted-foreground">{session?.user?.email}</p>
+                <>
+                  <div className="flex items-center justify-between gap-3 rounded-xl bg-muted px-4 py-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <UserRound className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{session?.user?.name}</p>
+                        <p className="truncate text-sm text-muted-foreground">{session?.user?.email}</p>
+                      </div>
                     </div>
+                    {/* data-voice-avoid: the voice launcher or live pill moves off this button on phones. */}
+                    <Button data-voice-avoid variant="ghost" size="sm" className="shrink-0" onClick={() => signOut({ redirect: false })}>
+                      Not you?
+                    </Button>
                   </div>
-                  <Button variant="ghost" size="sm" className="shrink-0" onClick={() => signOut({ redirect: false })}>
-                    Not you?
-                  </Button>
-                </div>
+                  {isStaffRole(session?.user?.role) && (
+                    <Callout tone="info" className="mt-3">
+                      You’re signed in as hotel staff — this booking will be under your own name.
+                    </Callout>
+                  )}
+                </>
               ) : (
                 <>
                   {needDetails && (
@@ -479,37 +647,23 @@ function Checkout() {
             </Section>
 
             <Section id="payment" title="Payment">
-              {stripe ? (
-                <fieldset>
-                  <legend className="sr-only">How would you like to pay?</legend>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {(
-                      [
-                        { value: 'pay_at_property', title: 'Pay at the hotel', text: 'Nothing is charged today. Pay when you arrive.', icon: Building2 },
-                        { value: 'stripe', title: 'Pay now by card', text: 'Secure card payment by Stripe.', icon: CreditCard },
-                      ] as const
-                    ).map((o) => (
-                      <label
-                        key={o.value}
-                        className="relative flex cursor-pointer items-start gap-3 rounded-xl border border-input p-4 transition-colors hover:bg-accent/60 has-[:checked]:border-brand has-[:checked]:bg-brand-soft has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2"
-                      >
-                        <input
-                          type="radio"
-                          name="payment"
-                          value={o.value}
-                          checked={payment === o.value}
-                          onChange={() => setPayment(o.value)}
-                          className="mt-0.5 h-5 w-5 shrink-0 accent-brand focus-visible:outline-none"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-semibold">{o.title}</span>
-                          <span className="mt-0.5 block text-sm text-muted-foreground">{o.text}</span>
-                        </span>
-                        <o.icon className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
-                      </label>
-                    ))}
+              {payNow && due ? (
+                <div className="flex items-start gap-3 rounded-xl border bg-surface-sunken p-4">
+                  <CreditCard className="mt-0.5 h-5 w-5 shrink-0 text-brand" aria-hidden />
+                  <div>
+                    <p className="text-sm font-semibold">
+                      {due.kind === 'DEPOSIT'
+                        ? `Pay a deposit of ${price(fromCents(due.dueNowCents), cur)} now by card`
+                        : `Pay ${price(fromCents(due.dueNowCents), cur)} now by card`}
+                    </p>
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      {due.kind === 'DEPOSIT'
+                        ? `The balance of ${price(fromCents(due.balanceCents), cur)} is paid at the hotel. `
+                        : ''}
+                      You’ll pay on a secure Stripe page, straight to the hotel. Your bank may ask you to verify the payment (3D Secure). Your booking is confirmed once the payment goes through.
+                    </p>
                   </div>
-                </fieldset>
+                </div>
               ) : (
                 <div className="flex items-start gap-3 rounded-xl border bg-surface-sunken p-4">
                   <Building2 className="mt-0.5 h-5 w-5 shrink-0 text-brand" aria-hidden />
@@ -529,6 +683,34 @@ function Checkout() {
                   that, contact the hotel.
                 </span>
               </p>
+              {terms && (
+                <div className="mt-4 rounded-xl border bg-surface-sunken p-4">
+                  <p className="text-sm font-semibold">Cancellation and refund policy</p>
+                  <p className="mt-1 text-sm text-muted-foreground" id="policy-text">
+                    {terms.policyText}
+                  </p>
+                  <label className="mt-3 flex min-h-10 cursor-pointer items-start gap-3 text-sm">
+                    <input
+                      ref={acceptRef}
+                      type="checkbox"
+                      checked={accepted}
+                      onChange={(e) => {
+                        setAccepted(e.target.checked);
+                        if (e.target.checked) setNeedAccept(false);
+                      }}
+                      aria-describedby="policy-text"
+                      aria-invalid={needAccept && !accepted}
+                      className="mt-0.5 h-5 w-5 shrink-0 accent-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    />
+                    <span className="font-medium">I have read and accept this cancellation and refund policy.</span>
+                  </label>
+                  {needAccept && !accepted && (
+                    <p className="mt-2 text-sm text-destructive" role="alert">
+                      Please tick the box to accept the policy and book.
+                    </p>
+                  )}
+                </div>
+              )}
               {error && (
                 <Callout tone="danger" className="mt-4" role="alert">
                   {error}
@@ -555,14 +737,14 @@ function Checkout() {
                 onClick={confirm}
                 loading={busy}
                 loadingText={method === 'stripe' ? 'Opening secure payment…' : rooms > 1 ? 'Booking your rooms…' : 'Booking your room…'}
-                disabled={!quote || unavailable || tooSmall}
+                disabled={!quote || !terms || unavailable || tooSmall}
               >
                 <Lock aria-hidden />
                 {method === 'stripe' ? 'Continue to payment' : 'Confirm booking'}
-                {totalLabel && <span className="tabular">· {totalLabel}</span>}
+                {due && payNow ? <span className="tabular">· {price(fromCents(due.dueNowCents), cur)} today</span> : totalLabel && <span className="tabular">· {totalLabel}</span>}
               </Button>
               <p className="mt-3 text-center text-xs text-muted-foreground">
-                {(p?.isDemo ?? shell?.isDemo) ? 'This is a demo hotel — book freely, nothing is charged.' : method === 'stripe' ? 'You’ll pay on the next screen.' : 'You won’t be charged today.'}
+                {isDemo ? 'This is a demo hotel — book freely, nothing is charged.' : method === 'stripe' ? 'You’ll pay on the next screen.' : 'You won’t be charged today.'}
               </p>
             </section>
           </div>
@@ -624,7 +806,16 @@ function Checkout() {
                               {plural(nightsCount, 'night')} × {price(q.averageNightly, cur)} average
                             </span>
                           </dt>
-                          <dd className="tabular">{price(q.total, cur)}</dd>
+                          <dd className="tabular">{price(q.subtotal, cur)}</dd>
+                        </div>
+                      ))}
+                      {multiCharges.map((c) => (
+                        <div key={c.key} className="flex justify-between gap-3 text-muted-foreground">
+                          <dt>
+                            {c.name}
+                            {c.kind === 'PERCENT' ? ` (${Number(c.rate.toFixed(3))}%)` : ''}
+                          </dt>
+                          <dd className="tabular">{price(c.amount, cur)}</dd>
                         </div>
                       ))}
                       <div className="flex justify-between gap-3 text-muted-foreground">
@@ -657,6 +848,25 @@ function Checkout() {
                           <dd className="tabular">{price(quote.subtotal, cur)}</dd>
                         </div>
                       )}
+                      {quote.charges?.length > 0 && (
+                        <>
+                          {nightsCount <= 7 && (
+                            <div className="flex justify-between gap-3 border-t pt-1.5 text-muted-foreground">
+                              <dt>Room total</dt>
+                              <dd className="tabular">{price(quote.subtotal, cur)}</dd>
+                            </div>
+                          )}
+                          {quote.charges.map((c) => (
+                            <div key={c.name} className="flex justify-between gap-3 text-muted-foreground">
+                              <dt>
+                                {c.name}
+                                {c.kind === 'PERCENT' ? ` (${Number(c.rate.toFixed(3))}%)` : ''}
+                              </dt>
+                              <dd className="tabular">{price(c.amount, cur)}</dd>
+                            </div>
+                          ))}
+                        </>
+                      )}
                       <div className="flex justify-between gap-3 text-muted-foreground">
                         <dt>Booking fee</dt>
                         <dd>None</dd>
@@ -669,7 +879,8 @@ function Checkout() {
                   )}
                   {quote && (
                     <p className="mt-2 text-xs text-muted-foreground">
-                      Prices in {cur === 'USD' ? 'US dollars' : cur}. Local taxes, if any, are settled with the hotel.
+                      Prices in {currencyName(cur)}.{' '}
+                      {(quotes ?? [quote]).some((q) => q.charges?.length) ? 'The total includes the hotel’s taxes and fees.' : 'Any local taxes are paid at the hotel.'}
                     </p>
                   )}
                 </div>
@@ -686,7 +897,12 @@ function Checkout() {
 function CheckoutFallback() {
   const shell = usePropertyShell();
   return (
-    <GuestShell brandColor={shell?.primaryColor} brand={shell ? { name: shell.name, href: `/properties/${shell.id}` } : undefined}>
+    <GuestShell
+      brandColor={shell?.primaryColor}
+      brand={shell ? { name: shell.name, href: `/properties/${shell.id}` } : undefined}
+      hotel={shell ? { name: shell.name } : undefined}
+      demo={shell?.isDemo}
+    >
       <div className="mx-auto max-w-7xl px-4 pb-16 sm:px-6" role="status" aria-label="Loading checkout">
         <div className="mt-3 h-10" />
         <h1 className="mt-2 font-display text-3xl tracking-tight sm:text-4xl">Confirm and book</h1>

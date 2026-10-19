@@ -1,5 +1,6 @@
 import { put, del } from '@vercel/blob';
 import { randomUUID } from 'crypto';
+import { logError } from '@/server/log';
 
 export interface UploadResult {
   url: string;
@@ -65,6 +66,6 @@ export async function deleteImage(publicId: string): Promise<void> {
   try {
     await del(publicId);
   } catch (error) {
-    console.error('Error deleting image from blob storage:', error);
+    logError('lib/cloudinary', 'Error deleting image from blob storage:', error);
   }
 }

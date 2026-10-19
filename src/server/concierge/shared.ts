@@ -7,9 +7,11 @@
 import { prisma } from '@/lib/prisma';
 import type { StayQuote } from '@/lib/dto';
 import { MAX_RESERVATION_LINES, MAX_RESERVATION_ROOMS, normalizeLines, splitParty, totalRooms, type BookingLine } from '@/lib/booking-lines';
+import { money } from '@/lib/status';
 import { diffDays, formatDay, hotelToday } from '../dates';
 import { publicSiteUrl } from '../public-url';
 import { alertTeam } from '../services/guestRequests';
+import { hotelLocale } from '../services/hotels';
 import { propertyAvailability, quoteStay } from '../services/inventory';
 import { checkoutPath } from './urls';
 
@@ -25,8 +27,8 @@ export interface StayInput {
 }
 
 /** Date rules every stay passes: not in the past, check-out after check-in, at most 30 nights. */
-export function stayDateError(s: { checkIn: string; checkOut: string }, longStayMessage: string): string | null {
-  const today = hotelToday();
+export function stayDateError(s: { checkIn: string; checkOut: string }, longStayMessage: string, timezone?: string): string | null {
+  const today = hotelToday(new Date(), timezone);
   if (s.checkIn < today) return `Check-in can’t be in the past — today is ${formatDay(today, 'weekday')}.`;
   if (s.checkOut <= s.checkIn) return 'Check-out must be after check-in.';
   if (diffDays(s.checkIn, s.checkOut) > MAX_NIGHTS) return longStayMessage;
@@ -43,9 +45,9 @@ export interface AvailabilityOption {
   /** At least `rooms` rooms free on every night. */
   available: boolean;
   rooms_left: number;
-  /** USD; null only if no quote could be made. */
+  /** Room price per night, in `currency`; null only if no quote could be made. */
   average_per_night: number | null;
-  /** USD for the whole stay and all rooms. */
+  /** The whole stay for all rooms, taxes and fees included, in `currency`. */
   total: number | null;
 }
 
@@ -53,6 +55,8 @@ export interface AvailabilityOption {
 export interface AvailabilityResult {
   /** "Fri, Oct 23 to Sun, Oct 25, 2 nights, 2 guests" */
   stay: string;
+  /** The hotel's ISO 4217 currency for every amount. */
+  currency: string;
   options: AvailabilityOption[];
 }
 
@@ -61,12 +65,14 @@ export interface AvailabilityResult {
  * prices for every active room type, or `{ error }` when the dates break a rule.
  */
 export async function availabilityOptions(propertyId: string, a: StayInput): Promise<AvailabilityResult | { error: string }> {
-  const error = stayDateError(a, 'Online stays are limited to 30 nights; offer to take a message for longer stays.');
+  const locale = await hotelLocale(propertyId);
+  const error = stayDateError(a, 'Online stays are limited to 30 nights; offer to take a message for longer stays.', locale.timezone);
   if (error) return { error };
   const types = await propertyAvailability({ propertyId, checkIn: a.checkIn, checkOut: a.checkOut, guests: a.guests, rooms: a.rooms });
   const nights = diffDays(a.checkIn, a.checkOut);
   return {
     stay: `${formatDay(a.checkIn, 'weekday')} to ${formatDay(a.checkOut, 'weekday')}, ${nights} night${nights > 1 ? 's' : ''}, ${a.guests} guest${a.guests > 1 ? 's' : ''}${a.rooms > 1 ? `, ${a.rooms} rooms` : ''}`,
+    currency: locale.currency,
     options: types.map((t) => ({
       room_type_id: t.id,
       name: t.name,
@@ -83,6 +89,7 @@ export async function availabilityOptions(propertyId: string, a: StayInput): Pro
 /** Prices for a stay at a hotel that keeps its own system (guest voice tool `check_availability` shape there). */
 export interface PriceOptionsResult {
   stay: string;
+  currency: string;
   /** Read out instead of availability: HotelOne can't see this hotel's bookings. */
   availability: string;
   options: Omit<AvailabilityOption, 'available' | 'rooms_left'>[];
@@ -98,6 +105,7 @@ export async function priceOptions(propertyId: string, a: StayInput): Promise<Pr
   if ('error' in result) return result;
   return {
     stay: result.stay,
+    currency: result.currency,
     availability: 'Not shown here: the front desk checks it. Quote the price, then offer to send a booking request so they can confirm the room is free.',
     options: result.options.map(({ available: _a, rooms_left: _r, ...o }) => o),
   };
@@ -122,7 +130,7 @@ export async function bookableStay(
   /** False for hotels that keep their own system: HotelOne can't see their availability, so their team checks it. */
   liveInventory = true,
 ): Promise<BookableStay | { error: string }> {
-  const error = stayDateError(a, longStayMessage);
+  const error = stayDateError(a, longStayMessage, (await hotelLocale(propertyId)).timezone);
   if (error) return { error };
   const rt = await prisma.roomType.findFirst({ where: { id: a.roomTypeId, propertyId, isActive: true }, select: { id: true, name: true, capacity: true } });
   if (!rt) return { error: 'That room type isn’t available here — check availability again.' };
@@ -145,8 +153,10 @@ export function stayLines(a: { roomTypeId?: string | null; rooms?: number | null
 /** One or more room types for one stay that can be booked right now. */
 export interface BookableReservation {
   lines: (BookableStay & { rooms: number; guests: number })[];
-  /** Whole stay, all rooms, USD. */
+  /** Whole stay, all rooms, taxes and fees included, in `currency`. */
   total: number;
+  /** The hotel's ISO 4217 currency. */
+  currency: string;
   rooms: number;
   nights: number;
 }
@@ -167,9 +177,9 @@ export async function bookableReservation(
   if (lines.length === 1) {
     const one = await bookableStay(propertyId, { ...a, roomTypeId: lines[0].roomTypeId, rooms: lines[0].rooms }, longStayMessage, liveInventory);
     if ('error' in one) return one;
-    return { lines: [{ ...one, rooms: lines[0].rooms, guests: a.guests }], total: one.quote.total, rooms: lines[0].rooms, nights: one.nights };
+    return { lines: [{ ...one, rooms: lines[0].rooms, guests: a.guests }], total: one.quote.total, currency: one.quote.currency, rooms: lines[0].rooms, nights: one.nights };
   }
-  const error = stayDateError(a, longStayMessage);
+  const error = stayDateError(a, longStayMessage, (await hotelLocale(propertyId)).timezone);
   if (error) return { error };
   if (!lines.length) return { error: 'Say which room types to book.' };
   if (lines.length > MAX_RESERVATION_LINES) return { error: `One booking can hold up to ${MAX_RESERVATION_LINES} room types — send a message to the team for bigger groups.` };
@@ -195,7 +205,13 @@ export async function bookableReservation(
     }
     out.push({ roomType: rt, quote, nights: diffDays(a.checkIn, a.checkOut), rooms: l.rooms, guests: party[i] });
   }
-  return { lines: out, total: Math.round(out.reduce((s, l) => s + l.quote.total, 0) * 100) / 100, rooms, nights: diffDays(a.checkIn, a.checkOut) };
+  return {
+    lines: out,
+    total: out.reduce((s, l) => s + Math.round(l.quote.total * 100), 0) / 100,
+    currency: out[0].quote.currency,
+    rooms,
+    nights: diffDays(a.checkIn, a.checkOut),
+  };
 }
 
 /** "2 × Ocean King, 1 × Garden Twin", or "Ocean King" for one line. */
@@ -224,8 +240,9 @@ export interface BookingRequestSaved {
   saved: true;
   /** Last 6 characters of the GuestRequest id, upper-cased. */
   reference: string;
-  /** USD, or null if no quote could be made. */
+  /** In `currency`, taxes and fees included; null if no quote could be made. */
   quoted_total: number | null;
+  currency: string;
   say: string;
 }
 
@@ -252,7 +269,7 @@ export async function submitBookingRequest(propertyId: string, a: BookingRequest
   const link = `${publicSiteUrl() ?? ''}${checkoutPath(propertyId, { roomTypeId: lines[0].roomTypeId, items: lines, checkIn: a.checkIn, checkOut: a.checkOut, guests: a.guests, rooms })}`;
   const message = [
     `${a.label ?? REQUEST_LABEL[a.source] ?? 'Phone'} booking request: ${linesLabel(stay.lines)}, ${formatDay(a.checkIn, 'weekday')} to ${formatDay(a.checkOut, 'weekday')} (${nights} night${nights > 1 ? 's' : ''}), ${a.guests} guest${a.guests > 1 ? 's' : ''}${rooms > 1 ? `, ${rooms} rooms` : ''}.`,
-    total !== null ? `Quoted total: $${total.toFixed(2)}.` : '',
+    total !== null ? `Quoted total: ${money(total, { currency: stay.currency })}.` : '',
     a.notes ? `Notes: ${a.notes.trim()}${/[.!?]$/.test(a.notes.trim()) ? '' : '.'}` : '',
     liveInventory ? `Confirm with the guest, then send them this link to finish booking: ${link}` : `Check ${stay.lines.length > 1 ? 'they’re' : 'it’s'} free in your system, book it there, then confirm with the guest.`,
   ]
@@ -264,6 +281,7 @@ export async function submitBookingRequest(propertyId: string, a: BookingRequest
     saved: true,
     reference: r.id.slice(-6).toUpperCase(),
     quoted_total: total,
+    currency: stay.currency,
     say: liveInventory
       ? `I’ve sent your request to the team — they’ll confirm and send you a link to finish booking${a.email ? ' by email' : ''}. It isn’t booked until then.`
       : `I’ve sent your request to the front desk — they’ll check the room is free and ${a.phone ? 'call you back' : 'email you'} to confirm. It isn’t booked until then.`,
@@ -287,14 +305,40 @@ export async function reservationRooms(b: { groupCode: string | null; userId: st
 /** Normalises a spoken or typed confirmation code ("abc-123" → "ABC123"). */
 export const normalizeBookingCode = (code: string) => code.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+/** A name for comparing: trimmed, single spaces, lower case. */
+const nameKey = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
+
+/**
+ * Whether the last name a guest gives matches the one stored. Exact (case
+ * and spacing aside) for every booking. Direct bookings by API key store
+ * everything after the first word of the name the integration sent ("Mary
+ * Jane Watson" → "Jane Watson"), so for those (`direct`) the trailing words
+ * also match ("Watson", "Jane Watson") — the confirmation code is still
+ * required either way.
+ */
+export function lastNameMatches(stored: string, given: string, direct: boolean): boolean {
+  const s = nameKey(stored);
+  const g = nameKey(given);
+  if (!g || !s) return false;
+  if (s === g) return true;
+  // "Smith" finds a stored "Lee Smith" (middle names end up in the last name); the code is still required.
+  void direct;
+  return s.endsWith(` ${g}`);
+}
+
 /**
  * Finds a booking by confirmation code and the guest's last name (both must
- * match; case-insensitive name). Scoped to one hotel when `propertyId` is
- * given (the hotel voice tools); codes are unique platform-wide otherwise.
+ * match; see lastNameMatches). Scoped to one hotel when `propertyId` is given
+ * (the hotel voice tools); codes are unique platform-wide otherwise.
  */
 export async function lookupBooking(q: { propertyId?: string; code: string; lastName: string }) {
-  return prisma.booking.findFirst({
-    where: { ...(q.propertyId ? { propertyId: q.propertyId } : {}), code: normalizeBookingCode(q.code), user: { lastName: { equals: q.lastName.trim(), mode: 'insensitive' } } },
-    include: { roomType: { select: { name: true } }, property: { select: { id: true, name: true, phone: true } } },
+  const code = normalizeBookingCode(q.code);
+  if (!code) return null;
+  const found = await prisma.booking.findFirst({
+    where: { ...(q.propertyId ? { propertyId: q.propertyId } : {}), code },
+    include: { roomType: { select: { name: true } }, property: { select: { id: true, name: true, phone: true, timezone: true } }, user: { select: { lastName: true } } },
   });
+  if (!found || !lastNameMatches(found.user.lastName, q.lastName, !!found.guestEmail)) return null;
+  const { user: _user, ...booking } = found;
+  return booking;
 }
