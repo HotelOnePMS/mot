@@ -43,6 +43,7 @@ interface KeysResponse {
   canCreateAllHotels: boolean;
   /** False while the hotel is hidden from guests. */
   listed: boolean;
+  voiceOnly?: boolean;
 }
 
 const code = 'rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[0.8125rem] text-foreground';
@@ -75,7 +76,7 @@ function CopyField({ label, value, copyLabel, copiedLabel, prose = false }: { la
 }
 
 /** The hotel's own MCP link, a message for guests, and what assistants can do with it. */
-function HotelLink({ origin, hotelId, hotelName, listed }: { origin: string; hotelId: string; hotelName: string; listed?: boolean }) {
+function HotelLink({ origin, hotelId, hotelName, listed, voiceOnly }: { origin: string; hotelId: string; hotelName: string; listed?: boolean; voiceOnly?: boolean }) {
   const url = origin ? `${origin}/api/mcp/hotels/${hotelId}` : '';
   const message = origin
     ? `Book ${hotelName} with your AI assistant: add ${url} as a connector in ChatGPT, Claude, Grok or Le Chat, then just ask for a room. How to add it: ${origin}/assistants`
@@ -98,7 +99,19 @@ function HotelLink({ origin, hotelId, hotelName, listed }: { origin: string; hot
             title="Your hotel’s assistant link"
             description="Guests add this link to their AI assistant once. After that they can ask about your hotel and book — just by asking."
           />
-          {listed === false && (
+          {voiceOnly ? (
+            <Callout
+              tone="warning"
+              title="Voice-only hotels aren’t bookable by assistants"
+              action={
+                <Button asChild size="sm" variant="outline" className="bg-surface">
+                  <Link href="/admin/connect">Connect your PMS</Link>
+                </Button>
+              }
+            >
+              {hotelName} takes bookings in its own system, so assistants can’t find or book it on HotelOne. Keep your PMS or move everything to HotelOne to use this link.
+            </Callout>
+          ) : listed === false && (
             <Callout
               tone="warning"
               title="Your hotel is hidden from guests"
@@ -464,7 +477,7 @@ export default function AssistantsPage() {
         </div>
       ) : (
         <>
-          <HotelLink origin={origin} hotelId={propertyId} hotelName={property.name} listed={keysData?.listed} />
+          <HotelLink origin={origin} hotelId={propertyId} hotelName={property.name} listed={keysData?.listed} voiceOnly={keysData?.voiceOnly} />
 
           {canManageKeys ? (
             <ApiKeys propertyId={propertyId} hotelName={property.name} origin={origin} />

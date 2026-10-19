@@ -153,7 +153,9 @@ async function desiredSkills(propertyId: string): Promise<ConfigSkill[] | null> 
   out.push({
     key: 'policies',
     title: 'Check-in, check-out and cancellation',
-    description: 'Check-in and check-out times, and the free cancellation and date-change policy. Use when a guest asks when they can arrive or must leave, or about cancelling or changing dates.',
+    description: runsOnHotelOne(p.setupPath)
+      ? 'Check-in and check-out times, and the free cancellation and date-change policy. Use when a guest asks when they can arrive or must leave, or about cancelling or changing dates.'
+      : 'Check-in and check-out times, and the hotel’s cancellation policy. Use when a guest asks when they can arrive or must leave, or about cancelling or changing dates.',
     audience: 'GUEST',
     kind: 'ANSWER',
     body: {

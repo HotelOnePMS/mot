@@ -178,7 +178,7 @@ const SCHEMAS: Record<string, JsonSchema> = {
     rooms: int(),
     freeChangesUntil: nullable(str('e.g. "3:00 PM on Thu, Oct 22"; null once passed.')),
     manage: str(),
-    bookingUrl: str(undefined, { format: 'uri' }),
+    bookingUrl: nullable(str('The guest’s booking page (they sign in to change or cancel). Null for direct bookings made with an API key: follow manage instead.', { format: 'uri' })),
   }),
 };
 

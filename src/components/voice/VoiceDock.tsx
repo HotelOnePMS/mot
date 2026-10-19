@@ -97,6 +97,8 @@ interface VoiceStatusResponse {
     name: string;
     primaryColor: string | null;
     available: boolean;
+    /** The front desk can book on screen; otherwise it takes booking requests. */
+    bookable: boolean;
   } | null;
 }
 
@@ -106,6 +108,8 @@ interface DockTarget {
   propertyId: string | null;
   name: string;
   brand: string | null;
+  /** Can book on screen (confirm_booking). Hotels on their own system take booking requests. */
+  bookable: boolean;
 }
 
 interface DockSession extends DockTarget {
@@ -295,7 +299,8 @@ function describePage(page: VoicePage, s: DockSession): string {
     other: "another page of the site",
   };
   const place = voiceText(page.summary, 600) || fallback[page.kind];
-  const ids = page.kind === "checkout" ? orderIds(page.order) : "";
+  // Request-only front desks (hotels on their own system) don't book on screen.
+  const ids = page.kind === "checkout" && s.bookable ? orderIds(page.order) : "";
   if (s.scope === "hotel") {
     if (page.propertyId && page.propertyId === s.propertyId)
       return `The guest is on ${place}.${ids}`;
@@ -387,6 +392,8 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
           propertyId: pid,
           name: page.propertyName || status.hotel.name,
           brand: page.brand ?? status.hotel.primaryColor,
+          // Older status responses had no flag: those hotels could all book.
+          bookable: status.hotel.bookable !== false,
         };
       }
     } else if (status.concierge) {
@@ -395,6 +402,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
         propertyId: null,
         name: PRODUCT_NAME,
         brand: null,
+        bookable: true,
       };
     }
   }
@@ -508,6 +516,11 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
         call.name === "fill_guest_details" ||
         call.name === "confirm_booking"
       ) {
+        if (s && !s.bookable)
+          return {
+            error:
+              "This hotel’s team confirms bookings themselves: use request_booking instead.",
+          };
         // The guest answered the read-back but their words haven't arrived yet (speech
         // recognition can trail the model): give them a moment before deciding.
         if (call.name === "confirm_booking" && !navigating()) {
@@ -832,6 +845,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
   const contextOrder =
     session &&
     live &&
+    session.bookable &&
     (session.scope === "global" || page.propertyId === session.propertyId)
       ? pageOrderKey(page)
       : null;
