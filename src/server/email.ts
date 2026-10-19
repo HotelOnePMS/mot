@@ -317,3 +317,51 @@ export async function sendGuestRequestAlert(data: GuestRequestAlertData): Promis
     console.error('[email] Failed to send message alert:', error);
   }
 }
+
+export interface PasswordResetEmailData {
+  to: string;
+  firstName: string;
+  /** Absolute one-time link to /reset-password?token=… */
+  resetUrl: string;
+  /** How long the link works, in minutes. */
+  expiresInMinutes: number;
+}
+
+/**
+ * Send the password-reset link. Without RESEND_API_KEY nothing is sent: in
+ * development the link is printed to the server log so the flow can be tried;
+ * in production only a warning is logged (a live reset link must never reach logs).
+ */
+export async function sendPasswordResetEmail(data: PasswordResetEmailData): Promise<void> {
+  if (!resend) {
+    if (process.env.NODE_ENV === 'production') {
+      console.warn('[email] Password reset requested but RESEND_API_KEY is not configured — no email was sent.');
+    } else {
+      console.log(`[email] (dev) Password reset link for ${data.to}: ${data.resetUrl}`);
+    }
+    return;
+  }
+  const name = escapeHtml(oneLine(data.firstName) || 'there');
+  const url = escapeHtml(data.resetUrl);
+  const html = `<!doctype html><html><body style="margin:0;padding:24px;background:${C.page};font-family:${FONT};color:${C.ink}">
+<div style="max-width:480px;margin:0 auto;background:${C.card};border:1px solid ${C.border};border-radius:12px;padding:28px">
+<p style="margin:0 0 12px;font-size:18px;font-weight:600">Reset your ${PRODUCT_NAME} password</p>
+<p style="margin:0 0 20px;font-size:15px;line-height:1.5">Hi ${name}, we got a request to reset the password for your account. This link works once and expires in ${data.expiresInMinutes} minutes.</p>
+<p style="margin:0 0 24px"><a href="${url}" style="display:inline-block;background:${C.primary};color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 20px;border-radius:8px">Choose a new password</a></p>
+<p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:${C.muted}">If the button doesn’t work, paste this address into your browser:<br><span style="word-break:break-all">${url}</span></p>
+<p style="margin:0;font-size:13px;line-height:1.5;color:${C.muted}">Didn’t ask for this? You can ignore this email — your password won’t change.</p>
+</div></body></html>`;
+  const text = [
+    `Hi ${oneLine(data.firstName) || 'there'},`,
+    '',
+    `We got a request to reset your ${PRODUCT_NAME} password. This link works once and expires in ${data.expiresInMinutes} minutes:`,
+    data.resetUrl,
+    '',
+    'Didn’t ask for this? You can ignore this email — your password won’t change.',
+  ].join('\n');
+  try {
+    await resend.emails.send({ from: fromAddress, to: data.to, subject: `Reset your ${PRODUCT_NAME} password`, html, text });
+  } catch (error) {
+    console.error('[email] Failed to send password reset email:', error);
+  }
+}

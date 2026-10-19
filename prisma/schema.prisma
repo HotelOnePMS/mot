@@ -31,8 +31,24 @@ model User {
   housekeepingTasks  RoomHousekeeping[]
   // Agentic-mode audit trail entries created by this user
   agentAuditLogs     AgentAuditLog[]
+  // Pending password-reset links (only a hash of each token is stored)
+  passwordResetTokens PasswordResetToken[]
 
   @@map("users")
+}
+
+/// One-time password-reset link. Only the SHA-256 of the emailed token is stored.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 model Property {

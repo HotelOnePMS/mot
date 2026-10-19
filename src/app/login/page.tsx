@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Field } from '@/components/ui/label';
 import { canAccessConsolePath, homeForRole, isStaffRole } from '@/lib/routes';
 import { cn } from '@/lib/utils';
-import { PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL, demoEmail } from '@/config/product';
+import { PRODUCT_NAME, demoEmail } from '@/config/product';
 
 const DEMO_ENABLED = process.env.NEXT_PUBLIC_DEMO_MODE === 'true' || (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_DEMO_MODE !== 'false');
 const DEMO_PASSWORD = 'demo1234';
@@ -145,12 +145,12 @@ function LoginForm() {
             </div>
           </Field>
           {/* Outside the <label>, top-right of the field. */}
-          <a
-            href={`mailto:${PRODUCT_SUPPORT_EMAIL}?subject=${encodeURIComponent(`${PRODUCT_NAME} password reset`)}`}
+          <Link
+            href="/forgot-password"
             className="absolute right-0 top-0 rounded-sm text-xs font-medium leading-5 text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Forgot password?
-          </a>
+          </Link>
         </div>
 
         {error && (
