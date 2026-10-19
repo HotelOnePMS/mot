@@ -93,7 +93,7 @@ Open http://localhost:3000 and use the one-click demo logins on `/login` (passwo
 | `HOTELONE_PUBLIC_URL` | | Public https address for phone-line webhooks and booking links (default: `NEXT_PUBLIC_SITE_URL`, else the Vercel production domain). `STAYOS_PUBLIC_URL` is still accepted |
 | `VOICE_PHONE_MAX_CALLS_PER_HOTEL_HOUR`, `VOICE_PHONE_MAX_CALLS_PER_HOUR` | | Phone-call ceilings per hotel and across hotels (defaults 120 / 300), separate from the booking page's |
 | `ELEVENLABS_PHONE_AUDIO_FORMAT` | | Phone agent audio (default `ulaw_8000`, right for Twilio and SIP/PCMU; `auto` leaves it to ElevenLabs) |
-| `ELEVENLABS_GUEST_AGENT_ID`, `ELEVENLABS_STAFF_AGENT_ID` | | Use your own ElevenLabs agents instead (they need the same client tools and prompt/first-message overrides enabled) |
+| `ELEVENLABS_GUEST_AGENT_ID`, `ELEVENLABS_STAFF_AGENT_ID` | | Use your own ElevenLabs agents instead (they need the same client tools, and the System prompt and First message overrides switched on under Security) |
 | `VOICE_PROVIDER` | | `elevenlabs` or `openai` to force a provider |
 | `OPENAI_API_KEY` | voice / bridge | Voice front desk on GPT-Live (when ElevenLabs isn't set), and the bridge operator |
 | `OPENAI_LIVE_MODEL` | | Voice model (default `gpt-live-1`) |

@@ -7,8 +7,10 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 
 interface SessionResponse {
   signedUrl?: string;
-  prompt?: string;
-  firstMessage?: string;
+  /** HotelOne's own agents: the hotel's prompt and greeting. */
+  dynamicVariables?: Record<string, string>;
+  /** A bring-your-own agent with overrides enabled in its Security settings. */
+  overrides?: { prompt: string; firstMessage: string };
   tools?: string[];
   token?: string;
   error?: string;
@@ -26,7 +28,7 @@ const friendly = (message: string) => message.replace(/^Server error:\s*/i, '').
 /**
  * ElevenLabs Agents over a WebSocket. The server mints a single-use signed
  * URL for HotelOne's private agent; the hotel's prompt and greeting go up as
- * overrides; tools the agent calls run in the browser (client tools) through
+ * dynamic variables (overrides for a bring-your-own agent); tools the agent calls run in the browser (client tools) through
  * the same HotelOne endpoints as GPT-Live, so permission checks and confirm
  * plans are unchanged.
  */
@@ -140,7 +142,9 @@ export function useElevenLabsVoice({ propertyId, audience, scope, onToolCall, on
       connecting = true;
       const started = await Conversation.startSession({
         signedUrl: body.signedUrl,
-        overrides: { agent: { prompt: { prompt: body.prompt }, firstMessage: body.firstMessage } },
+        ...(body.overrides
+          ? { overrides: { agent: { prompt: { prompt: body.overrides.prompt }, firstMessage: body.overrides.firstMessage } } }
+          : { dynamicVariables: body.dynamicVariables }),
         clientTools,
         // Mute pressed while connecting applies before any audio is sent.
         onConversationCreated: (c) => {
