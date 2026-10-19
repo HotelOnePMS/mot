@@ -12,6 +12,7 @@ import { prisma } from '@/lib/prisma';
 import { requirePermission } from '../authz';
 import { badRequest, conflict, DomainError, notFound } from '../errors';
 import { recordAudit, type OpContext } from '../services/audit';
+import { scheduleConfigSkillSync } from '../skills/config';
 import { open, seal, vaultAvailable } from '../vault';
 import { coverage, matchContract } from './contract';
 import { toDomainError } from './errors';
@@ -147,6 +148,7 @@ export async function connectMcp(ctx: OpContext, propertyId: string, input: Conn
     return tx.pmsConnection.update({ where: { id: c.id }, data: { credentialsCipher: seal(sealedValue, c.id) } });
   });
   await prisma.property.update({ where: { id: propertyId }, data: { setupPath: 'BRIDGE' } });
+  scheduleConfigSkillSync(propertyId); // the policy answer follows the setup path
   const { mapping } = await cacheTools(propertyId, connection, probe.tools);
   const cov = coverage(mapping);
   await recordAudit(

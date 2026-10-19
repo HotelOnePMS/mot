@@ -9,7 +9,8 @@ import { after } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { money } from '@/lib/status';
 import { cleanFaqs, hotelPolicy, runsOnHotelOne } from '../concierge/facts';
-import { cleanSkillText, skillKey, type AnswerBody, type SkillAudience } from './types';
+import { cleanSkillText, shortHash, skillKey, type AnswerBody, type SkillAudience } from './types';
+import { logError } from '@/server/log';
 
 /** Tools discovered on a hotel's PMS MCP server (src/server/pms/tools.ts) — CONFIG rows this sync leaves alone. */
 const PMS_TOOL_KIND = 'PMS_TOOL';
@@ -22,6 +23,54 @@ interface ConfigSkill {
   audience: SkillAudience;
   kind: 'ANSWER';
   body: AnswerBody;
+  /** FAQ answers: the question, normalised (`faqIdentity`), so a sync finds the same answer whatever its key was. */
+  question?: string;
+}
+
+/** A question as FAQ syncs compare it: case, accents, spacing and punctuation don't count. */
+export function faqIdentity(question: string): string {
+  return cleanSkillText(question)
+    .normalize('NFKD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+const FAQ_DESCRIPTION = /^Hotel FAQ\. Use when a guest asks: "([\s\S]*)"$/;
+
+/** The question a stored FAQ answer is for: from its description (the title is clipped at 120 characters). */
+function storedQuestion(row: { title: string; description: string }): string {
+  return row.description.match(FAQ_DESCRIPTION)?.[1] ?? row.title;
+}
+
+/**
+ * Keys for a hotel's FAQs, one per question and the same whatever order the
+ * FAQs are in: "faq-<question slug>", or — when two different questions
+ * share a slug (long questions are cut at 52 characters) — the slug plus a
+ * hash of the question. The same question asked twice with another answer
+ * gets a hash of that answer; an exact repeat is skipped (null).
+ */
+function faqKeys(faqs: { q: string; a: string }[]): (string | null)[] {
+  const questionsBySlug = new Map<string, Set<string>>();
+  for (const f of faqs) {
+    const slug = skillKey(f.q, 52);
+    questionsBySlug.set(slug, (questionsBySlug.get(slug) ?? new Set()).add(faqIdentity(f.q)));
+  }
+  const used = new Set<string>();
+  const seen = new Set<string>();
+  return faqs.map((f) => {
+    const id = faqIdentity(f.q);
+    const pair = `${id}\n${faqIdentity(f.a)}`;
+    if (seen.has(pair)) return null; // the same question and answer again
+    seen.add(pair);
+    const slug = skillKey(f.q, 52);
+    let key = (questionsBySlug.get(slug)?.size ?? 0) > 1 ? `faq-${skillKey(f.q, 43)}-${shortHash(id)}` : `faq-${slug}`;
+    if (used.has(key)) key = `${key.slice(0, 70)}-${shortHash(faqIdentity(f.a))}`;
+    if (used.has(key)) return null;
+    used.add(key);
+    return key;
+  });
 }
 
 /** What `syncConfigSkills` did. */
@@ -37,7 +86,7 @@ export interface ConfigSyncResult {
 }
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
-const price = (n: number) => money(n, { cents: !Number.isInteger(n) });
+const price = (n: number, currency: string) => money(n, { cents: !Number.isInteger(n), currency });
 const list = (items: string[]) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
 
 /** JSON with sorted keys, so JSONB's key order never looks like a change. */
@@ -52,6 +101,7 @@ async function desiredSkills(propertyId: string): Promise<ConfigSkill[] | null> 
     where: { id: propertyId },
     select: {
       name: true,
+      currency: true,
       address: true,
       city: true,
       state: true,
@@ -68,17 +118,23 @@ async function desiredSkills(propertyId: string): Promise<ConfigSkill[] | null> 
   const policy = hotelPolicy(p.setupPath, p.voiceAgent);
   const out: ConfigSkill[] = [];
 
-  const used = new Set<string>();
-  for (const f of cleanFaqs(p.voiceAgent?.faqs)) {
-    // FAQ text is typed by hotel staff and read by models: one-line questions, no control characters.
-    const q = cleanSkillText(f.q);
-    const a = cleanSkillText(f.a, { multiline: true });
-    if (!q || !a) continue;
-    const base = `faq-${skillKey(q, 52)}`;
-    let key = base;
-    for (let i = 2; used.has(key); i++) key = `${base}-${i}`;
-    used.add(key);
-    out.push({ key, title: clip(q, 120), description: clip(`Hotel FAQ. Use when a guest asks: "${q.replace(/"/g, '”')}"`, 500), audience: 'GUEST', kind: 'ANSWER', body: { answer: clip(a, 4000) } });
+  // FAQ text is typed by hotel staff and read by models: one-line questions, no control characters.
+  const faqs = cleanFaqs(p.voiceAgent?.faqs)
+    .map((f) => ({ q: cleanSkillText(f.q), a: cleanSkillText(f.a, { multiline: true }) }))
+    .filter((f) => f.q && f.a);
+  const keys = faqKeys(faqs);
+  for (const [i, { q, a }] of faqs.entries()) {
+    const key = keys[i];
+    if (!key) continue;
+    out.push({
+      key,
+      title: clip(q, 120),
+      description: clip(`Hotel FAQ. Use when a guest asks: "${q.replace(/"/g, '”')}"`, 500),
+      audience: 'GUEST',
+      kind: 'ANSWER',
+      body: { answer: clip(a, 4000) },
+      question: faqIdentity(q),
+    });
   }
 
   const hotelAmenities = p.amenities.map((a) => a.trim()).filter(Boolean);
@@ -99,7 +155,9 @@ async function desiredSkills(propertyId: string): Promise<ConfigSkill[] | null> 
   out.push({
     key: 'policies',
     title: 'Check-in, check-out and cancellation',
-    description: 'Check-in and check-out times, and the free cancellation and date-change policy. Use when a guest asks when they can arrive or must leave, or about cancelling or changing dates.',
+    description: runsOnHotelOne(p.setupPath)
+      ? 'Check-in and check-out times, and the free cancellation and date-change policy. Use when a guest asks when they can arrive or must leave, or about cancelling or changing dates.'
+      : 'Check-in and check-out times, and the hotel’s cancellation policy. Use when a guest asks when they can arrive or must leave, or about cancelling or changing dates.',
     audience: 'GUEST',
     kind: 'ANSWER',
     body: {
@@ -112,7 +170,7 @@ async function desiredSkills(propertyId: string): Promise<ConfigSkill[] | null> 
   if (p.roomTypes.length) {
     const rooms = p.roomTypes.map((rt) => {
       const extras = rt.amenities.slice(0, 4).join(', ');
-      return `${rt.name} — sleeps ${rt.capacity}, from ${price(Number(rt.basePrice))} a night${extras ? ` (${extras})` : ''}`;
+      return `${rt.name} — sleeps ${rt.capacity}, from ${price(Number(rt.basePrice), p.currency)} a night${extras ? ` (${extras})` : ''}`;
     });
     out.push({
       key: 'rooms',
@@ -137,11 +195,14 @@ async function desiredSkills(propertyId: string): Promise<ConfigSkill[] | null> 
 
 /**
  * (Re)generates a hotel's CONFIG skills from its settings: one answer per
- * voice FAQ ("faq-<question-slug>"), plus "amenities" (when any are listed),
- * "policies", "rooms" (when it has active room types) and "contact".
- * Idempotent: unchanged skills aren't written, and a skill the hotel switched
- * off stays off. Removes CONFIG skills that no longer apply; never touches
- * LEARNED or MANUAL skills.
+ * voice FAQ ("faq-<question-slug>", see `faqKeys`), plus "amenities" (when
+ * any are listed), "policies", "rooms" (when it has active room types) and
+ * "contact". Idempotent: unchanged skills aren't written, and a skill the
+ * hotel switched off stays off. An FAQ answer follows its question, not its
+ * place in the list: reordering or removing FAQs never moves an on/off switch
+ * to another answer, and answers stored under older keys are re-keyed with
+ * their status and use count. Removes CONFIG skills that no longer apply;
+ * never touches LEARNED or MANUAL skills.
  */
 export async function syncConfigSkills(propertyId: string): Promise<ConfigSyncResult> {
   const result: ConfigSyncResult = { created: 0, updated: 0, deleted: 0, unchanged: 0, skipped: 0, total: 0 };
@@ -150,40 +211,83 @@ export async function syncConfigSkills(propertyId: string): Promise<ConfigSyncRe
     prisma.agentSkill.findMany({ where: { propertyId }, select: { id: true, key: true, source: true, title: true, description: true, audience: true, kind: true, body: true, parameters: true } }),
   ]);
   if (!desired) return result;
+  type Row = (typeof existing)[number];
   const byKey = new Map(existing.map((s) => [s.key, s]));
-  const wanted = new Set<string>();
+  // PMS_TOOL rows are CONFIG too (generated from the hotel's PMS, src/server/pms) but not ours to change.
+  const ours = (s: Row) => s.source === 'CONFIG' && s.kind !== PMS_TOOL_KIND;
+  const faqRows = existing.filter((s) => ours(s) && s.kind === 'ANSWER' && s.key.startsWith('faq-'));
+  const questionOf = new Map(faqRows.map((s) => [s.id, faqIdentity(storedQuestion(s))]));
 
+  // The row each generated skill updates: the one with its key — for an FAQ, only if it answers the same question —
+  // else the FAQ row that answers its question under another key (moved, or stored under an older key).
+  const target = new Map<ConfigSkill, Row>();
+  const taken = new Set<string>();
+  const blocked = new Set<ConfigSkill>();
+  // A question asked twice (with different answers): its rows are told apart by answer too.
+  const asked = desired.map((d) => d.question).filter(Boolean);
+  const twice = new Set(asked.filter((q, i) => asked.indexOf(q) !== i));
   for (const d of desired) {
     const current = byKey.get(d.key);
-    if (current && (current.source !== 'CONFIG' || current.kind === PMS_TOOL_KIND)) {
-      result.skipped++;
-      continue;
+    if (current && !ours(current)) blocked.add(d); // a LEARNED or MANUAL skill with this key wins
+    else if (current && (!d.question || (questionOf.get(current.id) === d.question && (!twice.has(d.question) || stable(current.body) === stable(d.body))))) {
+      target.set(d, current);
+      taken.add(current.id);
     }
-    wanted.add(d.key);
-    if (current) {
-      const same = current.title === d.title && current.description === d.description && current.audience === d.audience && current.kind === d.kind && stable(current.body) === stable(d.body) && current.parameters === null;
-      if (same) {
-        result.unchanged++;
-        continue;
-      }
-      await prisma.agentSkill.update({ where: { id: current.id }, data: { title: d.title, description: d.description, audience: d.audience, kind: d.kind, body: d.body as unknown as Prisma.InputJsonValue, parameters: Prisma.DbNull } });
-      result.updated++;
-      continue;
+  }
+  for (const d of desired) {
+    if (!d.question || blocked.has(d) || target.has(d)) continue;
+    const candidates = faqRows.filter((s) => !taken.has(s.id) && questionOf.get(s.id) === d.question);
+    const row = candidates.find((s) => stable(s.body) === stable(d.body)) ?? candidates[0];
+    if (row) {
+      target.set(d, row);
+      taken.add(row.id);
     }
+  }
+  result.skipped = blocked.size;
+
+  // Rows no generated skill uses go first, so their keys are free for the ones that move or are new.
+  const stale = existing.filter((s) => ours(s) && !taken.has(s.id)).map((s) => s.id);
+  if (stale.length) result.deleted = (await prisma.agentSkill.deleteMany({ where: { id: { in: stale }, source: 'CONFIG', kind: { not: PMS_TOOL_KIND } } })).count;
+
+  // Re-key moved FAQ answers in one transaction, through temporary keys so two answers can swap keys.
+  const moves = [...target].filter(([d, row]) => row.key !== d.key);
+  if (moves.length) {
     try {
-      await prisma.agentSkill.create({ data: { propertyId, key: d.key, title: d.title, description: d.description, audience: d.audience, kind: d.kind, body: d.body as unknown as Prisma.InputJsonValue, source: 'CONFIG', status: 'ACTIVE' } });
-      result.created++;
+      await prisma.$transaction([
+        ...moves.map(([, row]) => prisma.agentSkill.update({ where: { id: row.id }, data: { key: `moving-${row.id}` } })),
+        ...moves.map(([d, row]) => prisma.agentSkill.update({ where: { id: row.id }, data: { key: d.key } })),
+      ]);
     } catch (e) {
-      // A sync running at the same time created it first.
-      if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
-      result.unchanged++;
+      // A sync running at the same time moved them first; the next sync tidies up.
+      if (!(e instanceof Prisma.PrismaClientKnownRequestError && (e.code === 'P2002' || e.code === 'P2025'))) throw e;
+      console.warn('[skills] FAQ keys changed during a sync for', propertyId);
+      for (const [d] of moves) target.delete(d);
     }
   }
 
-  // PMS_TOOL rows are CONFIG too (generated from the hotel's PMS, src/server/pms) but not ours to remove.
-  const stale = existing.filter((s) => s.source === 'CONFIG' && s.kind !== PMS_TOOL_KIND && !wanted.has(s.key)).map((s) => s.id);
-  if (stale.length) result.deleted = (await prisma.agentSkill.deleteMany({ where: { id: { in: stale }, source: 'CONFIG', kind: { not: PMS_TOOL_KIND } } })).count;
-  result.total = wanted.size;
+  for (const d of desired) {
+    if (blocked.has(d)) continue;
+    const current = target.get(d);
+    if (current) {
+      const same = current.key === d.key && current.title === d.title && current.description === d.description && current.audience === d.audience && current.kind === d.kind && stable(current.body) === stable(d.body) && current.parameters === null;
+      if (same) {
+        result.unchanged++;
+      } else {
+        await prisma.agentSkill.update({ where: { id: current.id }, data: { title: d.title, description: d.description, audience: d.audience, kind: d.kind, body: d.body as unknown as Prisma.InputJsonValue, parameters: Prisma.DbNull } });
+        result.updated++;
+      }
+    } else {
+      try {
+        await prisma.agentSkill.create({ data: { propertyId, key: d.key, title: d.title, description: d.description, audience: d.audience, kind: d.kind, body: d.body as unknown as Prisma.InputJsonValue, source: 'CONFIG', status: 'ACTIVE' } });
+        result.created++;
+      } catch (e) {
+        // A sync running at the same time created it first.
+        if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
+        result.unchanged++;
+      }
+    }
+    result.total++;
+  }
   return result;
 }
 
@@ -201,7 +305,7 @@ export async function ensureConfigSkills(propertyId: string): Promise<void> {
     if (n === 0) await syncConfigSkills(propertyId);
     ensured.add(propertyId);
   } catch (e) {
-    console.error('[skills] could not generate skills for', propertyId, e);
+    logError('skills', 'could not generate skills for', propertyId, e);
   }
 }
 
@@ -214,7 +318,7 @@ export function scheduleConfigSkillSync(propertyId: string): void {
   const run = () =>
     syncConfigSkills(propertyId).then(
       () => undefined,
-      (e) => console.error('[skills] config sync failed for', propertyId, e),
+      (e) => logError('skills', 'config sync failed for', propertyId, e),
     );
   try {
     after(run);

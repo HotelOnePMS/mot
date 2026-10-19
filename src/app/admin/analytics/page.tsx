@@ -1,6 +1,8 @@
+
 'use client';
 
 import * as React from 'react';
+import { useCurrency } from '@/components/hotel/currency';
 import Link from 'next/link';
 import useSWR from 'swr';
 import { BedDouble, ChartLine, CircleDollarSign, Gauge, TrendingUp } from 'lucide-react';
@@ -26,7 +28,10 @@ const RANGES: Record<Range, { label: string; from: (t: string) => string; to: (t
 };
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const WEEKDAYS_LONG = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-const whole = (n: number) => money(n, { cents: false });
+const useWhole = () => {
+  const currency = useCurrency();
+  return (n: number) => money(n, { cents: false, currency });
+};
 
 /** Compact tiles on phones: two per row, icon hidden so the number has room. */
 const TILE = 'p-3.5 sm:p-4 [&>[aria-hidden]]:hidden sm:[&>[aria-hidden]]:flex';
@@ -45,8 +50,9 @@ function summarize(days: OccupancyDay[]) {
 }
 
 export default function AnalyticsPage() {
-  const { ctx } = useConsole();
-  const today = ctx?.today;
+  const whole = useWhole();
+  const { today: hotelDay } = useConsole();
+  const today = hotelDay || undefined;
   const [range, setRange] = React.useState<Range>('next30');
   const from = today ? RANGES[range].from(today) : undefined;
   const to = today ? RANGES[range].to(today) : undefined;

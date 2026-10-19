@@ -8,6 +8,7 @@ import { Check, ChevronDown, CircleDashed, CirclePause, CheckCircle2, Eye, EyeOf
 import { api, fetcher } from '@/lib/fetcher';
 import { formatPhone } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { LABELS, TERMS } from '@/config/copy';
 import { PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL } from '@/config/product';
 import { Button, IconButton } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -316,7 +317,7 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
       title="You’re looking at a demo hotel"
       action={
         <Button asChild size="sm" variant="outline" className="bg-surface">
-          <Link href="/onboarding">Get started</Link>
+          <Link href="/onboarding">{LABELS.hotelSignup}</Link>
         </Button>
       }
     >
@@ -483,7 +484,7 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
             </ul>
             {/* The ElevenLabs agent's name and ID are only for whoever runs that account (step 2). */}
             <div className="mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 text-sm text-muted-foreground">
-              <span>Answered by this hotel’s own phone agent, with your Voice settings.</span>
+              <span>Answered by this hotel’s own phone agent, with your {TERMS.voice} settings.</span>
               <CopyButton value={data.status.agentId} label="Copy agent ID" copiedLabel="Agent ID copied" variant="ghost" className="-mr-2" />
             </div>
           </>

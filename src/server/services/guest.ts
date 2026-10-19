@@ -3,29 +3,27 @@
  * under the hotel's policy (free changes until 3 PM hotel time the day
  * before arrival). Staff use the booking service instead.
  */
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { roundMoney } from '@/lib/currency';
 import type { ISODate } from '@/lib/dto';
 import { isStaffRole } from '@/lib/routes';
 import type { Actor } from '../authz';
 import { hasPropertyAccess } from '../authz';
-import { HOTEL_TIMEZONE, addDaysISO, atNoonUTC, diffDays, formatDay, hotelToday, isISODate, toISODate } from '../dates';
+import { money } from '@/lib/status';
+import { HOTEL_TIMEZONE, addDaysISO, atNoonUTC, diffDays, formatDay, hotelToday, hourIn, isISODate, toISODate } from '../dates';
 import { badRequest, conflict, forbidden, notFound } from '../errors';
 import { recordAudit } from './audit';
+import { localeOf } from './hotels';
 import { nightlyInventory, quoteStay } from './inventory';
 
 const POLICY_HOUR = 15; // 3 PM hotel time, the day before arrival
 
-function hotelHour(now = new Date()): number {
-  return Number(
-    new Intl.DateTimeFormat('en-US', { timeZone: HOTEL_TIMEZONE, hour: 'numeric', hourCycle: 'h23' }).format(now)
-  );
-}
-
-/** Free cancellation / check-in changes end at 3 PM hotel time the day before arrival. */
-export function policyFor(checkIn: ISODate, now = new Date()) {
+/** Free cancellation / check-in changes end at 3 PM on the hotel's clock the day before arrival. */
+export function policyFor(checkIn: ISODate, timezone: string = HOTEL_TIMEZONE, now = new Date()) {
   const deadlineDay = addDaysISO(checkIn, -1);
-  const today = hotelToday(now);
-  const passed = today > deadlineDay || (today === deadlineDay && hotelHour(now) >= POLICY_HOUR);
+  const today = hotelToday(now, timezone);
+  const passed = today > deadlineDay || (today === deadlineDay && hourIn(timezone, now) >= POLICY_HOUR);
   return { deadlineDay, deadlineLabel: `3:00 PM on ${formatDay(deadlineDay, 'weekday')}`, passed };
 }
 
@@ -35,7 +33,7 @@ async function loadOwnBooking(actor: Actor, bookingId: string) {
     include: {
       user: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
       property: {
-        select: { id: true, name: true, address: true, city: true, state: true, zipCode: true, phone: true, email: true, primaryColor: true, photos: { where: { isMain: true }, take: 1, select: { url: true } } },
+        select: { id: true, name: true, address: true, city: true, state: true, zipCode: true, phone: true, email: true, primaryColor: true, timezone: true, currency: true, photos: { where: { isMain: true }, take: 1, select: { url: true } } },
       },
       roomType: { select: { id: true, name: true, capacity: true, amenities: true, photos: { orderBy: { isMain: 'desc' }, take: 1, select: { url: true } } } },
       room: { select: { roomNumber: true } },
@@ -53,9 +51,10 @@ export async function getGuestBooking(actor: Actor, bookingId: string) {
   const { booking, isStaff } = await loadOwnBooking(actor, bookingId);
   const checkIn = toISODate(booking.checkIn);
   const checkOut = toISODate(booking.checkOut);
-  const policy = policyFor(checkIn);
+  const { timezone } = localeOf(booking.property);
+  const policy = policyFor(checkIn, timezone);
   const upcoming = booking.status === 'CONFIRMED' || booking.status === 'PENDING';
-  const today = hotelToday();
+  const today = hotelToday(new Date(), timezone);
   const { stripeCheckoutSessionId: _s, stripePaymentIntentId: _p, ...rest } = booking;
   return {
     ...rest,
@@ -64,6 +63,8 @@ export async function getGuestBooking(actor: Actor, bookingId: string) {
     checkOut,
     nights: diffDays(checkIn, checkOut),
     totalPrice: Number(booking.totalPrice),
+    subtotalPrice: booking.subtotalPrice === null ? Number(booking.totalPrice) : Number(booking.subtotalPrice),
+    charges: Array.isArray(booking.charges) ? booking.charges : [],
     statusHistory: booking.statusHistory.map((h) => ({ ...h, createdAt: h.createdAt.toISOString() })),
     policy,
     canCancel: upcoming && (isStaff || !policy.passed),
@@ -78,7 +79,7 @@ export async function cancelOwnBooking(actor: Actor, bookingId: string, reason?:
   const { booking, isStaff } = await loadOwnBooking(actor, bookingId);
   if (booking.status === 'CANCELLED') throw badRequest('This booking is already cancelled.');
   if (!['PENDING', 'CONFIRMED'].includes(booking.status)) throw badRequest('This stay has already started, so it can’t be cancelled online. Please contact the hotel.');
-  const policy = policyFor(toISODate(booking.checkIn));
+  const policy = policyFor(toISODate(booking.checkIn), localeOf(booking.property).timezone);
   if (policy.passed && !isStaff) {
     throw badRequest(`Free cancellation ended at ${policy.deadlineLabel}. Please contact the hotel.`);
   }
@@ -104,7 +105,8 @@ export async function changeOwnStayDates(actor: Actor, bookingId: string, input:
   const oldOut = toISODate(booking.checkOut);
   const newIn = input.newCheckIn ?? oldIn;
   const newOut = input.newCheckOut ?? oldOut;
-  const today = hotelToday();
+  const { timezone } = localeOf(booking.property);
+  const today = hotelToday(new Date(), timezone);
   const inHouse = booking.status === 'CHECKED_IN';
 
   if (!['PENDING', 'CONFIRMED'].includes(booking.status) && !inHouse) throw badRequest('This booking can no longer be changed online.');
@@ -113,8 +115,8 @@ export async function changeOwnStayDates(actor: Actor, bookingId: string, input:
   if (newIn !== oldIn) {
     if (inHouse) throw badRequest('Your stay has started, so only the check-out date can change.');
     if (newIn < today) throw badRequest('Check-in can’t be in the past.');
-    if (!isStaff && policyFor(oldIn).passed) throw badRequest(`Check-in changes closed at ${policyFor(oldIn).deadlineLabel}. You can still change your check-out.`);
-    if (!isStaff && policyFor(newIn).passed) throw badRequest('That new check-in is too soon to change online. Please call the hotel.');
+    if (!isStaff && policyFor(oldIn, timezone).passed) throw badRequest(`Check-in changes closed at ${policyFor(oldIn, timezone).deadlineLabel}. You can still change your check-out.`);
+    if (!isStaff && policyFor(newIn, timezone).passed) throw badRequest('That new check-in is too soon to change online. Please call the hotel.');
   }
   if (newOut <= today) throw badRequest('Check-out must be after today.');
 
@@ -148,9 +150,12 @@ export async function changeOwnStayDates(actor: Actor, bookingId: string, input:
       checkIn: atNoonUTC(newIn),
       checkOut: atNoonUTC(newOut),
       totalPrice: quote.total,
+      currency: quote.currency,
+      subtotalPrice: quote.subtotal,
+      charges: quote.charges.length ? (quote.charges as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
       ...(keepRoom ? {} : { roomId: null }),
       statusHistory: {
-        create: { status: booking.status, notes: `Dates changed ${formatDay(oldIn)}–${formatDay(oldOut)} → ${formatDay(newIn)}–${formatDay(newOut)} (new total $${quote.total.toFixed(2)})` },
+        create: { status: booking.status, notes: `Dates changed ${formatDay(oldIn)}–${formatDay(oldOut)} → ${formatDay(newIn)}–${formatDay(newOut)} (new total ${money(quote.total, { currency: quote.currency })})` },
       },
     },
   });
@@ -163,6 +168,6 @@ export async function changeOwnStayDates(actor: Actor, bookingId: string, input:
     checkOut: newOut,
     totalPrice: quote.total,
     previousTotal: Number(booking.totalPrice),
-    priceDifference: Math.round((quote.total - Number(booking.totalPrice)) * 100) / 100,
+    priceDifference: roundMoney(quote.total - Number(booking.totalPrice), quote.currency),
   };
 }

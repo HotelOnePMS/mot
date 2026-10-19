@@ -2,6 +2,7 @@
  * Human labels + visual tones for every status in the system, so a status
  * reads the same in tables, cards, the agent and emails. Client-safe.
  */
+import { currencyDigits, currencyOrDefault } from './currency';
 import type { BookingStatus, HousekeepingStatus, Occupancy, RoomStatus } from './dto';
 
 export type Tone = 'neutral' | 'brand' | 'success' | 'warning' | 'danger' | 'info' | 'agent';
@@ -44,7 +45,11 @@ export const PAYMENT_STATUS: Record<string, { label: string; tone: Tone }> = {
   PAY_AT_PROPERTY: { label: 'Pay at property', tone: 'neutral' },
   AWAITING_PAYMENT: { label: 'Awaiting payment', tone: 'warning' },
   EXPIRED: { label: 'Payment expired', tone: 'neutral' },
+  DEPOSIT_PAID: { label: 'Deposit paid', tone: 'info' },
+  PARTIALLY_REFUNDED: { label: 'Partly refunded', tone: 'info' },
   REFUNDED: { label: 'Refunded', tone: 'neutral' },
+  DISPUTED: { label: 'Disputed', tone: 'danger' },
+  DISPUTE_LOST: { label: 'Dispute lost', tone: 'danger' },
   FAILED: { label: 'Payment failed', tone: 'danger' },
 };
 
@@ -87,15 +92,17 @@ function moneyFormatter(currency: string, digits: number) {
  * money(1234.5, { cents: false }) → "$1,235". Rounds to whole cents first
  * (no 0.1 + 0.2 artefacts, no "-$0.00"); non-finite input renders as "—".
  */
-export const money = (n: number, opts: { cents?: boolean; currency?: string } = {}) => {
+export const money = (n: number, opts: { cents?: boolean; currency?: string | null } = {}) => {
   // Number() also unwraps Decimal-like values that reach here untyped.
   const v = Number(n);
   if (!Number.isFinite(v)) return '—';
-  const digits = opts.cents === false ? 0 : 2;
+  const currency = currencyOrDefault(opts.currency);
+  // "Cents" means the currency's minor unit: two places for USD, none for JPY.
+  const digits = opts.cents === false ? 0 : currencyDigits(currency);
   const factor = 10 ** digits;
   // Half away from zero, like a till: 1.005 → 1.01, -12.345 → -12.35.
   const rounded = (Math.sign(v) * Math.round((Math.abs(v) + Number.EPSILON) * factor)) / factor;
-  return moneyFormatter(opts.currency ?? 'USD', digits).format(rounded === 0 ? 0 : rounded);
+  return moneyFormatter(currency, digits).format(rounded === 0 ? 0 : rounded);
 };
 
 const numberFormatter = new Intl.NumberFormat('en-US');

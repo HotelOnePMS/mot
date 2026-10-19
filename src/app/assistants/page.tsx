@@ -1,12 +1,12 @@
 import type { Metadata } from 'next';
-import { headers } from 'next/headers';
 import Link from 'next/link';
 import { ArrowRight, BedDouble, Code2, Link2, Mic, MousePointerClick, ShieldCheck } from 'lucide-react';
-import Navigation from '@/components/Navigation';
-import { SiteFooter } from '@/components/guest/SiteFooter';
+import { GuestShell } from '@/app/properties/_components/guest-shell';
 import { CopyButton } from '@/components/setup/CopyButton';
 import { Button } from '@/components/ui/button';
-import { PRODUCT_NAME, PRODUCT_URL } from '@/config/product';
+import { publicOrigin } from '@/server/agent-api/http';
+import { LABELS, TERMS } from '@/config/copy';
+import { PRODUCT_NAME } from '@/config/product';
 
 export const metadata: Metadata = {
   title: 'Book with your AI assistant',
@@ -14,13 +14,9 @@ export const metadata: Metadata = {
   alternates: { canonical: '/assistants' },
 };
 
-/** The origin this page was reached on, so the link works on any deployment. */
+/** This deployment's configured public origin (never taken from request headers, which a client can set). */
 async function origin(): Promise<string> {
-  const h = await headers();
-  const host = h.get('x-forwarded-host')?.split(',')[0]?.trim() || h.get('host');
-  if (!host || !/^[a-z0-9.-]+(:\d+)?$/i.test(host)) return PRODUCT_URL;
-  const proto = h.get('x-forwarded-proto')?.split(',')[0]?.trim() || (/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host) ? 'http' : 'https');
-  return `${proto === 'http' ? 'http' : 'https'}://${host}`;
+  return publicOrigin();
 }
 
 const ASSISTANTS: { name: string; steps: React.ReactNode[] }[] = [
@@ -105,10 +101,9 @@ export default async function AssistantsPage() {
   const mcp = `${base}/api/mcp`;
 
   return (
-    <div className="relative flex min-h-dvh flex-col overflow-x-clip bg-background">
+    <GuestShell className="relative overflow-x-clip">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[560px] bg-[radial-gradient(ellipse_at_50%_0%,hsl(var(--primary)/0.12),transparent_65%)]" aria-hidden />
-      <Navigation variant="guest" />
-      <main id="main" className="relative flex-1">
+      <div className="relative">
         {/* Hero: what it does, and the one link people need */}
         <section className="mx-auto max-w-3xl px-4 pb-12 pt-14 text-center sm:px-6 sm:pb-16 sm:pt-20">
           <p className="text-2xs font-semibold uppercase tracking-[0.18em] text-primary">For travellers</p>
@@ -267,16 +262,15 @@ export default async function AssistantsPage() {
           </div>
 
           <div className="mt-8 flex flex-col items-center justify-between gap-4 rounded-2xl bg-primary-soft px-6 py-5 text-primary-soft-foreground sm:flex-row">
-            <p className="text-sm font-medium">Run a hotel? Give guests your own assistant link — it’s in your console under AI assistants.</p>
+            <p className="text-sm font-medium">Run a hotel? Give guests your own assistant link — it’s in your console under {TERMS.assistants}.</p>
             <Button asChild variant="default" className="h-11 shrink-0 sm:h-10">
               <Link href="/onboarding">
-                Set up your hotel <ArrowRight aria-hidden />
+                {LABELS.hotelSignup} <ArrowRight aria-hidden />
               </Link>
             </Button>
           </div>
         </section>
-      </main>
-      <SiteFooter />
-    </div>
+      </div>
+    </GuestShell>
   );
 }

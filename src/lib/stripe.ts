@@ -30,3 +30,18 @@ export function getPaymentConfig() {
     publishableKey: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || null,
   };
 }
+
+/** Platform fee on online payments, as a percent of each charge (e.g. "2.5"). Unset or 0 = no fee. */
+export function platformFeePercent(): number {
+  const n = Number(process.env.STRIPE_PLATFORM_FEE_PERCENT);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 100) : 0;
+}
+
+/**
+ * Webhook signing secrets. Stripe signs events for the platform account and
+ * for connected accounts (the hotels) with different endpoint secrets; both
+ * endpoints may point at /api/webhooks/stripe.
+ */
+export function webhookSecrets(): string[] {
+  return [process.env.STRIPE_WEBHOOK_SECRET, process.env.STRIPE_CONNECT_WEBHOOK_SECRET].filter((s): s is string => !!s);
+}
