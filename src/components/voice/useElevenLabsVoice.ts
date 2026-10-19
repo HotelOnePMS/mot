@@ -32,7 +32,7 @@ const friendly = (message: string) => message.replace(/^Server error:\s*/i, '').
  * the same HotelOne endpoints as GPT-Live, so permission checks and confirm
  * plans are unchanged.
  */
-export function useElevenLabsVoice({ propertyId, audience, scope, onToolCall, onStateChange }: VoiceOptions): VoiceController {
+export function useElevenLabsVoice({ propertyId, audience, scope, onToolCall, onStateChange, onTranscript }: VoiceOptions): VoiceController {
   const [state, setStateRaw] = React.useState<VoiceState>('idle');
   const [error, setError] = React.useState<string | null>(null);
   const [captions, setCaptions] = React.useState<Caption[]>([]);
@@ -53,6 +53,8 @@ export function useElevenLabsVoice({ propertyId, audience, scope, onToolCall, on
   toolRef.current = onToolCall;
   const stateCb = React.useRef(onStateChange);
   stateCb.current = onStateChange;
+  const transcriptCb = React.useRef(onTranscript);
+  transcriptCb.current = onTranscript;
 
   const setState = React.useCallback((s: VoiceState) => {
     setStateRaw(s);
@@ -161,7 +163,10 @@ export function useElevenLabsVoice({ propertyId, audience, scope, onToolCall, on
           } else finish('idle');
         },
         onMessage: ({ message, role }) => {
-          if (current() && message?.trim()) addCaption(role === 'agent' ? 'agent' : 'user', message.trim());
+          if (!current() || !message?.trim()) return;
+          const who = role === 'agent' ? 'agent' : 'user';
+          transcriptCb.current?.(who);
+          addCaption(who, message.trim());
         },
         onModeChange: ({ mode }) => {
           if (current()) setAgentSpeaking(mode === 'speaking');

@@ -153,7 +153,7 @@ export function telHref(raw: string | null | undefined): string {
  */
 export function formatMoney(
   amount: number | string | null | undefined,
-  currency = 'USD',
+  currency: string | null | undefined = 'USD',
   opts: { cents?: boolean } = {},
 ): string {
   const v = Number(amount);

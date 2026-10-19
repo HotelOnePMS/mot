@@ -15,6 +15,7 @@ import { DomainError, badRequest, notFound } from '../errors';
 import { runsOnHotelOne } from '../concierge/facts';
 import { skillCatalogText } from '../skills';
 import { guestContext } from './guestTools';
+import { localeOf } from '../services/hotels';
 import {
   CONCIERGE_TOOLS,
   GUEST_TOOLS,
@@ -30,6 +31,7 @@ import {
 } from './live';
 import { conciergeVoiceAvailable } from './provider';
 import { clientIp } from '../http';
+import { logError } from '@/server/log';
 
 const MINUTE = 60_000;
 const since = (ms: number) => ({ gte: new Date(Date.now() - ms) });
@@ -45,7 +47,7 @@ async function guestSkills(propertyId: string): Promise<string> {
   try {
     return await skillCatalogText(propertyId, 'GUEST', { kinds: ['ANSWER'], maxChars: 2000 });
   } catch (e) {
-    console.error('voice: skill catalog unavailable', e);
+    logError('voice/sessions', 'voice: skill catalog unavailable', e);
     return '';
   }
 }
@@ -117,12 +119,12 @@ export async function openVoiceSession<T>(
   if (!q.propertyId) throw badRequest('propertyId is required.');
   const property = await prisma.property.findFirst({
     where: { id: q.propertyId, isActive: true },
-    select: { id: true, name: true, setupPath: true, voiceAgent: true },
+    select: { id: true, name: true, setupPath: true, timezone: true, voiceAgent: true },
   });
   if (!property) throw notFound('Property');
   const cfg = property.voiceAgent;
   const voice = cfg?.voice ?? 'marin';
-  const today = guestContext();
+  const today = guestContext(localeOf(property).timezone);
 
   if (q.audience === 'staff') {
     const actor = await requireStaff('voice.use');
@@ -258,7 +260,7 @@ export async function openPhoneSession(input: {
   const channel = whatsapp ? 'WHATSAPP' : 'PHONE';
   const property = await prisma.property.findFirst({
     where: { id: input.propertyId, isActive: true },
-    select: { id: true, name: true, setupPath: true, voiceAgent: true, phoneLine: true },
+    select: { id: true, name: true, setupPath: true, timezone: true, voiceAgent: true, phoneLine: true },
   });
   if (!property) throw notFound('Property');
   const cfg = property.voiceAgent;
@@ -276,7 +278,7 @@ export async function openPhoneSession(input: {
       phone: { callerNumber: input.callerNumber, canTransfer: !!line.transferNumber && !whatsapp, whatsapp },
       skills: await guestSkills(property.id),
       liveInventory: runsOnHotelOne(property.setupPath),
-      ...guestContext(),
+      ...guestContext(localeOf(property).timezone),
     }),
     // The hotel's greeting is written for calls ("Thanks for calling…"); WhatsApp gets a neutral one.
     firstMessage: whatsapp ? `Hi! This is ${property.name}’s virtual assistant — how can I help?` : phoneGreeting(cfg?.greeting, property.name),

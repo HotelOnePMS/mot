@@ -16,8 +16,7 @@ import { Switch } from '@/components/ui/switch';
 import { Callout, IconTile, Skeleton } from '@/components/ui/primitives';
 import { PageShell, SectionHeader } from '@/components/console/PageShell';
 import { useConsole, usePropertyUrl } from '@/components/console/ConsoleProvider';
-import { ConfirmDialog } from '@/components/frontdesk/dialogs';
-import { AnswerDialog, StepsDialog, type AnswerDraft, type StepsDraft } from './SkillDialogs';
+import { AnswerDialog, DeleteSkillDialog, StepsDialog, type AnswerDraft, type StepsDraft } from './SkillDialogs';
 
 const AUDIENCE_LABEL: Record<SkillView['audience'], string> = { GUEST: 'Guests', ALL: 'Guests & staff', STAFF: 'Staff only' };
 
@@ -32,9 +31,10 @@ type Actions = {
   canManage: boolean;
   guestLocked: boolean;
   busyId: string | null;
-  toggle: (s: SkillView, on: boolean) => void;
-  edit: (s: SkillView) => void;
-  remove: (s: SkillView) => void;
+  /** `from`: the control used, so keyboard focus can come back to it (or the row) afterwards. */
+  toggle: (s: SkillView, on: boolean, from?: HTMLElement) => void;
+  edit: (s: SkillView, from?: HTMLElement) => void;
+  remove: (s: SkillView, from?: HTMLElement) => void;
 };
 
 /** Whether this person can switch/edit this skill here. */
@@ -53,10 +53,12 @@ function OnOff({ s, a }: { s: SkillView; a: Actions }) {
       </Badge>
     );
   }
+  // Not disabled while saving: that would drop keyboard focus. Repeat presses are ignored instead (toggle).
   return (
     <Switch
       checked={on}
-      disabled={!editable(s, a) || a.busyId === s.id}
+      disabled={!editable(s, a)}
+      aria-busy={a.busyId === s.id || undefined}
       onCheckedChange={(v) => a.toggle(s, v)}
       aria-label={`Agents use “${s.title}”`}
       title={!editable(s, a) ? 'Guest answers stay as they are in the demo' : undefined}
@@ -67,7 +69,7 @@ function OnOff({ s, a }: { s: SkillView; a: Actions }) {
 function RowShell({ s, children, aside }: { s: SkillView; children: React.ReactNode; aside: React.ReactNode }) {
   const off = s.status === 'DISABLED';
   return (
-    <li className={cn('flex gap-4 px-4 py-4 sm:px-5', off && 'bg-surface-sunken/40')}>
+    <li data-skill-id={s.id} className={cn('flex gap-4 px-4 py-4 sm:px-5', off && 'bg-surface-sunken/40')}>
       <div className={cn('min-w-0 flex-1', off && '[&_.skill-body]:text-muted-foreground')}>{children}</div>
       <div className="flex shrink-0 flex-col items-end gap-2 pt-0.5">{aside}</div>
     </li>
@@ -78,12 +80,18 @@ function RowTools({ s, a, canDelete = true, editLabel = 'Edit' }: { s: SkillView
   if (!editable(s, a)) return null;
   return (
     <div className="mt-3 flex flex-wrap gap-2">
-      <Button type="button" variant="outline" size="sm" onClick={() => a.edit(s)}>
+      <Button type="button" variant="outline" size="sm" onClick={(e) => a.edit(s, e.currentTarget)}>
         <Pencil aria-hidden /> {editLabel}
         <span className="sr-only"> “{s.title}”</span>
       </Button>
       {canDelete && (
-        <Button type="button" variant="ghost" size="sm" className="text-destructive hover:bg-destructive-soft hover:text-destructive-soft-foreground" onClick={() => a.remove(s)}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="text-destructive hover:bg-destructive-soft hover:text-destructive-soft-foreground"
+          onClick={(e) => a.remove(s, e.currentTarget)}
+        >
           <Trash2 aria-hidden /> Delete
           <span className="sr-only"> “{s.title}”</span>
         </Button>
@@ -192,22 +200,25 @@ function RecipeRow({ s, a }: { s: SkillView; a: Actions }) {
   );
 }
 
-/** A shortcut agents noticed people run a lot. */
+/** A shortcut (or PMS recipe) agents noticed or learned, waiting for a person's approval. */
 function SuggestionRow({ s, a }: { s: SkillView; a: Actions }) {
+  const busy = a.busyId === s.id;
   return (
-    <li className="px-4 py-4 sm:px-5">
+    <li data-skill-id={s.id} className="px-4 py-4 sm:px-5">
       <p className="font-medium leading-snug">{s.title}</p>
       <Steps steps={s.steps ?? []} />
       <p className="mt-2 text-xs text-muted-foreground">{s.description.replace(/\s*Runs:.*$/, '')}</p>
       {a.canManage && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button type="button" size="sm" loading={a.busyId === s.id} onClick={() => a.toggle(s, true)}>
-            Approve<span className="sr-only"> “{s.title}”</span>
+        // Buttons stay enabled while saving (disabling them would drop keyboard focus); repeat presses are ignored.
+        <div className="mt-3 flex flex-wrap gap-2" aria-busy={busy || undefined}>
+          <Button type="button" size="sm" onClick={(e) => a.toggle(s, true, e.currentTarget)}>
+            {busy ? 'Saving…' : 'Approve'}
+            <span className="sr-only"> “{s.title}”</span>
           </Button>
-          <Button type="button" size="sm" variant="outline" onClick={() => a.edit(s)}>
+          <Button type="button" size="sm" variant="outline" onClick={(e) => a.edit(s, e.currentTarget)}>
             Rename and approve
           </Button>
-          <Button type="button" size="sm" variant="ghost" disabled={a.busyId === s.id} onClick={() => a.toggle(s, false)}>
+          <Button type="button" size="sm" variant="ghost" onClick={(e) => a.toggle(s, false, e.currentTarget)}>
             Dismiss<span className="sr-only"> “{s.title}”</span>
           </Button>
         </div>
@@ -234,7 +245,8 @@ function Section({
   tone?: 'neutral' | 'agent' | 'brand';
 }) {
   return (
-    <Card id={id} className="scroll-mt-20 overflow-hidden p-0" aria-labelledby={`${id}-title`}>
+    // tabIndex -1: where focus lands when the row it was on goes away (a deleted skill).
+    <Card id={id} tabIndex={-1} className="scroll-mt-20 overflow-hidden p-0 focus:outline-none" aria-labelledby={`${id}-title`}>
       <div className="flex items-start gap-4 p-5 sm:p-6">
         <IconTile icon={icon} tone={tone} size="lg" className="hidden sm:flex" />
         <SectionHeader id={`${id}-title`} title={title} description={description} action={action} className="min-w-0 flex-1" />
@@ -266,6 +278,40 @@ export default function SkillsPage() {
   const [stepsDialog, setStepsDialog] = React.useState<{ open: boolean; skill: SkillView | null; kind: 'MACRO' | 'RECIPE'; approve?: boolean }>({ open: false, skill: null, kind: 'MACRO' });
   const [deleting, setDeleting] = React.useState<SkillView | null>(null);
   const [deleteBusy, setDeleteBusy] = React.useState(false);
+  const busyRef = React.useRef<string | null>(null);
+
+  // Keyboard focus: where to put it back after a dialog closes or a row moves (WCAG 2.4.3).
+  const opener = React.useRef<{ el: HTMLElement | null; id: string | null; list: Element | null; index: number; section: string | null } | null>(null);
+  const [focusAfterUpdate, setFocusAfterUpdate] = React.useState(0);
+  const pendingFocus = React.useRef(false);
+  const remember = React.useCallback((s: SkillView | null, el?: HTMLElement | null) => {
+    const row = el?.closest('li[data-skill-id]') ?? null;
+    const list = row?.parentElement ?? null;
+    opener.current = {
+      el: el ?? null,
+      id: s?.id ?? null,
+      list,
+      index: list && row ? Array.prototype.indexOf.call(list.children, row) : 0,
+      section: el?.closest('[id][tabindex="-1"]')?.id ?? null,
+    };
+  }, []);
+  const returnFocus = React.useCallback(() => {
+    const o = opener.current;
+    opener.current = null;
+    if (!o) return;
+    const firstControl = (root: Element | null | undefined) => root?.querySelector<HTMLElement>('[role="switch"]:not([disabled]), button:not([disabled]), a[href]') ?? null;
+    if (o.el?.isConnected) return o.el.focus();
+    // The opener went away (the row moved or was deleted): its row elsewhere, the row now in its place, or its section.
+    const row = o.id ? document.querySelector(`li[data-skill-id="${CSS.escape(o.id)}"]`) : null;
+    const neighbour = o.list?.isConnected ? (o.list.children[Math.min(o.index, o.list.children.length - 1)] ?? null) : null;
+    const target = firstControl(row) ?? firstControl(neighbour) ?? (o.section ? document.getElementById(o.section) : null);
+    target?.focus();
+  }, []);
+  React.useEffect(() => {
+    if (!pendingFocus.current) return;
+    pendingFocus.current = false;
+    returnFocus();
+  }, [focusAfterUpdate, data, returnFocus]);
 
   const skills = data?.skills ?? [];
   const config = skills.filter((s) => s.source === 'CONFIG');
@@ -278,6 +324,7 @@ export default function SkillsPage() {
   const showRecipes = recipes.length > 0 || property?.setupPath === 'BRIDGE';
 
   async function patch(s: SkillView, body: Record<string, unknown>, success: string): Promise<boolean> {
+    busyRef.current = s.id;
     setBusyId(s.id);
     try {
       await api(`/api/admin/skills/${s.id}`, { method: 'PATCH', json: body });
@@ -288,6 +335,7 @@ export default function SkillsPage() {
       toast.error((e as Error).message);
       return false;
     } finally {
+      busyRef.current = null;
       setBusyId(null);
     }
   }
@@ -296,16 +344,37 @@ export default function SkillsPage() {
     canManage: !!data?.canManage,
     guestLocked: !!data?.guestAnswersLocked,
     busyId,
-    toggle: (s, on) => {
-      const msg =
-        s.status === 'SUGGESTED' ? (on ? `“${s.title}” is now a shortcut` : 'Suggestion dismissed') : on ? `Agents will use “${s.title}” again` : `Agents won’t use “${s.title}”`;
-      void patch(s, { status: on ? 'ACTIVE' : 'DISABLED' }, msg);
+    toggle: (s, on, from) => {
+      if (busyRef.current === s.id) return; // still saving the last press
+      const suggestion = s.status === 'SUGGESTED';
+      const msg = suggestion
+        ? on
+          ? `Approved — ${s.kind === 'RECIPE' ? 'the PMS operator follows it from now on' : 'anyone can run it by name now'}`
+          : 'Suggestion dismissed'
+        : on
+          ? `Agents will use “${s.title}” again`
+          : `Agents won’t use “${s.title}”`;
+      // Approving or dismissing moves the row to another section: focus follows it there.
+      if (suggestion) remember(s, from);
+      void patch(s, { status: on ? 'ACTIVE' : 'DISABLED' }, msg).then(() => {
+        if (!suggestion) return;
+        pendingFocus.current = true;
+        setFocusAfterUpdate((n) => n + 1);
+      });
     },
-    edit: (s) => {
+    edit: (s, from) => {
+      remember(s, from);
       if (s.kind === 'ANSWER') setAnswerDialog({ open: true, skill: s });
       else setStepsDialog({ open: true, skill: s, kind: s.kind, approve: s.status === 'SUGGESTED' });
     },
-    remove: (s) => setDeleting(s),
+    remove: (s, from) => {
+      remember(s, from);
+      setDeleting(s);
+    },
+  };
+  const openNew = (e: React.MouseEvent<HTMLElement>, open: () => void) => {
+    remember(null, e.currentTarget);
+    open();
   };
 
   async function saveAnswer(d: AnswerDraft): Promise<boolean> {
@@ -348,8 +417,9 @@ export default function SkillsPage() {
     try {
       await api(`/api/admin/skills/${deleting.id}`, { method: 'DELETE' });
       toast.success(`Deleted “${deleting.title}”`);
-      setDeleting(null);
+      // Refresh first, so when the dialog closes focus goes to what's now in the deleted row's place.
       await mutate();
+      setDeleting(null);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -419,7 +489,7 @@ export default function SkillsPage() {
               icon={Lightbulb}
               tone="agent"
               title="Suggested by your agents"
-              description="Things your team asks for again and again. Approve one and anyone can run it by name."
+              description="Shortcuts your team runs again and again or saved for approval, and PMS steps the operator learned that need a look. Approve one to switch it on for everyone."
             >
               <ul className="divide-y">
                 {suggested.map((s) => (
@@ -522,10 +592,10 @@ export default function SkillsPage() {
             action={
               data.canManage ? (
                 <div className="hidden gap-2 sm:flex">
-                  <Button type="button" variant="outline" size="sm" onClick={() => setStepsDialog({ open: true, skill: null, kind: 'MACRO' })}>
+                  <Button type="button" variant="outline" size="sm" onClick={(e) => openNew(e, () => setStepsDialog({ open: true, skill: null, kind: 'MACRO' }))}>
                     <Plus aria-hidden /> Add a shortcut
                   </Button>
-                  <Button type="button" size="sm" onClick={() => setAnswerDialog({ open: true, skill: null })}>
+                  <Button type="button" size="sm" onClick={(e) => openNew(e, () => setAnswerDialog({ open: true, skill: null }))}>
                     <Plus aria-hidden /> Add an answer
                   </Button>
                 </div>
@@ -534,10 +604,10 @@ export default function SkillsPage() {
           >
             {data.canManage && (
               <div className="flex flex-col gap-2 border-b p-4 sm:hidden">
-                <Button type="button" className="h-11" onClick={() => setAnswerDialog({ open: true, skill: null })}>
+                <Button type="button" className="h-11" onClick={(e) => openNew(e, () => setAnswerDialog({ open: true, skill: null }))}>
                   <Plus aria-hidden /> Add an answer
                 </Button>
-                <Button type="button" variant="outline" className="h-11" onClick={() => setStepsDialog({ open: true, skill: null, kind: 'MACRO' })}>
+                <Button type="button" variant="outline" className="h-11" onClick={(e) => openNew(e, () => setStepsDialog({ open: true, skill: null, kind: 'MACRO' }))}>
                   <Plus aria-hidden /> Add a shortcut
                 </Button>
               </div>
@@ -572,9 +642,17 @@ export default function SkillsPage() {
         initial={answerDialog.skill}
         guestLocked={!!data?.guestAnswersLocked}
         onSave={saveAnswer}
+        onReturnFocus={returnFocus}
       />
-      <StepsDialog open={stepsDialog.open} onOpenChange={(o) => setStepsDialog((d) => ({ ...d, open: o }))} initial={stepsDialog.skill} kind={stepsDialog.kind} onSave={saveSteps} />
-      <ConfirmDialog
+      <StepsDialog
+        open={stepsDialog.open}
+        onOpenChange={(o) => setStepsDialog((d) => ({ ...d, open: o }))}
+        initial={stepsDialog.skill}
+        kind={stepsDialog.kind}
+        onSave={saveSteps}
+        onReturnFocus={returnFocus}
+      />
+      <DeleteSkillDialog
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
         title={`Delete “${deleting?.title ?? ''}”?`}
@@ -585,10 +663,9 @@ export default function SkillsPage() {
               ? 'Nobody can run it by name any more. To keep it but stop it for now, switch it off instead.'
               : 'Agents stop giving this answer. To keep it but stop it for now, switch it off instead.'
         }
-        confirmLabel="Delete"
-        destructive
         loading={deleteBusy}
         onConfirm={() => void confirmDelete()}
+        onReturnFocus={returnFocus}
       />
     </PageShell>
   );

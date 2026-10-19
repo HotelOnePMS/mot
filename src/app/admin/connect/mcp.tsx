@@ -87,7 +87,14 @@ export function useDemoLocked(): boolean {
 export function CommandLine({ command, label }: { command: string; label: string }) {
   return (
     <div className="flex min-w-0 items-center gap-1 rounded-lg border bg-surface-sunken py-1 pl-3 pr-1">
-      <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap py-1 font-mono text-xs text-foreground scrollbar-thin">{command}</code>
+      <code
+        tabIndex={0}
+        role="region"
+        aria-label={label}
+        className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded py-1 font-mono text-xs text-foreground scrollbar-thin focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {command}
+      </code>
       <CopyButton iconOnly value={command} label={label} />
     </div>
   );
@@ -136,7 +143,7 @@ export function McpSetupFields({
         </Link>
       </p>
       <div className="mt-4 space-y-3">
-        {locked && <Callout tone="warning" title="Demo hotels can’t be connected to an outside PMS">Set up your own hotel to connect yours.</Callout>}
+        {locked && <Callout id="pms-demo-locked" tone="warning" title="Demo hotels can’t be connected to an outside PMS">Set up your own hotel to connect yours.</Callout>}
         {!vaultReady && form.authType !== 'none' && (
           <Callout tone="warning" title="Secure storage isn’t set up on this server yet">
             Tokens can’t be saved until it is (platform admin: set HOTELONE_VAULT_KEY).

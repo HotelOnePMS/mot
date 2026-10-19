@@ -13,6 +13,8 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
 
   React.useEffect(() => {
     console.error(error);
+    // Reported when error tracking is on (instrumentation-client.ts).
+    if (process.env.NEXT_PUBLIC_SENTRY_DSN) void import('@sentry/nextjs').then((Sentry) => Sentry.captureException(error));
   }, [error]);
 
   React.useEffect(() => {

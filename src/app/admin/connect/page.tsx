@@ -299,9 +299,9 @@ function Setup({ data, initial, onDone }: { data: BridgeData; initial?: Connecti
       {mode === 'MCP' && <McpSetupFields system={chosen} form={mcpForm} setForm={updateMcp} keepToken={keepToken} vaultReady={data.vaultReady} locked={locked} test={test} />}
 
       <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end">
-        {(!chosen || (mode === 'MCP' && !mcpReady)) && (
+        {(!chosen || (mode === 'MCP' && !mcpReady && !locked)) && (
           <p className="text-sm text-muted-foreground sm:mr-auto" id="pms-continue-hint">
-            {!chosen ? 'Choose your system to continue.' : locked ? 'Demo hotels can’t connect an outside PMS.' : 'Add the MCP server address and its token to continue.'}
+            {!chosen ? 'Choose your system to continue.' : 'Add the MCP server address and its token to continue.'}
           </p>
         )}
         <div className="flex flex-col-reverse gap-2 sm:flex-row">
@@ -312,10 +312,10 @@ function Setup({ data, initial, onDone }: { data: BridgeData; initial?: Connecti
           )}
           {mode === 'MCP' ? (
             <>
-              <Button variant="outline" onClick={testMcp} loading={busy === 'test'} loadingText="Testing…" disabled={!mcpReady || !!busy} aria-describedby={!mcpReady ? 'pms-continue-hint' : undefined}>
+              <Button variant="outline" onClick={testMcp} loading={busy === 'test'} loadingText="Testing…" disabled={!mcpReady || !!busy} aria-describedby={locked ? 'pms-demo-locked' : !mcpReady ? 'pms-continue-hint' : undefined}>
                 Test connection
               </Button>
-              <Button onClick={connectMcp} loading={busy === 'save'} loadingText="Connecting…" disabled={!mcpReady || !!busy} aria-describedby={!mcpReady ? 'pms-continue-hint' : undefined}>
+              <Button onClick={connectMcp} loading={busy === 'save'} loadingText="Connecting…" disabled={!mcpReady || !!busy} aria-describedby={locked ? 'pms-demo-locked' : !mcpReady ? 'pms-continue-hint' : undefined}>
                 <Plug aria-hidden /> Connect
               </Button>
             </>

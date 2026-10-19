@@ -40,6 +40,8 @@ export interface RecipeBody {
   failStreak?: number;
   /** Set when it was switched off automatically after failing too often (ISO time). */
   autoDisabledAt?: string;
+  /** The kind of PMS task it was learned on ("LOOKUP" or "ACTION"); it's only given to tasks of that kind. Missing on older recipes (treated as ACTION). */
+  taskKind?: string;
 }
 export type SkillBody = AnswerBody | MacroBody | RecipeBody;
 
@@ -95,17 +97,38 @@ export function toSkill(row: AgentSkill): Skill {
 
 const KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/** A stable, readable slug for a skill key: "Is parking free?" → "is-parking-free". */
+/** A short, stable hash of a text (FNV-1a over its UTF-8 bytes): 8 lowercase hex characters. */
+export function shortHash(text: string): string {
+  let h = 0x811c9dc5;
+  for (const byte of new TextEncoder().encode(String(text ?? ''))) {
+    h ^= byte;
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
+ * A stable, readable slug for a skill key: "Is parking free?" →
+ * "is-parking-free". Letters a slug can't spell (Japanese, Cyrillic, "ß"…)
+ * would vanish and make different names share a key, so text with any of
+ * them gets a short hash of the whole text (`shortHash`): "выезд" → 8 hex
+ * characters, "Straße" → "stra-e-" plus the hash. At most `maxLength`
+ * characters.
+ */
 export function skillKey(text: string, maxLength = 60): string {
-  const slug = text
+  const plain = String(text ?? '')
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[̀-ͯ]/g, '');
+  if (!plain.trim()) return 'skill';
+  const slug = plain
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, maxLength)
-    .replace(/-+$/g, '');
-  return slug || 'skill';
+    .replace(/^-+|-+$/g, '');
+  const lost = /[^\x00-\x7f]/.test(plain.replace(/[^\p{L}\p{N}]/gu, ''));
+  if (slug && !lost) return slug.slice(0, maxLength).replace(/-+$/g, '');
+  const hash = shortHash(plain.toLowerCase().replace(/\s+/g, ' ').trim());
+  const head = slug.slice(0, Math.max(0, maxLength - hash.length - 1)).replace(/-+$/g, '');
+  return head ? `${head}-${hash}` : hash;
 }
 
 export const skillKeySchema = z.string().trim().min(1).max(80).regex(KEY_PATTERN, 'must be a lowercase slug like "late-checkout"');
@@ -141,6 +164,7 @@ export const skillBodySchemas = {
     failures: z.number().int().min(0).optional(),
     failStreak: z.number().int().min(0).optional(),
     autoDisabledAt: z.string().max(40).optional(),
+    taskKind: z.string().trim().max(20).optional(),
   }),
 } as const;
 
