@@ -1,13 +1,19 @@
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { LABELS } from '@/config/copy';
+import { PRODUCT_NAME } from '@/config/product';
 import { ConsoleProvider } from '@/components/console/ConsoleProvider';
 import { ConsoleShell } from '@/components/console/ConsoleShell';
 import { canAccessConsolePath, homeForRole, isStaffRole } from '@/lib/routes';
 import { getActor } from '@/server/authz';
 
-// Staff-only screens: titled "Console · HotelOne" unless a page sets its own, and never indexed.
-export const metadata: Metadata = { title: 'Console', robots: { index: false, follow: false } };
+// Staff-only screens: titled "Hotel console · HotelOne" unless a page sets its own ("Team · HotelOne"),
+// and never indexed. The template is repeated here because a plain title would drop the root one.
+export const metadata: Metadata = {
+  title: { default: LABELS.console, template: `%s · ${PRODUCT_NAME}` },
+  robots: { index: false, follow: false },
+};
 
 /**
  * One console for every staff role; navigation and pages adapt to the role.
@@ -21,7 +27,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const pathname = (await headers()).get('x-pathname') ?? '/admin';
   const actor = await getActor();
   if (!actor) redirect(`/login?callbackUrl=${encodeURIComponent(pathname)}`);
-  if (!isStaffRole(actor.role)) redirect('/dashboard');
+  if (!isStaffRole(actor.role)) redirect('/dashboard?notice=staff-only');
   if (actor.mustChangePassword) redirect('/account/password');
   if (pathname !== '/admin' && !canAccessConsolePath(actor.role, pathname)) redirect(homeForRole(actor.role));
   return (

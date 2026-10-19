@@ -11,6 +11,7 @@ import type { StayQuote } from '@/lib/dto';
 import { api, fetcher } from '@/lib/fetcher';
 import { fmtDay, fmtRange } from '@/lib/format';
 import { fromCents, paymentAmountDue, toCents, type PaymentPolicy } from '@/lib/payments';
+import { isStaffRole } from '@/lib/routes';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,6 +31,8 @@ interface PublicProperty {
   name: string;
   city: string;
   state: string;
+  phone: string;
+  email: string | null;
   primaryColor: string | null;
   isDemo: boolean;
   roomTypes: { id: string; name: string; capacity: number; photos: { url: string }[] }[];
@@ -315,6 +318,10 @@ function Checkout() {
   const payNow = !!terms?.onlinePayment && !!due && due.dueNowCents > 0;
   const method = payNow ? 'stripe' : 'pay_at_property';
   const name = p?.name ?? shell?.name;
+  // The hotel's own chrome, as on its page: header, contact footer and the demo banner.
+  const brandColor = p?.primaryColor ?? shell?.primaryColor;
+  const hotel = name ? { name, phone: p?.phone, email: p?.email } : undefined;
+  const isDemo = p?.isDemo ?? shell?.isDemo;
 
   React.useEffect(() => {
     if (signedIn) setNeedDetails(false);
@@ -394,7 +401,7 @@ function Checkout() {
     kind: 'checkout',
     propertyId,
     propertyName: name,
-    brand: p?.primaryColor ?? shell?.primaryColor,
+    brand: brandColor,
     stay: checkIn && checkOut ? { checkIn, checkOut, guests, rooms } : null,
     order:
       roomTypeId && checkIn && checkOut
@@ -487,7 +494,7 @@ function Checkout() {
 
   if (!roomTypeId || !checkIn || !checkOut) {
     return (
-      <GuestShell brandColor={shell?.primaryColor} brand={shell ? { name: shell.name, href: `/properties/${propertyId}` } : undefined}>
+      <GuestShell brandColor={brandColor} brand={name ? { name, href: `/properties/${propertyId}` } : undefined} hotel={hotel} demo={isDemo}>
         <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
           <h1 className="sr-only">Confirm and book</h1>
           <div className="mx-auto max-w-xl rounded-2xl border bg-card">
@@ -513,7 +520,8 @@ function Checkout() {
   const nightsCount = quote?.nights.length ?? 0;
 
   return (
-    <GuestShell brandColor={p?.primaryColor ?? shell?.primaryColor} brand={name ? { name, href: `/properties/${propertyId}` } : undefined}>
+    // The hotel's name goes back to its page with this stay still chosen.
+    <GuestShell brandColor={brandColor} brand={name ? { name, href: back } : undefined} hotel={hotel} demo={isDemo}>
       <div className="mx-auto max-w-7xl px-4 pb-16 sm:px-6">
         <Link
           href={back}
@@ -530,19 +538,26 @@ function Checkout() {
               {status === 'loading' ? (
                 <Skeleton className="h-16 rounded-xl" />
               ) : signedIn ? (
-                <div className="flex items-center justify-between gap-3 rounded-xl bg-muted px-4 py-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <UserRound className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{session?.user?.name}</p>
-                      <p className="truncate text-sm text-muted-foreground">{session?.user?.email}</p>
+                <>
+                  <div className="flex items-center justify-between gap-3 rounded-xl bg-muted px-4 py-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <UserRound className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{session?.user?.name}</p>
+                        <p className="truncate text-sm text-muted-foreground">{session?.user?.email}</p>
+                      </div>
                     </div>
+                    {/* data-voice-avoid: the voice launcher or live pill moves off this button on phones. */}
+                    <Button data-voice-avoid variant="ghost" size="sm" className="shrink-0" onClick={() => signOut({ redirect: false })}>
+                      Not you?
+                    </Button>
                   </div>
-                  {/* data-voice-avoid: the voice launcher or live pill moves off this button on phones. */}
-                  <Button data-voice-avoid variant="ghost" size="sm" className="shrink-0" onClick={() => signOut({ redirect: false })}>
-                    Not you?
-                  </Button>
-                </div>
+                  {isStaffRole(session?.user?.role) && (
+                    <Callout tone="info" className="mt-3">
+                      You’re signed in as hotel staff — this booking will be under your own name.
+                    </Callout>
+                  )}
+                </>
               ) : (
                 <>
                   {needDetails && (
@@ -661,7 +676,7 @@ function Checkout() {
                 {due && payNow ? <span className="tabular">· {price(fromCents(due.dueNowCents), cur)} today</span> : totalLabel && <span className="tabular">· {totalLabel}</span>}
               </Button>
               <p className="mt-3 text-center text-xs text-muted-foreground">
-                {(p?.isDemo ?? shell?.isDemo) ? 'This is a demo hotel — book freely, nothing is charged.' : method === 'stripe' ? 'You’ll pay on the next screen.' : 'You won’t be charged today.'}
+                {isDemo ? 'This is a demo hotel — book freely, nothing is charged.' : method === 'stripe' ? 'You’ll pay on the next screen.' : 'You won’t be charged today.'}
               </p>
             </section>
           </div>
@@ -762,7 +777,12 @@ function Checkout() {
 function CheckoutFallback() {
   const shell = usePropertyShell();
   return (
-    <GuestShell brandColor={shell?.primaryColor} brand={shell ? { name: shell.name, href: `/properties/${shell.id}` } : undefined}>
+    <GuestShell
+      brandColor={shell?.primaryColor}
+      brand={shell ? { name: shell.name, href: `/properties/${shell.id}` } : undefined}
+      hotel={shell ? { name: shell.name } : undefined}
+      demo={shell?.isDemo}
+    >
       <div className="mx-auto max-w-7xl px-4 pb-16 sm:px-6" role="status" aria-label="Loading checkout">
         <div className="mt-3 h-10" />
         <h1 className="mt-2 font-display text-3xl tracking-tight sm:text-4xl">Confirm and book</h1>

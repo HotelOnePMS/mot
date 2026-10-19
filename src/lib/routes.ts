@@ -75,3 +75,68 @@ export function canAccessConsolePath(role: string | null | undefined, pathname: 
   if (!rule) return role === 'ADMIN' || role === 'OWNER';
   return rule.roles.includes(role);
 }
+
+/* ------------------------------------------------------------------ */
+/* Sign-in and sign-out: one set of rules for every page.              */
+/* ------------------------------------------------------------------ */
+
+/** The path without its query or hash. */
+const pathOnly = (path: string) => path.split(/[?#]/)[0];
+
+/** Only same-site relative paths are accepted as a post-sign-in destination. */
+export function safeCallback(raw: string | null | undefined): string | null {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return null;
+  // Browsers drop tabs and newlines and read "\" as "/", so "/\t/evil.com" would leave the site.
+  if (/[\x00-\x1f\x7f\\]/.test(raw)) return null;
+  if (new URL(raw, 'http://local.invalid').origin !== 'http://local.invalid') return null;
+  if (/^\/(login|register|api)(\/|$)/.test(pathOnly(raw))) return null;
+  return raw;
+}
+
+/** Traveller pages: the booking journey and the guest account. */
+export function isTravellerPath(path: string): boolean {
+  return /^\/(properties|bookings|dashboard|profile|assistants)(\/|$)/.test(pathOnly(path));
+}
+
+/**
+ * The sign-in link for a page. Traveller and console pages ask to come back;
+ * product pages don't, so everyone lands on their own home instead of the
+ * page they happened to click Sign in on.
+ */
+export function loginUrl(returnTo?: string | null): string {
+  const cb = safeCallback(returnTo);
+  if (!cb || !(isTravellerPath(cb) || isConsolePath(pathOnly(cb)))) return '/login';
+  return `/login?callbackUrl=${encodeURIComponent(cb)}`;
+}
+
+/**
+ * Where to go after signing in or signing up. Staff go back to a console page
+ * they can open or an unfinished traveller task, otherwise to the console;
+ * travellers go back to where they were, otherwise to My trips.
+ */
+export function destinationFor(role: string | null | undefined, callback: string | null | undefined): string {
+  const cb = safeCallback(callback);
+  if (cb) {
+    const path = pathOnly(cb);
+    if (isConsolePath(path)) {
+      if (isStaffRole(role) && (path === '/admin' || canAccessConsolePath(role, path))) return cb;
+    } else if (!isStaffRole(role) || isTravellerPath(path)) {
+      return cb;
+    }
+  }
+  return isStaffRole(role) ? '/admin' : '/dashboard';
+}
+
+/**
+ * Where signing out lands. Console and staff accounts go to the sign-in page;
+ * travellers leaving an account page go to `fallback` (the directory, or the
+ * hotel they were booking with); everyone else stays on the page they're on.
+ * `current` is the path with its query.
+ */
+export function signOutTarget(current: string, opts: { role?: string | null; fallback?: string } = {}): string {
+  const path = pathOnly(current);
+  const accountPage = /^\/(dashboard|profile|bookings)(\/|$)/.test(path);
+  if (isConsolePath(path) || (accountPage && isStaffRole(opts.role))) return '/login?signedOut=1';
+  if (accountPage) return opts.fallback ?? '/properties';
+  return safeCallback(current) ?? '/';
+}

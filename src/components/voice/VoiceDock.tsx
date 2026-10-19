@@ -65,11 +65,14 @@ import {
 const COLLAPSE_AFTER = 120;
 /** Width of the folded launcher or pill (a 48px circle). */
 const FOLDED = 48;
-/** Routes without a launcher (a running call keeps its pill). */
+/** Routes without a launcher: sign-in, sign-up, onboarding and the product pages for hotels (a running call keeps its pill). */
 const NO_LAUNCHER = [
   /^\/login(\/|$)/,
   /^\/register(\/|$)/,
   /^\/onboarding(\/|$)/,
+  // Product pages are for hotels; travellers get the launcher on /properties.
+  /^\/$/,
+  /^\/(about|contact|demo|developers)(\/|$)/,
 ];
 /** Tools that take a property_id the browser can fill in from the hotel on screen (concierge). */
 const PROPERTY_TOOLS = new Set([

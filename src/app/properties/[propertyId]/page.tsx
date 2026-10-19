@@ -24,8 +24,9 @@ import {
 } from 'lucide-react';
 import type { StayQuote } from '@/lib/dto';
 import { fetcher } from '@/lib/fetcher';
-import { fmtRange, nightsBetween } from '@/lib/format';
+import { fmtRange, nightsBetween, telHref } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { LABELS } from '@/config/copy';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -348,6 +349,7 @@ function PropertyPage() {
 
   const name = p?.name ?? shell?.name;
   const brandColor = p?.primaryColor ?? shell?.primaryColor;
+  const isDemo = p?.isDemo ?? shell?.isDemo;
   const scope = brandScope(brandColor);
   const directoryHref = `/properties?${new URLSearchParams({ checkIn: stay.checkIn, checkOut: stay.checkOut, guests: String(stay.guests) })}`;
   const dock = useVoiceDock();
@@ -396,7 +398,7 @@ function PropertyPage() {
               description="It may have moved or paused online booking. Browse other stays, or contact the hotel directly."
               action={
                 <Button asChild variant="default">
-                  <Link href="/properties">Browse stays</Link>
+                  <Link href="/properties">{LABELS.findStay}</Link>
                 </Button>
               }
             />
@@ -432,6 +434,8 @@ function PropertyPage() {
     <GuestShell
       brandColor={brandColor}
       brand={name ? { name, href: `/properties/${propertyId}` } : undefined}
+      hotel={name ? { name, phone: p?.phone, email: p?.email } : undefined}
+      demo={isDemo}
       mainClassName="pb-12 lg:pb-16"
       // Room below the footer for the fixed booking bar (and the "Talk to us" button above it) on phones.
       className={cn('lg:pb-0', p ? (voice ? 'pb-40' : 'pb-24') : '')}
@@ -527,8 +531,8 @@ function PropertyPage() {
               </>
             )}
 
-            {/* Rooms */}
-            <section ref={roomsRef} className="mt-12 scroll-mt-24" aria-labelledby="rooms-heading" aria-busy={availLoading || isValidating}>
+            {/* Rooms (the header's "Rooms" link lands here, clear of the sticky header) */}
+            <section id="rooms" ref={roomsRef} className="mt-12 scroll-mt-24" aria-labelledby="rooms-heading" aria-busy={availLoading || isValidating}>
               <h2 id="rooms-heading" className="font-display text-3xl tracking-tight">
                 Choose your room
               </h2>
@@ -561,7 +565,21 @@ function PropertyPage() {
                   <EmptyState
                     icon={BedDouble}
                     title="Rooms coming soon"
-                    description={`${p.name} hasn’t published its rooms online yet. Call them to book${p.phone ? ` on ${p.phone}` : ''}.`}
+                    description={
+                      <>
+                        {p.name} hasn’t published its rooms online yet. Call them to book
+                        {p.phone && (
+                          <>
+                            {' '}
+                            on{' '}
+                            <a href={telHref(p.phone)} className="rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                              {p.phone}
+                            </a>
+                          </>
+                        )}
+                        .
+                      </>
+                    }
                   />
                 </div>
               ) : (
@@ -618,12 +636,15 @@ function PropertyPage() {
                     <li className="flex items-start gap-2.5">
                       <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> Free changes and cancellation until 3:00 PM the day before you arrive
                     </li>
-                    <li className="flex items-start gap-2.5">
-                      <Phone className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-                      <a href={`tel:${p.phone}`} className="rounded-sm text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                        {p.phone}
-                      </a>
-                    </li>
+                    {p.phone && (
+                      <li className="flex items-start gap-2.5">
+                        <Phone className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                        <a href={telHref(p.phone)} className="rounded-sm text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                          <span className="sr-only">Call {p.name}: </span>
+                          {p.phone}
+                        </a>
+                      </li>
+                    )}
                   </ul>
                 </section>
               </div>
@@ -671,7 +692,7 @@ function PropertyPage() {
               </div>
               <p className="flex items-center justify-center gap-1.5 px-2 text-center text-xs text-muted-foreground">
                 <Lock className="h-3.5 w-3.5" aria-hidden />
-                {(p?.isDemo ?? shell?.isDemo) ? 'Demo hotel — nothing is charged' : 'Secure booking · no booking fees'}
+                {isDemo ? 'Demo hotel — nothing is charged' : 'Secure booking · no booking fees'}
               </p>
               {p && voice && dock && (
                 <div className="rounded-2xl border bg-card p-4 shadow-xs">
@@ -699,7 +720,13 @@ function PropertyPage() {
 function PropertyFallback() {
   const shell = usePropertyShell();
   return (
-    <GuestShell brandColor={shell?.primaryColor} brand={shell ? { name: shell.name, href: `/properties/${shell.id}` } : undefined} mainClassName="pb-12 lg:pb-16">
+    <GuestShell
+      brandColor={shell?.primaryColor}
+      brand={shell ? { name: shell.name, href: `/properties/${shell.id}` } : undefined}
+      hotel={shell ? { name: shell.name } : undefined}
+      demo={shell?.isDemo}
+      mainClassName="pb-12 lg:pb-16"
+    >
       <div className="mx-auto max-w-7xl px-4 sm:px-6" role="status" aria-label="Loading the hotel">
         <div className="mt-3 h-10" />
         <Skeleton className="mt-3 w-full rounded-2xl" style={GALLERY_HEIGHT} />

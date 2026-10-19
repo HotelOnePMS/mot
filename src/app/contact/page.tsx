@@ -2,13 +2,13 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowRight, CircleCheck, Mail, MonitorPlay, Rocket, Send } from 'lucide-react';
-import Navigation from '@/components/Navigation';
+import { ArrowRight, CircleCheck, Luggage, Mail, MonitorPlay, Rocket, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Field } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { SiteFooter } from '@/components/guest/SiteFooter';
+import { MarketingShell } from '@/components/marketing/MarketingShell';
+import { LABELS } from '@/config/copy';
 import { PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL } from '@/config/product';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -18,8 +18,8 @@ type Errors = Partial<Record<keyof FormState, string>>;
 
 const WAYS = [
   { icon: Mail, title: 'Email us', text: PRODUCT_SUPPORT_EMAIL, href: `mailto:${PRODUCT_SUPPORT_EMAIL}` },
-  { icon: Rocket, title: 'Prefer to just try it?', text: 'Set up your hotel in a few minutes', href: '/onboarding' },
-  { icon: MonitorPlay, title: 'See it working', text: 'Open the live demo with one-click logins', href: '/login' },
+  { icon: Rocket, title: 'Prefer to just try it?', text: `${LABELS.hotelSignup} in a few minutes`, href: '/onboarding' },
+  { icon: MonitorPlay, title: LABELS.demo, text: 'The demo hotel’s booking site and one-click console logins', href: '/demo' },
 ];
 
 function validate(form: FormState): Errors {
@@ -67,89 +67,98 @@ export default function ContactPage() {
   }
 
   return (
-    <div className="relative flex min-h-dvh flex-col overflow-x-clip bg-background">
+    <MarketingShell className="relative overflow-x-clip">
       <div
         className="pointer-events-none absolute inset-x-0 top-0 h-[480px] bg-[radial-gradient(ellipse_at_20%_0%,hsl(var(--primary)/0.10),transparent_60%)]"
         aria-hidden
       />
-      <Navigation variant="marketing" />
-      <main id="main" className="relative flex-1">
-        <div className="relative mx-auto grid max-w-6xl gap-12 px-4 py-12 sm:px-6 sm:py-16 lg:grid-cols-[1fr_1.1fr] lg:gap-16 lg:py-20">
-          <div>
-            <p className="text-2xs font-semibold uppercase tracking-[0.18em] text-primary">Contact</p>
-            <h1 className="mt-3 font-display text-4xl font-medium tracking-tight sm:text-5xl">Talk to us</h1>
-            <p className="mt-4 max-w-md text-lg leading-relaxed text-muted-foreground">
-              Questions about switching, keeping your current system, or the AI phone agent? A person reads every message.
-            </p>
-            <ul className="mt-10 space-y-3">
-              {WAYS.map((c) => (
-                <li key={c.title}>
-                  <Link
-                    href={c.href}
-                    className="group flex items-center gap-4 rounded-2xl border bg-card p-4 shadow-xs transition-[border-color,box-shadow] hover:border-primary/30 hover:shadow-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                  >
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary-soft-foreground">
-                      <c.icon className="h-5 w-5" aria-hidden />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block font-medium">{c.title}</span>
-                      <span className="block break-words text-sm text-muted-foreground">{c.text}</span>
-                    </span>
-                    <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary motion-reduce:transition-none" aria-hidden />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <form onSubmit={onSubmit} noValidate aria-labelledby="contact-form-title" className="rounded-3xl border bg-card p-5 shadow-soft sm:p-8">
-            <h2 id="contact-form-title" className="font-display text-2xl font-medium tracking-tight">
-              Send us a message
-            </h2>
-            <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              <Field htmlFor="c-name" label="Your name" error={errors.name}>
-                <Input id="c-name" required autoComplete="name" className="h-11 text-base md:text-sm" {...a11y('name')} />
-              </Field>
-              <Field htmlFor="c-hotel" label="Hotel (optional)">
-                <Input id="c-hotel" autoComplete="organization" className="h-11 text-base md:text-sm" {...a11y('hotel')} />
-              </Field>
-              <Field htmlFor="c-email" label="Email" error={errors.email} className="sm:col-span-2">
-                <Input id="c-email" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} required autoComplete="email" className="h-11 text-base md:text-sm" {...a11y('email')} />
-              </Field>
-              <Field htmlFor="c-message" label="How can we help?" error={errors.message} className="sm:col-span-2">
-                <Textarea
-                  id="c-message"
-                  rows={6}
-                  required
-                  placeholder="We run a 30-room motel on Cloudbeds and want to try the phone agent…"
-                  className="text-base md:text-sm"
-                  {...a11y('message')}
-                />
-              </Field>
-            </div>
-            <Button type="submit" size="lg" className="mt-6 w-full">
-              <Send className="h-4 w-4" aria-hidden /> Write the email
-            </Button>
-            <div role="status" aria-live="polite" className="mt-3">
-              {opened ? (
-                <p className="flex items-start gap-2 rounded-xl bg-success-soft px-3.5 py-3 text-sm text-success-soft-foreground">
-                  <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-                  <span>
-                    Your email app should now be open with the message ready to send. Nothing opened? Email us at{' '}
-                    <a href={`mailto:${PRODUCT_SUPPORT_EMAIL}`} className="font-medium underline underline-offset-2">
-                      {PRODUCT_SUPPORT_EMAIL}
-                    </a>
-                    .
+      <div className="relative mx-auto grid max-w-6xl gap-12 px-4 py-12 sm:px-6 sm:py-16 lg:grid-cols-[1fr_1.1fr] lg:gap-16 lg:py-20">
+        <div>
+          <p className="text-2xs font-semibold uppercase tracking-[0.18em] text-primary">Contact</p>
+          <h1 className="mt-3 font-display text-4xl font-medium tracking-tight sm:text-5xl">Talk to us</h1>
+          <p className="mt-4 max-w-md text-lg leading-relaxed text-muted-foreground">
+            Questions about switching, keeping your current system, or the voice front desk? A person reads every message.
+          </p>
+          <ul className="mt-10 space-y-3">
+            {WAYS.map((c) => (
+              <li key={c.title}>
+                <Link
+                  href={c.href}
+                  className="group flex items-center gap-4 rounded-2xl border bg-card p-4 shadow-xs transition-[border-color,box-shadow] hover:border-primary/30 hover:shadow-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                >
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary-soft-foreground">
+                    <c.icon className="h-5 w-5" aria-hidden />
                   </span>
-                </p>
-              ) : (
-                <p className="text-center text-xs text-muted-foreground">Opens your email app with this message ready to send to {PRODUCT_SUPPORT_EMAIL}.</p>
-              )}
-            </div>
-          </form>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium">{c.title}</span>
+                    <span className="block break-words text-sm text-muted-foreground">{c.text}</span>
+                  </span>
+                  <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary motion-reduce:transition-none" aria-hidden />
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-8 flex max-w-md items-start gap-3 border-t pt-6 text-sm leading-relaxed text-muted-foreground">
+            <Luggage className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
+            <span>
+              Have a booking? Manage it in{' '}
+              <Link
+                href="/dashboard"
+                className="rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              >
+                {LABELS.myTrips}
+              </Link>
+              . For questions about your stay, contact the hotel — its details are on your confirmation.
+            </span>
+          </p>
         </div>
-      </main>
-      <SiteFooter />
-    </div>
+
+        <form onSubmit={onSubmit} noValidate aria-labelledby="contact-form-title" className="rounded-3xl border bg-card p-5 shadow-soft sm:p-8">
+          <h2 id="contact-form-title" className="font-display text-2xl font-medium tracking-tight">
+            Send us a message
+          </h2>
+          <div className="mt-6 grid gap-4 sm:grid-cols-2">
+            <Field htmlFor="c-name" label="Your name" error={errors.name}>
+              <Input id="c-name" required autoComplete="name" className="h-11 text-base md:text-sm" {...a11y('name')} />
+            </Field>
+            <Field htmlFor="c-hotel" label="Hotel (optional)">
+              <Input id="c-hotel" autoComplete="organization" className="h-11 text-base md:text-sm" {...a11y('hotel')} />
+            </Field>
+            <Field htmlFor="c-email" label="Email" error={errors.email} className="sm:col-span-2">
+              <Input id="c-email" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} required autoComplete="email" className="h-11 text-base md:text-sm" {...a11y('email')} />
+            </Field>
+            <Field htmlFor="c-message" label="How can we help?" error={errors.message} className="sm:col-span-2">
+              <Textarea
+                id="c-message"
+                rows={6}
+                required
+                placeholder="We run a 30-room motel on Cloudbeds and want to try the voice front desk…"
+                className="text-base md:text-sm"
+                {...a11y('message')}
+              />
+            </Field>
+          </div>
+          <Button type="submit" size="lg" className="mt-6 w-full">
+            <Send className="h-4 w-4" aria-hidden /> Write the email
+          </Button>
+          <div role="status" aria-live="polite" className="mt-3">
+            {opened ? (
+              <p className="flex items-start gap-2 rounded-xl bg-success-soft px-3.5 py-3 text-sm text-success-soft-foreground">
+                <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                <span>
+                  Your email app should now be open with the message ready to send. Nothing opened? Email us at{' '}
+                  <a href={`mailto:${PRODUCT_SUPPORT_EMAIL}`} className="font-medium underline underline-offset-2">
+                    {PRODUCT_SUPPORT_EMAIL}
+                  </a>
+                  .
+                </span>
+              </p>
+            ) : (
+              <p className="text-center text-xs text-muted-foreground">Opens your email app with this message ready to send to {PRODUCT_SUPPORT_EMAIL}.</p>
+            )}
+          </div>
+        </form>
+      </div>
+    </MarketingShell>
   );
 }

@@ -37,7 +37,7 @@ export async function middleware(request: NextRequest) {
 
   if (pathname === '/admin' || pathname.startsWith('/admin/')) {
     if (!token) return toLogin();
-    if (!isStaffRole(role)) return NextResponse.redirect(new URL('/dashboard', request.url));
+    if (!isStaffRole(role)) return NextResponse.redirect(new URL('/dashboard?notice=staff-only', request.url));
     if (pathname !== '/admin' && !canAccessConsolePath(role, pathname)) {
       return NextResponse.redirect(new URL(homeForRole(role), request.url));
     }

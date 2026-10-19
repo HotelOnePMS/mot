@@ -64,7 +64,7 @@ npm run db:seed                 # demo data (wipes the dev database)
 npm run dev
 ```
 
-Open http://localhost:3000 and use the one-click demo logins on `/login` (password `demo1234`):
+Open http://localhost:3000 and use the one-click demo logins on `/demo`, the *Live demo* page (password `demo1234`):
 
 | Login | Sees |
 | --- | --- |
@@ -86,7 +86,7 @@ Open http://localhost:3000 and use the one-click demo logins on `/login` (passwo
 | `NEXTAUTH_URL` | prod | Public URL (Stripe return URLs) |
 | `HOTEL_TIMEZONE` | | Hotel "today" (default `America/Los_Angeles`) |
 | `AGENT_PLAN_SECRET` | | Separate secret for signed agent plans |
-| `NEXT_PUBLIC_DEMO_MODE` | | `true` = public demo: one-click demo logins on `/login`; the shared demo logins and the demo hotels' public details (name, listing, voice script) can't be changed |
+| `NEXT_PUBLIC_DEMO_MODE` | | `true` = public demo: one-click demo logins on `/demo` (the *Live demo* page); the shared demo logins and the demo hotels' public details (name, listing, voice script) can't be changed |
 | `NEXT_PUBLIC_SITE_URL` | | Canonical public address, e.g. `https://hotelone.site` — metadata, sitemap, and Stripe return URLs (default: `https://hotelone.site` for metadata, the host the guest booked on for Stripe) |
 | `ELEVENLABS_API_KEY` | voice | Voice front desk on ElevenLabs Agents (used when set). Needs Agents write access; HotelOne creates and updates its two agents itself |
 | `ELEVENLABS_VOICE_ID`, `ELEVENLABS_LLM` | | ElevenLabs voice (default: the platform default) and LLM (default `gemini-2.5-flash`) |

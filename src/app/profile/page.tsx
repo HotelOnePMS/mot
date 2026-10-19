@@ -3,11 +3,14 @@
 import * as React from 'react';
 import Link from 'next/link';
 import useSWR from 'swr';
+import { getSession, signOut, useSession } from 'next-auth/react';
 import { toast } from 'sonner';
-import { CalendarCheck2, KeyRound, RefreshCw, Search, UserRound } from 'lucide-react';
+import { CalendarCheck2, KeyRound, LayoutDashboard, LogOut, RefreshCw, Search, UserRound } from 'lucide-react';
 import { api, fetcher } from '@/lib/fetcher';
+import { isStaffRole, signOutTarget } from '@/lib/routes';
 import { roleLabel } from '@/lib/status';
 import { cn } from '@/lib/utils';
+import { LABELS } from '@/config/copy';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Field } from '@/components/ui/label';
@@ -57,6 +60,8 @@ function Card({ id, icon: Icon, title, description, children, onSubmit }: { id: 
 
 export default function ProfilePage() {
   const { data, error, mutate } = useSWR<Profile>('/api/profile', fetcher);
+  const { data: session } = useSession();
+  const role = session?.user?.role ?? data?.role;
   const [draft, setDraft] = React.useState<Draft | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [saveError, setSaveError] = React.useState('');
@@ -155,15 +160,26 @@ export default function ProfilePage() {
                 </>
               )}
               <nav aria-label="Your account" className="mt-6 flex flex-wrap gap-2 lg:flex-col lg:items-stretch">
+                {/* Staff who came here from the console get a way back. */}
+                {isStaffRole(role) && (
+                  <Button asChild variant="outline" className="lg:justify-start">
+                    <Link href="/admin">
+                      <LayoutDashboard aria-hidden /> {LABELS.console}
+                    </Link>
+                  </Button>
+                )}
                 <Button asChild variant="outline" className="lg:justify-start">
                   <Link href="/dashboard">
-                    <CalendarCheck2 aria-hidden /> My trips
+                    <CalendarCheck2 aria-hidden /> {LABELS.myTrips}
                   </Link>
                 </Button>
                 <Button asChild variant="ghost" className="lg:justify-start">
                   <Link href="/properties">
-                    <Search aria-hidden /> Find a stay
+                    <Search aria-hidden /> {LABELS.findStay}
                   </Link>
+                </Button>
+                <Button variant="ghost" className="lg:justify-start" onClick={async () => signOut({ callbackUrl: signOutTarget('/profile', { role: role ?? (await getSession())?.user?.role }) })}>
+                  <LogOut aria-hidden /> {LABELS.signOut}
                 </Button>
               </nav>
             </aside>
