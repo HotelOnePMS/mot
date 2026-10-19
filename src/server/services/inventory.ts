@@ -8,7 +8,8 @@
  */
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import type { ISODate, StayQuote } from '@/lib/dto';
+import type { ISODate, RoomsQuote, StayQuote } from '@/lib/dto';
+import { allocateGuests, normalizeSelection, totalRooms, type RoomSelection } from '@/lib/room-selection';
 import { atNoonUTC, eachNight, toISODate } from '../dates';
 import { badRequest, notFound } from '../errors';
 
@@ -114,6 +115,33 @@ export async function quoteStay(
     total: subtotal,
     currency: 'USD',
     available: inventory.minAvailable,
+  };
+}
+
+/**
+ * Quote for a booking that mixes room types: each type priced as its own
+ * stay (guests shared out as the booking service does), and the total.
+ */
+export async function quoteRooms(
+  db: Db,
+  input: { items: RoomSelection[]; checkIn: ISODate; checkOut: ISODate; guests: number }
+): Promise<RoomsQuote> {
+  const items = normalizeSelection(input.items);
+  const types = await db.roomType.findMany({ where: { id: { in: items.map((i) => i.roomTypeId) } }, select: { id: true, capacity: true } });
+  const lines = items.map((i) => ({ ...i, capacity: types.find((t) => t.id === i.roomTypeId)?.capacity ?? 0 }));
+  const shares = allocateGuests(input.guests, lines);
+  const quotes = await Promise.all(
+    lines.map((l, n) => quoteStay(db, { roomTypeId: l.roomTypeId, checkIn: input.checkIn, checkOut: input.checkOut, rooms: l.rooms, guests: shares?.[n] ?? 1 }))
+  );
+  return {
+    items: quotes,
+    checkIn: input.checkIn,
+    checkOut: input.checkOut,
+    rooms: totalRooms(items),
+    guests: input.guests,
+    fitsParty: shares !== null,
+    total: round2(quotes.reduce((s, q) => s + q.total, 0)),
+    currency: 'USD',
   };
 }
 

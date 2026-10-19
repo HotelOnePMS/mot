@@ -338,8 +338,9 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
         // A beat later, so the agent's "I've opened it" lines up with the page changing.
         setTimeout(
           () =>
-            select && stay
-              ? select(String(args.room_type_id), stay)
+            // A mix of room types (room_types) opens the checkout link itself.
+            select && stay && typeof args.room_type_id === "string" && args.room_type_id
+              ? select(args.room_type_id, stay)
               : routerRef.current.push(url),
           500,
         );

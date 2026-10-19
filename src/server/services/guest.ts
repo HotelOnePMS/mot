@@ -57,8 +57,17 @@ export async function getGuestBooking(actor: Actor, bookingId: string) {
   const upcoming = booking.status === 'CONFIRMED' || booking.status === 'PENDING';
   const today = hotelToday();
   const { stripeCheckoutSessionId: _s, stripePaymentIntentId: _p, ...rest } = booking;
+  // A booking that mixes room types: every reservation in it (this one included), each managed on its own page.
+  const group = booking.groupCode
+    ? await prisma.booking.findMany({
+        where: { groupCode: booking.groupCode, userId: booking.userId },
+        select: { id: true, code: true, status: true, rooms: true, guests: true, totalPrice: true, roomType: { select: { name: true } } },
+        orderBy: { createdAt: 'asc' },
+      })
+    : [];
   return {
     ...rest,
+    group: group.map((g) => ({ id: g.id, code: g.code, status: g.status, rooms: g.rooms, guests: g.guests, totalPrice: Number(g.totalPrice), roomTypeName: g.roomType.name })),
     code: booking.code ?? booking.id.slice(-8).toUpperCase(),
     checkIn,
     checkOut,

@@ -35,6 +35,8 @@ export interface BookingEmailData {
   checkOut: string;
   guests: number;
   rooms: number;
+  /** A booking that mixes room types: "King × 1, Double × 2" (shown instead of roomTypeName × rooms). */
+  roomsLabel?: string;
   /** Amount in the hotel's currency, e.g. "240.00". */
   totalPrice: string;
   bookingId: string;
@@ -94,7 +96,9 @@ function confirmationContent(data: BookingEmailData) {
   const nights = nightsBetween(data.checkIn, data.checkOut);
   const details: Detail[] = [
     { label: 'Booking reference', value: data.bookingId },
-    { label: 'Room', value: `${data.roomTypeName}${data.rooms > 1 ? ` × ${data.rooms}` : ''}` },
+    data.roomsLabel
+      ? { label: 'Rooms', value: data.roomsLabel }
+      : { label: 'Room', value: `${data.roomTypeName}${data.rooms > 1 ? ` × ${data.rooms}` : ''}` },
     { label: 'Check-in', value: formatDay(data.checkIn) },
     { label: 'Check-out', value: formatDay(data.checkOut) },
     ...(nights ? [{ label: 'Length of stay', value: plural(nights, 'night') }] : []),

@@ -3,6 +3,7 @@
  * these fall back to the product domain when no public URL is configured.
  */
 import { PRODUCT_URL } from '@/config/product';
+import { writeSelection, type RoomSelection } from '@/lib/room-selection';
 import { publicSiteUrl } from '../public-url';
 
 /** Absolute URL for a path on this deployment (publicSiteUrl(), else the product domain). */
@@ -16,13 +17,12 @@ export function absoluteUrl(url: string | null | undefined): string | null {
   return /^https?:\/\//i.test(url) ? url : siteUrl(url);
 }
 
-/** The stay a checkout link is for. */
+/** The stay a checkout link is for: one or more room types (a mix is one booking). */
 export interface CheckoutStay {
-  roomTypeId: string;
+  items: RoomSelection[];
   checkIn: string;
   checkOut: string;
   guests: number;
-  rooms: number;
 }
 
 /** Optional guest details the checkout page pre-fills (guestName, guestEmail, guestPhone). */
@@ -33,12 +33,13 @@ export interface CheckoutGuest {
 }
 
 /**
- * Relative path of the pre-filled checkout, `/properties/{id}/book?roomTypeId=…&checkIn=…&checkOut=…&guests=…&rooms=…`
- * (exactly what the guest voice tool `start_booking` opens), plus optional
+ * Relative path of the pre-filled checkout, `/properties/{id}/book?checkIn=…&checkOut=…&guests=…&roomTypeId=…&rooms=…`
+ * (or `room=<roomTypeId>:<count>`, repeated, for a mix of room types) —
+ * exactly what the guest voice tool `start_booking` opens — plus optional
  * guest prefill parameters.
  */
 export function checkoutPath(propertyId: string, stay: CheckoutStay, guest?: CheckoutGuest): string {
-  const q = new URLSearchParams({ roomTypeId: stay.roomTypeId, checkIn: stay.checkIn, checkOut: stay.checkOut, guests: String(stay.guests), rooms: String(stay.rooms) });
+  const q = writeSelection(new URLSearchParams({ checkIn: stay.checkIn, checkOut: stay.checkOut, guests: String(stay.guests) }), stay.items);
   if (guest?.name) q.set('guestName', guest.name);
   if (guest?.email) q.set('guestEmail', guest.email);
   if (guest?.phone) q.set('guestPhone', guest.phone);

@@ -17,6 +17,7 @@ export function toBookingSummary(b: BookingWithRelations): BookingSummary {
   return {
     id: b.id,
     code: b.code ?? b.id.slice(-8).toUpperCase(),
+    groupCode: b.groupCode,
     status: b.status as BookingStatus,
     propertyId: b.property.id,
     propertyName: b.property.name,

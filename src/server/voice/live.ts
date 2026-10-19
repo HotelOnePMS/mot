@@ -257,25 +257,34 @@ const LEAVE_MESSAGE: FunctionToolSpec = {
   strict: true,
 };
 
+/** A booking's rooms: one room type, or a mix in one booking ("1 King and 2 Doubles"). */
+const ROOM_TYPE_ID = { type: ['string', 'null'], description: 'room_type_id from check_availability, for one room type. Empty when you pass room_types.' };
+const ROOM_TYPES = {
+  type: ['array', 'null'],
+  description: 'For a mix of room types in one booking (e.g. 1 King and 2 Doubles): one entry per type, up to 5 types and 9 rooms. Empty for a single room type.',
+  items: obj({ room_type_id: { type: 'string', description: 'room_type_id from check_availability' }, rooms: { type: 'integer', minimum: 1, maximum: 9 } }, ['room_type_id', 'rooms']),
+};
+
 /** Phone callers have no screen to check out on, and some hotels confirm every booking themselves: the team finishes these. */
 const REQUEST_BOOKING: FunctionToolSpec = {
   type: 'function',
   name: 'request_booking',
   description:
-    'Send a booking request to the hotel team once the guest has chosen a room from check_availability. The team confirms it with the guest — it is not booked until then. Never take card details.',
+    'Send a booking request to the hotel team once the guest has chosen a room from check_availability (or a mix of room types, as one booking). The team confirms it with the guest — it is not booked until then. Never take card details.',
   parameters: obj(
     {
-      room_type_id: { type: 'string', description: 'id from check_availability' },
+      room_type_id: ROOM_TYPE_ID,
+      room_types: ROOM_TYPES,
       check_in: date('Arrival date'),
       check_out: date('Departure date'),
-      guests: { type: 'integer', minimum: 1, maximum: 16 },
-      rooms: { type: 'integer', minimum: 1, maximum: 9 },
+      guests: { type: 'integer', minimum: 1, maximum: 16, description: 'Total guests in the party' },
+      rooms: { type: 'integer', minimum: 1, maximum: 9, description: 'Rooms of the single room type (ignored with room_types)' },
       name: { type: 'string', description: 'Guest’s full name' },
       email: { type: ['string', 'null'], description: 'Email for the booking link, if the guest gives one' },
       phone: { type: ['string', 'null'], description: 'Callback number, only if different from the number they are calling from' },
       notes: { type: ['string', 'null'], description: 'Special requests, if any' },
     },
-    ['room_type_id', 'check_in', 'check_out', 'guests', 'rooms', 'name', 'email', 'phone', 'notes']
+    ['room_type_id', 'room_types', 'check_in', 'check_out', 'guests', 'rooms', 'name', 'email', 'phone', 'notes']
   ),
   strict: true,
 };
@@ -373,17 +382,18 @@ const WEB_START_BOOKING: FunctionToolSpec = {
   type: 'function',
   name: 'start_booking',
   description:
-    'Open the hotel’s secure checkout on the guest’s screen with the chosen room, dates and party filled in. Use once the guest has picked a room from check_availability and you have repeated the room, dates and total back. Never take card details by voice.',
+    'Open the hotel’s secure checkout on the guest’s screen with the chosen room (or mix of room types, as one booking), dates and party filled in. Use once the guest has picked from check_availability and you have repeated the rooms, dates and total back. Never take card details by voice.',
   parameters: obj(
     {
       property_id: propertyId(),
-      room_type_id: { type: 'string', description: 'room_type_id from check_availability' },
+      room_type_id: ROOM_TYPE_ID,
+      room_types: ROOM_TYPES,
       check_in: date('Arrival date'),
       check_out: date('Departure date'),
       guests,
-      rooms,
+      rooms: { ...rooms, description: 'Rooms of the single room type (ignored with room_types)' },
     },
-    ['property_id', 'room_type_id', 'check_in', 'check_out', 'guests', 'rooms']
+    ['property_id', 'room_type_id', 'room_types', 'check_in', 'check_out', 'guests', 'rooms']
   ),
   strict: true,
 };
@@ -581,6 +591,7 @@ export function guestPrompts(p: {
     `You handle tasks for the voice front desk of ${p.name}. Today is ${dayWithWeekday(p.today)} (${p.timezone}). Resolve relative dates ("this Friday", "next weekend") against today.`,
     'Rules:',
     '- Facts come only from tools. Never invent prices, availability, amenities or policies.',
+    MIXED_ROOMS_RULE,
     ...(live
       ? [
           '- Quote exact prices from check_availability. If nothing fits, say so and suggest other dates or a message to the team.',
@@ -612,6 +623,10 @@ export function guestPrompts(p: {
 }
 
 /** How the booking-site voice finishes a booking on the guest's screen (both scopes). */
+/** Booking different room types together ("a king and two doubles"): one booking, one code. */
+const MIXED_ROOMS_RULE =
+  '- Different room types in one booking (e.g. one king and two doubles): check availability for the whole party, then book with room_types (each room_type_id and its number of rooms) and leave room_type_id empty; guests is the whole party. Read back every room type and the combined total first. It is one booking with one confirmation code.';
+
 const WEB_CHECKOUT_RULES = [
   '- On checkout: fill_guest_details can fill in the guest’s name, phone and special requests. When they want to book, read back the room, dates and total shown on checkout and ask “Shall I book it?”.',
   '- Call confirm_booking only after a clear yes to that exact room, dates and total in this conversation. It books pay-at-the-hotel. If it says the guest must sign in, or that card payment is selected, tell them exactly what to tap on screen. Never take card details by voice.',
@@ -646,6 +661,7 @@ export function conciergePrompts(p: { product: string; today: string; timezone: 
     '- Questions about one hotel: get_property_info with its property_id; its skills are the hotel’s own answers (use_skill gives one by key).',
     '- To show a hotel on screen, call open_hotel. Use check_availability for its rooms and exact prices.',
     '- To book: confirm the hotel, room, dates, guests and total with the guest, then call start_booking — the checkout opens on their screen.',
+    MIXED_ROOMS_RULE,
     WEB_CHECKOUT_RULES,
     '- Existing bookings: find_booking needs the confirmation code and last name.',
     '- Anything you can’t do (group rates, special arrangements): leave_message with the hotel’s property_id, the guest’s name and a phone number or email.',

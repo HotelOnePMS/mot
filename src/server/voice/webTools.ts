@@ -29,7 +29,7 @@ import { runsOnHotelOne } from '../concierge/facts';
 import { availabilityOptions } from '../concierge/shared';
 import { useSkill as runSkill } from '../skills';
 import { CLIENT_ONLY_TOOLS, type VoiceScope } from './live';
-import { runGuestTool } from './guestTools';
+import { roomArgs, runGuestTool } from './guestTools';
 
 export interface WebVoiceSession {
   /** VoiceSession id (rate limits per conversation). */
@@ -181,17 +181,27 @@ export async function runWebTool(session: WebVoiceSession, name: string, raw: un
 
     case 'start_booking': {
       const a = z
-        .object({ property_id: optionalId, room_type_id: z.string().trim().min(1).max(64), check_in: isoDate, check_out: isoDate, guests: count(16), rooms: count(9) })
+        .object({
+          property_id: optionalId,
+          // One room type, or a mix in one booking (room_types: "1 King and 2 Doubles").
+          room_type_id: z.string().trim().min(1).max(64).nullish(),
+          room_types: z.array(z.object({ room_type_id: z.string().trim().min(1).max(64), rooms: count(9) })).min(1).max(5).nullish(),
+          check_in: isoDate,
+          check_out: isoDate,
+          guests: count(16),
+          rooms: count(9),
+        })
         .parse(args);
       const h = await hotelFor(session, a.property_id);
       if ('error' in h) return h;
-      const link = await bookingLink({ propertyId: h.id, roomTypeId: a.room_type_id, checkIn: a.check_in, checkOut: a.check_out, guests: a.guests, rooms: a.rooms });
+      const link = await bookingLink({ propertyId: h.id, ...roomArgs(a), checkIn: a.check_in, checkOut: a.check_out, guests: a.guests });
       const s = link.summary;
+      const room = s.roomTypes.length > 1 ? s.roomTypes.map((r) => `${r.name} × ${r.rooms}`).join(', ') : s.roomType.name;
       return {
         opened: true,
         url: pathOf(link.url),
         hotel: s.hotel.name,
-        room: s.roomType.name,
+        room,
         check_in: s.checkIn,
         check_out: s.checkOut,
         nights: s.nights,
@@ -199,7 +209,7 @@ export async function runWebTool(session: WebVoiceSession, name: string, raw: un
         rooms: s.rooms,
         total: s.total,
         currency: s.currency,
-        say: `I’ve opened the checkout for the ${s.roomType.name} on your screen.`,
+        say: `I’ve opened the checkout for ${s.roomTypes.length > 1 ? room : `the ${room}`} on your screen.`,
       };
     }
 

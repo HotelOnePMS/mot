@@ -149,7 +149,7 @@ function toElevenLabsSchema(node: Schema, name = 'value'): Schema {
     if (node.description) out.description = node.description;
     return out;
   }
-  if (type === 'array') {
+  if (type === 'array' || (Array.isArray(type) && type.includes('array'))) {
     out.type = 'array';
     out.items = toElevenLabsSchema((node.items ?? { type: 'string' }) as Schema, name);
   } else {

@@ -128,6 +128,11 @@ const SCHEMAS: Record<string, JsonSchema> = {
     summary: obj({
       hotel: obj({ id: str(), name: str() }),
       roomType: obj({ id: str(), name: str(), sleeps: int() }),
+      roomTypes: {
+        type: 'array',
+        description: 'Every room type in the booking (one entry unless it mixes room types).',
+        items: obj({ id: str(), name: str(), sleeps: int(), rooms: int(), total: num('USD, whole stay, these rooms'), roomsLeft: int() }),
+      },
       checkIn: date('Arrival'),
       checkOut: date('Departure'),
       nights: int(),
@@ -155,6 +160,11 @@ const SCHEMAS: Record<string, JsonSchema> = {
     paymentStatus: { type: 'string', const: 'PAY_AT_PROPERTY' },
     hotel: obj({ id: str(), name: str() }),
     roomType: obj({ id: str(), name: str() }),
+    roomTypes: {
+      type: 'array',
+      description: 'Every room type booked, one reservation each under the same confirmation code (one entry unless it mixes room types).',
+      items: obj({ id: str(), name: str(), rooms: int(), guests: int(), total: num('USD'), code: str('This room type’s own reservation code') }),
+    },
     checkIn: date('Arrival'),
     checkOut: date('Departure'),
     nights: int(),
@@ -212,6 +222,7 @@ export function openApiDocument(origin: string) {
         '',
         'Booking flow: searchHotels → checkAvailability → createBookingLink (the guest opens the pre-filled checkout and confirms; the default) — or requestBooking when the guest can’t open a link (the hotel confirms), or createBooking with an API key (confirmed at once, paid at the hotel).',
         'Always confirm the hotel, room, dates, guests and total with the guest before requestBooking or createBooking.',
+        'One booking can mix room types (e.g. 1 King and 2 Doubles): send roomTypes instead of roomTypeId to createBookingLink, requestBooking or createBooking.',
         '',
         'Dates are YYYY-MM-DD; prices are USD. Only createBooking needs an API key (`Authorization: Bearer ho_live_…`), which hotel owners create in the console under AI assistants.',
         limitLine(),

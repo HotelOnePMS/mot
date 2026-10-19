@@ -14,6 +14,8 @@ import {
   Check,
   Clock,
   Images,
+  Minus,
+  Plus,
   Lock,
   MapPin,
   Phone,
@@ -24,6 +26,7 @@ import {
 } from 'lucide-react';
 import type { StayQuote } from '@/lib/dto';
 import { fetcher } from '@/lib/fetcher';
+import { MAX_ROOMS_PER_BOOKING, MAX_ROOM_TYPES_PER_BOOKING, totalRooms, writeSelection, type RoomSelection } from '@/lib/room-selection';
 import { fmtRange, nightsBetween } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -186,6 +189,9 @@ function RoomCard({
   onSelect,
   onRooms,
   onOtherDates,
+  picked,
+  maxPick,
+  onPick,
 }: {
   rt: RoomType;
   a: RoomAvailability | undefined;
@@ -196,6 +202,11 @@ function RoomCard({
   onSelect: () => void;
   onRooms: (rooms: number) => void;
   onOtherDates: () => void;
+  /** Rooms of this type in the guest's mixed booking (0 when not added). */
+  picked: number;
+  /** Most rooms of this type that can still be added. */
+  maxPick: number;
+  onPick: (delta: number) => void;
 }) {
   const reduce = useReducedMotion();
   const state = roomState(a);
@@ -284,10 +295,42 @@ function RoomCard({
                 </p>
               )}
             </div>
-            {state === 'bookable' ? (
-              <Button variant="brand" className="h-11 px-5" onClick={onSelect}>
-                Select<span className="sr-only"> {rt.name}</span>
-              </Button>
+            {picked > 0 ? (
+              // In the guest's mix of room types: how many of this one.
+              <div className="flex items-center gap-1 rounded-xl border p-1" role="group" aria-label={`${rt.name} rooms in your booking`}>
+                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => onPick(-1)} aria-label={`One fewer ${rt.name}`}>
+                  <Minus aria-hidden />
+                </Button>
+                <span className="min-w-16 text-center text-sm font-semibold tabular" aria-live="polite">
+                  {plural(picked, 'room')}
+                </span>
+                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => onPick(1)} disabled={maxPick < 1} aria-label={`One more ${rt.name}`}>
+                  <Plus aria-hidden />
+                </Button>
+              </div>
+            ) : state === 'bookable' ? (
+              <div className="flex flex-wrap gap-2">
+                {maxPick > 0 && (
+                  <Button variant="outline" className="h-11" onClick={() => onPick(1)}>
+                    <Plus aria-hidden /> Add<span className="sr-only"> a {rt.name} to a booking with other room types</span>
+                  </Button>
+                )}
+                <Button variant="brand" className="h-11 px-5" onClick={onSelect}>
+                  Select<span className="sr-only"> {rt.name}</span>
+                </Button>
+              </div>
+            ) : state === 'too-small' && maxPick > 0 ? (
+              // Too small for the whole party alone, but it can go alongside other room types.
+              <div className="flex flex-wrap gap-2">
+                {neededRooms <= 9 && (
+                  <Button variant="ghost" className="h-11" onClick={() => onRooms(neededRooms)}>
+                    Search {plural(neededRooms, 'room')}
+                  </Button>
+                )}
+                <Button variant="outline" className="h-11" onClick={() => onPick(1)}>
+                  <Plus aria-hidden /> Add<span className="sr-only"> a {rt.name} to a booking with other room types</span>
+                </Button>
+              </div>
             ) : state === 'too-small' && neededRooms <= 9 ? (
               <Button variant="outline" className="h-11" onClick={() => onRooms(neededRooms)}>
                 Search {plural(neededRooms, 'room')}
@@ -336,6 +379,22 @@ function PropertyPage() {
   const book = (roomTypeId: string) => {
     const q = new URLSearchParams({ roomTypeId, checkIn: stay.checkIn, checkOut: stay.checkOut, guests: String(stay.guests), rooms: String(stay.rooms ?? 1) });
     router.push(`/properties/${propertyId}/book?${q}`);
+  };
+
+  // A booking that mixes room types ("a king and two doubles"): the guest adds rooms card by card.
+  const [picked, setPicked] = React.useState<RoomSelection[]>([]);
+  const stayKey = `${stay.checkIn}|${stay.checkOut}`;
+  React.useEffect(() => setPicked([]), [stayKey]);
+  const pickedRooms = totalRooms(picked);
+  const pick = (roomTypeId: string, delta: number) =>
+    setPicked((cur) => {
+      const has = cur.find((i) => i.roomTypeId === roomTypeId);
+      if (!has) return delta > 0 && cur.length < MAX_ROOM_TYPES_PER_BOOKING ? [...cur, { roomTypeId, rooms: delta }] : cur;
+      return cur.map((i) => (i.roomTypeId === roomTypeId ? { ...i, rooms: i.rooms + delta } : i)).filter((i) => i.rooms > 0);
+    });
+  const bookPicked = () => {
+    const q = new URLSearchParams({ checkIn: stay.checkIn, checkOut: stay.checkOut, guests: String(stay.guests) });
+    router.push(`/properties/${propertyId}/book?${writeSelection(q, picked)}`);
   };
 
   const otherDates = () => {
@@ -415,6 +474,23 @@ function PropertyPage() {
     .map((x) => x.rt);
   const rooms = stay.rooms ?? 1;
   const voice = p?.voice?.available && dock?.available;
+  /** How many more rooms of a type fit in the mix: what's free, within the per-booking caps. */
+  const pickLimit = (roomTypeId: string) => {
+    const a = byId.get(roomTypeId);
+    const mine = picked.find((x) => x.roomTypeId === roomTypeId)?.rooms ?? 0;
+    if (!a || !a.quote || a.available < 1) return 0;
+    if (!mine && picked.length >= MAX_ROOM_TYPES_PER_BOOKING) return 0;
+    return Math.max(0, Math.min(a.available - mine, MAX_ROOMS_PER_BOOKING - pickedRooms));
+  };
+  // Per room for the stay, from the availability quote (priced for the searched number of rooms).
+  const perRoom = (roomTypeId: string) => {
+    const q = byId.get(roomTypeId)?.quote;
+    return q && q.rooms ? q.total / q.rooms : 0;
+  };
+  const pickedTotal = picked.reduce((n, i) => n + perRoom(i.roomTypeId) * i.rooms, 0);
+  const pickedSleeps = picked.reduce((n, i) => n + (byId.get(i.roomTypeId)?.capacity ?? 0) * i.rooms, 0);
+  const pickedLabel = picked.map((i) => `${byId.get(i.roomTypeId)?.name ?? 'Room'} × ${i.rooms}`).join(', ');
+  const pickedFits = pickedSleeps >= stay.guests && stay.guests >= picked.length;
 
   const header = (
     <div>
@@ -440,7 +516,11 @@ function PropertyPage() {
             <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-surface/95 px-4 pt-3 shadow-float backdrop-blur pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:hidden">
               <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
                 <div className="min-w-0" aria-live="polite">
-                  {cheapest?.quote ? (
+                  {picked.length > 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      <span className="text-lg font-semibold text-foreground tabular">{price(Math.round(pickedTotal))}</span> · {plural(pickedRooms, 'room')}
+                    </p>
+                  ) : cheapest?.quote ? (
                     <p className="text-sm text-muted-foreground">
                       From <span className="text-lg font-semibold text-foreground tabular">{price(Math.round(cheapest.quote.averageNightly))}</span> / night
                     </p>
@@ -451,9 +531,15 @@ function PropertyPage() {
                     {fmtRange(stay.checkIn, stay.checkOut)} · {plural(stay.guests, 'guest')}
                   </p>
                 </div>
-                <Button variant="brand" className="h-11 shrink-0 px-5" onClick={() => (cheapest ? scrollTo(roomsRef.current) : otherDates())}>
-                  {cheapest ? 'Choose a room' : 'Change dates'}
-                </Button>
+                {picked.length > 0 ? (
+                  <Button variant="brand" className="h-11 shrink-0 px-5" onClick={pickedFits ? bookPicked : () => scrollTo(roomsRef.current)}>
+                    {pickedFits ? `Book ${plural(pickedRooms, 'room')}` : 'Add rooms'}
+                  </Button>
+                ) : (
+                  <Button variant="brand" className="h-11 shrink-0 px-5" onClick={() => (cheapest ? scrollTo(roomsRef.current) : otherDates())}>
+                    {cheapest ? 'Choose a room' : 'Change dates'}
+                  </Button>
+                )}
               </div>
             </div>
           )}
@@ -547,6 +633,30 @@ function PropertyPage() {
                   Nothing left that fits {plural(stay.guests, 'guest')} for {fmtRange(stay.checkIn, stay.checkOut)}. Try other dates{rooms === 1 ? ' or more rooms' : ''}.
                 </Callout>
               )}
+              {p && roomTypes.length > 1 && (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  Need different rooms, like a king and two doubles? Press <span className="font-medium text-foreground">Add</span> on each room type, then book them together.
+                </p>
+              )}
+              {picked.length > 0 && (
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brand/40 bg-brand-soft p-4 text-brand-soft-foreground" role="status">
+                  <div className="min-w-0 text-sm">
+                    <p className="font-semibold">Your rooms: {pickedLabel}</p>
+                    <p className="mt-0.5 tabular">
+                      About {price(Math.round(pickedTotal))} for {plural(nights, 'night')} · sleeps {pickedSleeps}
+                      {pickedFits ? '' : stay.guests < picked.length ? ` · add a guest per room type` : ` · ${plural(stay.guests, 'guest')} need more room`}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="ghost" className="h-11" onClick={() => setPicked([])}>
+                      Clear
+                    </Button>
+                    <Button variant="brand" className="h-11 px-5" onClick={bookPicked} disabled={!pickedFits}>
+                      Book {plural(pickedRooms, 'room')}
+                    </Button>
+                  </div>
+                </div>
+              )}
               {!p ? (
                 <div className="mt-5 space-y-4" aria-hidden>
                   {[0, 1].map((i) => (
@@ -575,6 +685,9 @@ function PropertyPage() {
                       onSelect={() => book(rt.id)}
                       onRooms={(n) => setStay({ ...stay, rooms: n })}
                       onOtherDates={otherDates}
+                      picked={picked.find((x) => x.roomTypeId === rt.id)?.rooms ?? 0}
+                      maxPick={pickLimit(rt.id)}
+                      onPick={(delta) => pick(rt.id, delta)}
                     />
                   ))}
                 </ul>
@@ -633,7 +746,17 @@ function PropertyPage() {
             <div data-voice-avoid className="sticky top-24 space-y-3">
               <div className="rounded-2xl border bg-card p-5 shadow-lifted">
                 <div className="min-h-[3.75rem]" aria-live="polite">
-                  {cheapest?.quote ? (
+                  {picked.length > 0 ? (
+                    <>
+                      <p className="text-sm text-muted-foreground">
+                        <span className="text-3xl font-semibold text-foreground tabular">{price(Math.round(pickedTotal))}</span> total
+                      </p>
+                      <p className="mt-0.5 text-sm text-muted-foreground">{pickedLabel}</p>
+                      <Button variant="brand" className="mt-3 h-11 w-full" onClick={bookPicked} disabled={!pickedFits}>
+                        Book {plural(pickedRooms, 'room')}
+                      </Button>
+                    </>
+                  ) : cheapest?.quote ? (
                     <>
                       <p className="text-sm text-muted-foreground">
                         From <span className="text-3xl font-semibold text-foreground tabular">{price(Math.round(cheapest.quote.averageNightly))}</span> / night

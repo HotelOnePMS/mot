@@ -3,6 +3,8 @@ import { getStripe, isStripeConfigured } from '@/lib/stripe';
 import { prisma } from '@/lib/prisma';
 import { sendBookingConfirmation } from '@/server/email';
 import { toDateString } from '@/lib/date-utils';
+import { bookingTotals } from '@/server/services/bookings';
+import { bookingInclude } from '@/server/services/mappers';
 
 /**
  * Stripe webhook — confirms bookings after successful Checkout payment.
@@ -37,58 +39,57 @@ export async function POST(request: NextRequest) {
   if (event.type === 'checkout.session.completed') {
     const checkoutSession = event.data.object as {
       id: string;
-      metadata?: { bookingId?: string };
+      metadata?: { bookingId?: string; bookingIds?: string };
       payment_intent?: string;
     };
-    const bookingId = checkoutSession.metadata?.bookingId;
-    if (!bookingId) {
+    const bookingIds = paidBookingIds(checkoutSession.metadata);
+    if (!bookingIds.length) {
       console.error('[stripe-webhook] checkout.session.completed without bookingId metadata');
       return NextResponse.json({ received: true });
     }
 
-    const booking = await prisma.booking.findUnique({
-      where: { id: bookingId },
-      include: {
-        user: true,
-        property: true,
-        roomType: true,
-      },
-    });
-
-    if (!booking) {
-      console.error(`[stripe-webhook] Booking ${bookingId} not found`);
+    // One payment can cover several room types (one reservation each).
+    const bookings = await prisma.booking.findMany({ where: { id: { in: bookingIds } }, include: bookingInclude, orderBy: { createdAt: 'asc' } });
+    if (!bookings.length) {
+      console.error(`[stripe-webhook] Bookings ${bookingIds.join(', ')} not found`);
       return NextResponse.json({ received: true });
     }
 
-    if (booking.paymentStatus !== 'PAID') {
-      await prisma.booking.update({
-        where: { id: bookingId },
-        data: {
-          paymentStatus: 'PAID',
-          status: 'CONFIRMED',
-          stripePaymentIntentId:
-            typeof checkoutSession.payment_intent === 'string'
-              ? checkoutSession.payment_intent
-              : null,
-          statusHistory: {
-            create: { status: 'CONFIRMED', notes: 'Paid via Stripe Checkout' },
+    const unpaid = bookings.filter((b) => b.paymentStatus !== 'PAID');
+    if (unpaid.length) {
+      for (const b of unpaid) {
+        await prisma.booking.update({
+          where: { id: b.id },
+          data: {
+            paymentStatus: 'PAID',
+            status: 'CONFIRMED',
+            stripePaymentIntentId:
+              typeof checkoutSession.payment_intent === 'string'
+                ? checkoutSession.payment_intent
+                : null,
+            statusHistory: {
+              create: { status: 'CONFIRMED', notes: 'Paid via Stripe Checkout' },
+            },
           },
-        },
-      });
+        });
+      }
 
+      const booking = bookings[0];
+      const totals = bookingTotals(bookings);
       const guestName = `${booking.user.firstName} ${booking.user.lastName}`.trim();
       await sendBookingConfirmation({
         to: booking.user.email,
         guestName: guestName || booking.user.email,
         propertyName: booking.property.name,
-        roomTypeName: booking.roomType.name,
+        roomTypeName: totals.roomTypeName,
         checkIn: toDateString(booking.checkIn),
         checkOut: toDateString(booking.checkOut),
-        guests: booking.guests,
-        rooms: booking.rooms,
-        totalPrice: booking.totalPrice.toString(),
+        guests: totals.guests,
+        rooms: totals.rooms,
+        roomsLabel: totals.roomsLabel,
+        totalPrice: totals.total.toFixed(2),
         // The short code guests can say out loud, like the pay-at-hotel confirmation.
-        bookingId: booking.code ?? booking.id,
+        bookingId: totals.code,
         paymentStatus: 'PAID',
       });
     }
@@ -96,9 +97,8 @@ export async function POST(request: NextRequest) {
 
   // Abandoned checkout: release the held rooms so they can be sold again.
   if (event.type === 'checkout.session.expired') {
-    const expired = event.data.object as { metadata?: { bookingId?: string } };
-    const bookingId = expired.metadata?.bookingId;
-    if (bookingId) {
+    const expired = event.data.object as { metadata?: { bookingId?: string; bookingIds?: string } };
+    for (const bookingId of paidBookingIds(expired.metadata)) {
       const { count } = await prisma.booking.updateMany({
         where: { id: bookingId, status: 'PENDING', paymentStatus: 'AWAITING_PAYMENT' },
         data: { status: 'CANCELLED', paymentStatus: 'EXPIRED' },
@@ -110,4 +110,10 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ received: true });
+}
+
+/** The reservations a Checkout session paid for: every room type (bookingIds), or the single bookingId of older sessions. */
+function paidBookingIds(metadata: { bookingId?: string; bookingIds?: string } | undefined): string[] {
+  const ids = metadata?.bookingIds?.split(',').map((id) => id.trim()).filter(Boolean) ?? [];
+  return ids.length ? ids : metadata?.bookingId ? [metadata.bookingId] : [];
 }

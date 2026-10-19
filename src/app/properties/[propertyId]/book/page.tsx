@@ -7,9 +7,10 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { getSession, signIn, signOut, useSession } from 'next-auth/react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArrowLeft, Building2, CalendarDays, Check, CreditCard, Lock, ShieldCheck, UserRound, Users } from 'lucide-react';
-import type { StayQuote } from '@/lib/dto';
+import type { RoomsQuote, StayQuote } from '@/lib/dto';
 import { api, fetcher } from '@/lib/fetcher';
 import { fmtDay, fmtRange } from '@/lib/format';
+import { readSelection, selectionLabel, totalRooms, writeSelection } from '@/lib/room-selection';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -234,17 +235,23 @@ function Checkout() {
   const router = useRouter();
   const shell = usePropertyShell();
   const { data: session, status } = useSession();
-  const roomTypeId = params.get('roomTypeId') ?? '';
+  // One room type (roomTypeId + rooms), or a mix of types ("1 King and 2 Doubles").
+  const selection = React.useMemo(() => readSelection(params), [params]);
+  const roomTypeId = selection[0]?.roomTypeId ?? '';
+  const mixed = selection.length > 1;
   const checkIn = params.get('checkIn') ?? '';
   const checkOut = params.get('checkOut') ?? '';
   const guests = Number(params.get('guests')) || 2;
-  const rooms = Number(params.get('rooms')) || 1;
+  const rooms = totalRooms(selection) || 1;
+  const stayParams = writeSelection(new URLSearchParams({ checkIn, checkOut, guests: String(guests) }), selection);
 
   const { data: p } = useSWR<PublicProperty>(`/api/properties/${propertyId}`, fetcher);
-  const { data: quote, error: quoteError } = useSWR<StayQuote>(
-    roomTypeId && checkIn && checkOut ? `/api/quote?roomTypeId=${roomTypeId}&checkIn=${checkIn}&checkOut=${checkOut}&guests=${guests}&rooms=${rooms}` : null,
-    fetcher
-  );
+  const { data: priced, error: quoteError } = useSWR<StayQuote | RoomsQuote>(roomTypeId && checkIn && checkOut ? `/api/quote?${stayParams}` : null, fetcher);
+  // Every room type's quote, and the whole booking's total.
+  const lines: StayQuote[] = !priced ? [] : 'items' in priced ? priced.items : [priced];
+  const quote = priced ? { total: priced.total, currency: priced.currency } : undefined;
+  const single = priced && !('items' in priced) ? priced : undefined;
+  const tooSmall = !!priced && 'items' in priced && !priced.fitsParty;
   const { data: config } = useSWR<{ stripeEnabled: boolean; emailEnabled?: boolean }>('/api/config', fetcher);
   const [payment, setPayment] = React.useState<PaymentMethod>('pay_at_property');
   const [notes, setNotes] = React.useState('');
@@ -262,8 +269,9 @@ function Checkout() {
 
   const rt = p?.roomTypes.find((r) => r.id === roomTypeId);
   const signedIn = status === 'authenticated';
-  const back = `/properties/${propertyId}?checkIn=${checkIn}&checkOut=${checkOut}&guests=${guests}&rooms=${rooms}`;
-  const unavailable = !!quote && quote.available < rooms;
+  const back = `/properties/${propertyId}?checkIn=${checkIn}&checkOut=${checkOut}&guests=${guests}&rooms=${mixed ? 1 : rooms}`;
+  const soldOut = lines.filter((q) => q.available < q.rooms);
+  const unavailable = soldOut.length > 0;
   const stripe = !!config?.stripeEnabled;
   const method: PaymentMethod = stripe ? payment : 'pay_at_property';
   const name = p?.name ?? shell?.name;
@@ -286,7 +294,7 @@ function Checkout() {
     try {
       const r = await api<{ requiresPayment: boolean; checkoutUrl?: string; booking: { id: string; code?: string | null } }>('/api/bookings', {
         method: 'POST',
-        json: { propertyId, roomTypeId, checkIn, checkOut, guests, rooms, notes: notes.trim() || null, paymentMethod: method },
+        json: { propertyId, ...(mixed ? { items: selection } : { roomTypeId, rooms }), checkIn, checkOut, guests, notes: notes.trim() || null, paymentMethod: method },
       });
       if (r.requiresPayment && r.checkoutUrl) {
         window.location.href = r.checkoutUrl;
@@ -308,7 +316,7 @@ function Checkout() {
   }
 
   // The voice agent (the site's voice dock) sees this order and can fill in details and book on a spoken yes.
-  const roomName = rt?.name ?? quote?.roomTypeName;
+  const roomName = mixed ? (lines.length ? selectionLabel(lines.map((q) => ({ name: q.roomTypeName, rooms: q.rooms }))) : null) : (rt?.name ?? single?.roomTypeName);
   const total = quote ? price(quote.total, quote.currency ?? 'USD') : null;
   useVoicePage({
     kind: 'checkout',
@@ -319,8 +327,9 @@ function Checkout() {
     summary:
       roomTypeId && checkIn && checkOut
         ? [
-            `checkout for ${roomName ? `the ${roomName}` : 'a room'}${name ? ` at ${name}` : ''}, ${fmtRange(checkIn, checkOut)}, ${plural(guests, 'guest')}${rooms > 1 ? `, ${plural(rooms, 'room')}` : ''}${total ? `, total ${total}` : ''}`,
-            unavailable ? 'this room just sold out for these dates' : '',
+            `checkout for ${roomName ? (mixed ? `a mix of rooms (${roomName})` : `the ${roomName}`) : 'a room'}${name ? ` at ${name}` : ''}, ${fmtRange(checkIn, checkOut)}, ${plural(guests, 'guest')}${rooms > 1 ? `, ${plural(rooms, 'room')}` : ''}${total ? `, total ${total}` : ''}`,
+            unavailable ? `${soldOut.map((q) => q.roomTypeName).join(' and ')} just sold out for these dates` : '',
+            tooSmall ? `these rooms don’t sleep ${plural(guests, 'guest')} — add a room` : '',
             status === 'loading' ? '' : signedIn ? `signed in as ${session?.user?.name ?? session?.user?.email}` : 'not signed in yet',
             method === 'stripe' ? 'card payment selected' : 'paying at the hotel',
           ]
@@ -356,7 +365,8 @@ function Checkout() {
         if (busy) return { ok: false, error: 'It’s already booking — wait a moment.' };
         if (quoteError) return { ok: false, error: `The price couldn’t be checked: ${(quoteError as Error).message}` };
         if (!quote) return { ok: false, error: 'The price is still loading — try again in a moment.' };
-        if (unavailable) return { ok: false, error: 'This room just sold out for these dates — offer to check other rooms or dates.' };
+        if (unavailable) return { ok: false, error: `${soldOut.map((q) => q.roomTypeName).join(' and ')} just sold out for these dates — offer to check other rooms or dates.` };
+        if (tooSmall) return { ok: false, error: `These rooms don’t sleep ${plural(guests, 'guest')} — offer to add a room.` };
         if (method === 'stripe') {
           return { ok: false, error: 'Card payment is selected. Ask the guest to tap “Continue to payment” on screen, or to choose “Pay at the hotel” so you can book it. Never take card details by voice.' };
         }
@@ -376,7 +386,7 @@ function Checkout() {
     },
   });
 
-  if (!roomTypeId || !checkIn || !checkOut) {
+  if (!selection.length || !checkIn || !checkOut) {
     return (
       <GuestShell brandColor={shell?.primaryColor} brand={shell ? { name: shell.name, href: `/properties/${propertyId}` } : undefined}>
         <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
@@ -401,7 +411,7 @@ function Checkout() {
   const deadline = fmtDay(shiftDay(checkIn, -1), 'weekday');
   const cur = quote?.currency ?? 'USD';
   const totalLabel = quote ? price(quote.total, cur) : '';
-  const nightsCount = quote?.nights.length ?? 0;
+  const nightsCount = lines[0]?.nights.length ?? 0;
 
   return (
     <GuestShell brandColor={p?.primaryColor ?? shell?.primaryColor} brand={name ? { name, href: `/properties/${propertyId}` } : undefined}>
@@ -516,7 +526,12 @@ function Checkout() {
               )}
               {unavailable && (
                 <Callout tone="danger" className="mt-4" role="alert" action={<Button asChild variant="outline" size="sm"><Link href={back}>Choose another room</Link></Button>}>
-                  This room just sold out for these dates.
+                  {mixed ? `${soldOut.map((q) => (q.available ? `Only ${q.available} ${q.roomTypeName} left` : `${q.roomTypeName} just sold out`)).join('. ')} for these dates.` : 'This room just sold out for these dates.'}
+                </Callout>
+              )}
+              {tooSmall && (
+                <Callout tone="danger" className="mt-4" role="alert" action={<Button asChild variant="outline" size="sm"><Link href={back}>Add a room</Link></Button>}>
+                  {guests < selection.length ? 'Each room type needs at least one guest.' : `These rooms don’t sleep ${plural(guests, 'guest')}.`}
                 </Callout>
               )}
               <Button
@@ -530,7 +545,7 @@ function Checkout() {
                 onClick={confirm}
                 loading={busy}
                 loadingText={method === 'stripe' ? 'Opening secure payment…' : 'Booking your room…'}
-                disabled={!quote || unavailable}
+                disabled={!quote || unavailable || tooSmall}
               >
                 <Lock aria-hidden />
                 {method === 'stripe' ? 'Continue to payment' : 'Confirm booking'}
@@ -553,7 +568,7 @@ function Checkout() {
                   <div className="min-w-0">
                     <p className="truncate text-sm text-muted-foreground">{name ? `${name} · ${p?.city ?? shell?.city ?? ''}` : ' '}</p>
                     <h2 id="summary-title" className="text-lg font-semibold tracking-tight">
-                      {rt?.name ?? quote?.roomTypeName ?? <span className="skeleton mt-1 inline-block h-6 w-40 align-middle" aria-hidden />}
+                      {roomName ?? <span className="skeleton mt-1 inline-block h-6 w-40 align-middle" aria-hidden />}
                     </h2>
                   </div>
                 </div>
@@ -582,7 +597,7 @@ function Checkout() {
                     <Callout tone="warning" className="mt-3" role="alert">
                       {(quoteError as Error).message}
                     </Callout>
-                  ) : !quote ? (
+                  ) : !priced ? (
                     <div className="mt-3 space-y-2" aria-hidden>
                       <Skeleton className="h-4 w-full" />
                       <Skeleton className="h-4 w-full" />
@@ -590,8 +605,18 @@ function Checkout() {
                     </div>
                   ) : (
                     <dl className="mt-3 space-y-1.5 text-sm">
-                      {nightsCount <= 7 ? (
-                        quote.nights.map((n) => (
+                      {!single ? (
+                        // A mix of room types: one line each.
+                        lines.map((q) => (
+                          <div key={q.roomTypeId} className="flex justify-between gap-3 text-muted-foreground">
+                            <dt>
+                              {q.roomTypeName} × {q.rooms} · {plural(q.nights.length, 'night')}
+                            </dt>
+                            <dd className="tabular">{price(q.total, cur)}</dd>
+                          </div>
+                        ))
+                      ) : nightsCount <= 7 ? (
+                        single.nights.map((n) => (
                           <div key={n.date} className="flex justify-between gap-3 text-muted-foreground">
                             <dt>{fmtDay(n.date, 'weekday')}</dt>
                             <dd className="tabular">
@@ -603,10 +628,10 @@ function Checkout() {
                       ) : (
                         <div className="flex justify-between gap-3 text-muted-foreground">
                           <dt>
-                            {plural(nightsCount, 'night')} × {price(quote.averageNightly, cur)} average
+                            {plural(nightsCount, 'night')} × {price(single.averageNightly, cur)} average
                             {rooms > 1 ? ` × ${rooms} rooms` : ''}
                           </dt>
-                          <dd className="tabular">{price(quote.subtotal, cur)}</dd>
+                          <dd className="tabular">{price(single.subtotal, cur)}</dd>
                         </div>
                       )}
                       <div className="flex justify-between gap-3 text-muted-foreground">
@@ -615,7 +640,7 @@ function Checkout() {
                       </div>
                       <div className="flex items-baseline justify-between gap-3 border-t pt-3">
                         <dt className="text-base font-semibold">Total</dt>
-                        <dd className="text-lg font-semibold tabular">{price(quote.total, cur)}</dd>
+                        <dd className="text-lg font-semibold tabular">{price(priced.total, cur)}</dd>
                       </div>
                     </dl>
                   )}

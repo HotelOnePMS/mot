@@ -65,6 +65,10 @@ interface GuestBooking {
   canCancel: boolean;
   canModifyCheckIn: boolean;
   canModifyCheckOut: boolean;
+  /** Set when the booking mixes room types: the code shared by every room type in it. */
+  groupCode: string | null;
+  /** Every reservation in a mixed booking (this one included); empty otherwise. */
+  group: { id: string; code: string | null; status: BookingStatus; rooms: number; guests: number; totalPrice: number; roomTypeName: string }[];
 }
 
 function icsFor(b: GuestBooking) {
@@ -337,7 +341,7 @@ function BookingPage() {
     summary: b
       ? `their booking page at ${b.property.name}: confirmation ${b.code}, ${BOOKING_STATUS[b.status]?.label.toLowerCase() ?? b.status.toLowerCase()}, ${b.roomType.name}, ${fmtDay(b.checkIn, 'weekday')} to ${fmtDay(b.checkOut, 'weekday')}, ${plural(b.guests, 'guest')}, ${price(b.totalPrice)} (${paymentLabel(b.paymentStatus).label.toLowerCase()})${
           b.policy.passed ? '' : `; free changes until ${b.policy.deadlineLabel}`
-        }${isNew ? ' — they have just booked it' : ''}`
+        }${b.group.length > 1 ? `; part of booking ${b.groupCode} with ${b.group.map((g) => `${g.roomTypeName} × ${g.rooms}`).join(', ')} (${price(b.group.reduce((n, g) => n + g.totalPrice, 0))} in all; each room type is changed or cancelled on its own page)` : ''}${isNew ? ' — they have just booked it' : ''}`
       : null,
   });
 
@@ -527,6 +531,37 @@ function BookingPage() {
                     </span>
                   </li>
                 </ul>
+                {b.group.length > 1 && (
+                  <div className="mt-5 rounded-xl border p-4 text-sm">
+                    <p className="font-medium">
+                      Booking {b.groupCode} · {plural(b.group.reduce((n, g) => n + g.rooms, 0), 'room')}
+                    </p>
+                    <p className="mt-0.5 text-muted-foreground">Each room type has its own page for changes and cancellation.</p>
+                    <ul className="mt-3 divide-y">
+                      {b.group.map((g) => (
+                        <li key={g.id} className="flex items-center justify-between gap-3 py-2">
+                          {g.id === b.id ? (
+                            <span className="font-medium" aria-current="page">
+                              {g.roomTypeName} × {g.rooms} <span className="font-normal text-muted-foreground">(shown here)</span>
+                            </span>
+                          ) : (
+                            <Link href={`/bookings/${g.id}`} className="rounded-sm font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                              {g.roomTypeName} × {g.rooms}
+                            </Link>
+                          )}
+                          <span className="flex shrink-0 items-center gap-2">
+                            {g.status !== b.status && <BookingStatusBadge status={g.status} />}
+                            <span className="tabular">{price(g.totalPrice)}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="flex justify-between gap-3 border-t pt-2 font-semibold">
+                      <span>Booking total</span>
+                      <span className="tabular">{price(b.group.reduce((n, g) => n + g.totalPrice, 0))}</span>
+                    </p>
+                  </div>
+                )}
                 {requests && (
                   <div className="mt-5 rounded-xl bg-muted px-4 py-3 text-sm">
                     <p className="text-xs font-medium text-muted-foreground">Your requests</p>

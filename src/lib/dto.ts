@@ -13,6 +13,8 @@ export type InterfaceMode = 'CLASSIC' | 'AGENTIC';
 export interface BookingSummary {
   id: string;
   code: string;
+  /** Set when one booking mixes room types: the lead reservation's code, shared by every type in it. */
+  groupCode: string | null;
   status: BookingStatus;
   propertyId: string;
   propertyName: string;
@@ -111,6 +113,19 @@ export interface StayQuote {
   total: number;
   currency: 'USD';
   available: number;
+}
+
+/** A quote for a booking that mixes room types: one StayQuote per type, plus the whole booking's total. */
+export interface RoomsQuote {
+  items: StayQuote[];
+  checkIn: ISODate;
+  checkOut: ISODate;
+  rooms: number;
+  guests: number;
+  /** The rooms together sleep the party, with at least one guest per room type. */
+  fitsParty: boolean;
+  total: number;
+  currency: 'USD';
 }
 
 export interface OccupancyDay {

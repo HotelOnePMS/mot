@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import { randomInt } from 'crypto';
 import { prisma } from '@/lib/prisma';
 import type { BookingStatus, BookingSummary, ISODate } from '@/lib/dto';
+import { allocateGuests, normalizeSelection, selectionError, selectionLabel, type RoomSelection } from '@/lib/room-selection';
 import { BOOKING_STATUS } from '@/lib/status';
 import { assertPropertyAccess, can, requirePermission, scopeByProperty, type Actor, type Permission } from '../authz';
 import { addDaysISO, atNoonUTC, dayBounds, diffDays, formatDay, hotelToday, isISODate, toISODate } from '../dates';
@@ -72,6 +73,8 @@ export async function searchBookings(actor: Actor, q: BookingSearch): Promise<Bo
       ? {
           OR: [
             { code: { equals: text.toUpperCase().replace(/^#/, '') } },
+            // A group's code finds every room type in it.
+            { groupCode: { equals: text.toUpperCase().replace(/^#/, '') } },
             { id: text },
             { user: { firstName: { contains: text, mode: 'insensitive' } } },
             { user: { lastName: { contains: text, mode: 'insensitive' } } },
@@ -122,29 +125,61 @@ export interface CreateBookingInput {
   createdVia?: string;
 }
 
+/** A booking that may mix room types: `items` replaces roomTypeId and rooms. */
+export type CreateBookingsInput = Omit<CreateBookingInput, 'roomTypeId' | 'rooms'> & { items: RoomSelection[] };
+
 const MAX_NIGHTS = 30;
 
+/** One room type: a single reservation, as before. */
 export async function createBooking(input: CreateBookingInput): Promise<BookingWithRelations> {
-  const rooms = input.rooms ?? 1;
+  const { roomTypeId, rooms, ...rest } = input;
+  const [booking] = await createBookings({ ...rest, items: [{ roomTypeId, rooms: rooms ?? 1 }] });
+  return booking;
+}
+
+/**
+ * Books one or more room types for the same stay, all or nothing. Each type
+ * is its own reservation (so rooms, check-in and housekeeping work per type);
+ * when there is more than one, they share `groupCode`, the first one's code,
+ * which is the code the guest is given. Returned in the order asked for.
+ */
+export async function createBookings(input: CreateBookingsInput): Promise<BookingWithRelations[]> {
+  const items = normalizeSelection(input.items);
+  const selectionProblem = selectionError(items);
+  if (selectionProblem) throw badRequest(selectionProblem);
   if (!isISODate(input.checkIn) || !isISODate(input.checkOut)) throw badRequest('Dates must be in YYYY-MM-DD format.');
   if (input.checkIn >= input.checkOut) throw badRequest('Check-out must be after check-in.');
   if (input.checkIn < hotelToday()) throw badRequest('Check-in date cannot be in the past.');
   const nights = diffDays(input.checkIn, input.checkOut);
   if (nights > MAX_NIGHTS) throw badRequest(`Stays are limited to ${MAX_NIGHTS} nights online. Please contact the hotel for longer stays.`);
-  if (!Number.isInteger(rooms) || rooms < 1 || rooms > 9) throw badRequest('Rooms must be between 1 and 9.');
   if (!Number.isInteger(input.guests) || input.guests < 1) throw badRequest('At least one guest is required.');
 
-  const roomType = await prisma.roomType.findUnique({
-    where: { id: input.roomTypeId },
+  const found = await prisma.roomType.findMany({
+    where: { id: { in: items.map((i) => i.roomTypeId) } },
     select: { id: true, name: true, propertyId: true, capacity: true, isActive: true, property: { select: { isActive: true, setupPath: true, phone: true } } },
   });
-  if (!roomType || !roomType.isActive || !roomType.property.isActive) throw notFound('Room type');
-  if (roomType.propertyId !== input.propertyId) throw badRequest('That room type does not belong to this property.');
+  const lines = items.map((item) => {
+    const roomType = found.find((r) => r.id === item.roomTypeId);
+    if (!roomType || !roomType.isActive || !roomType.property.isActive) throw notFound('Room type');
+    if (roomType.propertyId !== input.propertyId) throw badRequest('That room type does not belong to this property.');
+    return { ...item, roomType };
+  });
+  const property = lines[0].roomType.property;
   // Voice-only hotels take bookings in their own system; HotelOne only quotes them.
-  if (roomType.property.setupPath === 'VOICE') throw badRequest(`This hotel takes bookings directly — please call ${roomType.property.phone}.`);
-  if (input.guests > roomType.capacity * rooms) {
-    throw badRequest(`${roomType.name} sleeps up to ${roomType.capacity} per room. Add another room or choose a larger room type.`);
+  if (property.setupPath === 'VOICE') throw badRequest(`This hotel takes bookings directly — please call ${property.phone}.`);
+  const guestsPer = allocateGuests(input.guests, lines.map((l) => ({ capacity: l.roomType.capacity, rooms: l.rooms })));
+  if (!guestsPer) {
+    if (lines.length === 1) {
+      const { roomType } = lines[0];
+      throw badRequest(`${roomType.name} sleeps up to ${roomType.capacity} per room. Add another room or choose a larger room type.`);
+    }
+    if (input.guests < lines.length) throw badRequest('Each room type in a booking needs at least one guest. Remove a room type or add guests.');
+    const sleeps = lines.reduce((n, l) => n + l.roomType.capacity * l.rooms, 0);
+    throw badRequest(`These rooms sleep up to ${sleeps} guests in total. Add another room or choose larger rooms.`);
   }
+
+  const group = lines.length > 1;
+  const label = selectionLabel(lines.map((l) => ({ name: l.roomType.name, rooms: l.rooms })));
 
   // Serializable transaction: two guests racing for the last room cannot
   // both succeed. Retries on serialization failures and code collisions.
@@ -152,34 +187,46 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
     try {
       return await prisma.$transaction(
         async (tx) => {
-          const inventory = await nightlyInventory(tx, input.roomTypeId, input.checkIn, input.checkOut);
-          if (inventory.minAvailable < rooms) {
-            throw conflict(
-              inventory.minAvailable === 0
-                ? `${roomType.name} is sold out for those dates.`
-                : `Only ${inventory.minAvailable} ${roomType.name} room${inventory.minAvailable === 1 ? '' : 's'} left for those dates.`,
-              { available: inventory.minAvailable }
+          const codes = lines.map(() => generateBookingCode());
+          const created: BookingWithRelations[] = [];
+          for (const [i, line] of lines.entries()) {
+            const { roomType, rooms } = line;
+            const inventory = await nightlyInventory(tx, roomType.id, input.checkIn, input.checkOut);
+            if (inventory.minAvailable < rooms) {
+              throw conflict(
+                inventory.minAvailable === 0
+                  ? `${roomType.name} is sold out for those dates.`
+                  : `Only ${inventory.minAvailable} ${roomType.name} room${inventory.minAvailable === 1 ? '' : 's'} left for those dates.`,
+                { available: inventory.minAvailable, roomTypeId: roomType.id }
+              );
+            }
+            const quote = await quoteStay(tx, { roomTypeId: roomType.id, checkIn: input.checkIn, checkOut: input.checkOut, rooms, guests: guestsPer[i] });
+            const createdVia = input.createdVia ?? 'Booking created';
+            created.push(
+              await tx.booking.create({
+                data: {
+                  userId: input.userId,
+                  propertyId: input.propertyId,
+                  roomTypeId: roomType.id,
+                  checkIn: atNoonUTC(input.checkIn),
+                  checkOut: atNoonUTC(input.checkOut),
+                  guests: guestsPer[i],
+                  rooms,
+                  totalPrice: quote.total,
+                  status: 'PENDING',
+                  paymentStatus: input.paymentStatus ?? 'UNPAID',
+                  code: codes[i],
+                  groupCode: group ? codes[0] : null,
+                  notes: input.notes?.trim() || null,
+                  statusHistory: {
+                    create: { status: 'PENDING', notes: group ? `${createdVia} · group booking ${codes[0]} (${label})` : createdVia },
+                  },
+                },
+                include: bookingInclude,
+              })
             );
           }
-          const quote = await quoteStay(tx, { roomTypeId: input.roomTypeId, checkIn: input.checkIn, checkOut: input.checkOut, rooms, guests: input.guests });
-          return tx.booking.create({
-            data: {
-              userId: input.userId,
-              propertyId: input.propertyId,
-              roomTypeId: input.roomTypeId,
-              checkIn: atNoonUTC(input.checkIn),
-              checkOut: atNoonUTC(input.checkOut),
-              guests: input.guests,
-              rooms,
-              totalPrice: quote.total,
-              status: 'PENDING',
-              paymentStatus: input.paymentStatus ?? 'UNPAID',
-              code: generateBookingCode(),
-              notes: input.notes?.trim() || null,
-              statusHistory: { create: { status: 'PENDING', notes: input.createdVia ?? 'Booking created' } },
-            },
-            include: bookingInclude,
-          });
+          return created;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
       );
@@ -194,6 +241,28 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
   throw new DomainError(503, 'BUSY', 'The hotel is busy right now — please try again.');
 }
 
+/** Every reservation in a booking: the group when it has one, else just this one. */
+export async function bookingGroup(booking: { id: string; groupCode: string | null }): Promise<BookingWithRelations[]> {
+  if (!booking.groupCode) return prisma.booking.findMany({ where: { id: booking.id }, include: bookingInclude });
+  return prisma.booking.findMany({ where: { groupCode: booking.groupCode }, include: bookingInclude, orderBy: { createdAt: 'asc' } });
+}
+
+/**
+ * What a confirmation (email, API answer) says about a booking that may mix
+ * room types: the code the guest is given, every room, and the totals.
+ */
+export function bookingTotals(bookings: BookingWithRelations[]) {
+  const lead = bookings[0];
+  return {
+    code: lead.groupCode ?? lead.code ?? lead.id,
+    roomTypeName: lead.roomType.name,
+    rooms: bookings.reduce((n, b) => n + b.rooms, 0),
+    roomsLabel: bookings.length > 1 ? selectionLabel(bookings.map((b) => ({ name: b.roomType.name, rooms: b.rooms }))) : undefined,
+    guests: bookings.reduce((n, b) => n + b.guests, 0),
+    total: Math.round(bookings.reduce((n, b) => n + Number(b.totalPrice), 0) * 100) / 100,
+  };
+}
+
 /** Pay-at-property bookings are confirmed instantly — the guest is told so. */
 export async function confirmPayAtProperty(bookingId: string) {
   return prisma.booking.update({
@@ -204,8 +273,9 @@ export async function confirmPayAtProperty(bookingId: string) {
 
 /** Accounts aren't email-verified: a handful of confirmations per hour is plenty for a real guest. */
 export async function confirmationEmailAllowed(userId: string): Promise<boolean> {
-  const recentBookings = await prisma.booking.count({ where: { userId, createdAt: { gte: new Date(Date.now() - 3600_000) } } });
-  return recentBookings <= 5;
+  const recent = await prisma.booking.findMany({ where: { userId, createdAt: { gte: new Date(Date.now() - 3600_000) } }, select: { id: true, groupCode: true }, take: 50 });
+  // A booking that mixes room types is one booking here, however many types it has.
+  return new Set(recent.map((b) => b.groupCode ?? b.id)).size <= 5;
 }
 
 // ---------------------------------------------------------------------------

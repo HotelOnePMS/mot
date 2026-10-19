@@ -153,6 +153,9 @@ model Booking {
   status        BookingStatus          @default(PENDING)
   // Short human-friendly confirmation code staff and guests can say out loud.
   code          String?                @unique
+  /// One booking can mix room types (1 King + 2 Doubles): each type is its own reservation, and all of
+  /// them share groupCode, the lead reservation's code, which the guest is given.
+  groupCode     String?
   notes         String?
   // Physical room assigned at (or before) check-in.
   roomId        String?
@@ -180,6 +183,7 @@ model Booking {
   @@index([propertyId, checkOut])
   @@index([roomTypeId, checkIn, checkOut])
   @@index([roomId])
+  @@index([groupCode])
   @@map("bookings")
 }
 

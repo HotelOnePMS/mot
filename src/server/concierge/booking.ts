@@ -8,12 +8,12 @@ import { prisma } from '@/lib/prisma';
 import { diffDays, toISODate } from '../dates';
 import { DomainError, badRequest } from '../errors';
 import { isEmailConfigured, sendBookingConfirmation } from '../email';
-import { confirmPayAtProperty, createBooking as createSiteBooking } from '../services/bookings';
+import { bookingTotals, confirmPayAtProperty, createBookings as createSiteBookings } from '../services/bookings';
 import { policyFor } from '../services/guest';
 import { CURRENCY } from './facts';
 import { findListedHotel } from './hotel';
 import { conciergeSchemas, type BookingLinkInput, type CreateBookingInput, type FindBookingInput, type RequestBookingInput } from './schemas';
-import { bookableStay, lookupBooking, submitBookingRequest, type BookingRequestSaved } from './shared';
+import { bookableRooms, groupSummary, lookupBooking, submitBookingRequest, type BookingRequestSaved } from './shared';
 import { bookingPageUrl, checkoutPath, siteUrl } from './urls';
 
 // ---------------------------------------------------------------------------
@@ -26,18 +26,21 @@ export interface BookingLinkResult {
   url: string;
   summary: {
     hotel: { id: string; name: string };
+    /** The first (or only) room type; `roomTypes` lists every one in a mix. */
     roomType: { id: string; name: string; sleeps: number };
+    /** Every room type in the booking, with its rooms and total (one entry unless it's a mix). */
+    roomTypes: { id: string; name: string; sleeps: number; rooms: number; total: number; roomsLeft: number }[];
     checkIn: string;
     checkOut: string;
     nights: number;
     guests: number;
     rooms: number;
-    /** Per room, USD. */
+    /** Per room per night, USD (averaged over every room in a mix). */
     averageNightly: number;
     /** Whole stay, all rooms, USD. */
     total: number;
     currency: typeof CURRENCY;
-    /** Rooms of this type still free for every night. */
+    /** Rooms of the first room type still free for every night (see roomTypes for each). */
     roomsLeft: number;
   };
   expiresNote: string;
@@ -53,23 +56,26 @@ export interface BookingLinkResult {
 export async function bookingLink(input: BookingLinkInput): Promise<BookingLinkResult> {
   const a = conciergeSchemas.bookingLink.parse(input);
   const hotel = await findListedHotel(a.propertyId);
-  const stay = await bookableStay(hotel.id, a, 'Stays are limited to 30 nights online.');
+  const stay = await bookableRooms(hotel.id, a, 'Stays are limited to 30 nights online.');
   if ('error' in stay) throw badRequest(stay.error);
-  const path = checkoutPath(hotel.id, { roomTypeId: stay.roomType.id, checkIn: a.checkIn, checkOut: a.checkOut, guests: a.guests, rooms: a.rooms }, a.guest);
+  const [first] = stay.lines;
+  const items = stay.lines.map((l) => ({ roomTypeId: l.roomType.id, rooms: l.rooms }));
+  const path = checkoutPath(hotel.id, { items, checkIn: a.checkIn, checkOut: a.checkOut, guests: a.guests }, a.guest);
   return {
     url: siteUrl(path),
     summary: {
       hotel,
-      roomType: { id: stay.roomType.id, name: stay.roomType.name, sleeps: stay.roomType.capacity },
+      roomType: { id: first.roomType.id, name: first.roomType.name, sleeps: first.roomType.capacity },
+      roomTypes: stay.lines.map((l) => ({ id: l.roomType.id, name: l.roomType.name, sleeps: l.roomType.capacity, rooms: l.rooms, total: l.quote.total, roomsLeft: l.quote.available })),
       checkIn: a.checkIn,
       checkOut: a.checkOut,
       nights: stay.nights,
       guests: a.guests,
-      rooms: a.rooms,
-      averageNightly: stay.quote.averageNightly,
-      total: stay.quote.total,
+      rooms: stay.rooms,
+      averageNightly: stay.lines.length === 1 ? first.quote.averageNightly : Math.round((stay.total / Math.max(1, stay.nights * stay.rooms)) * 100) / 100,
+      total: stay.total,
       currency: CURRENCY,
-      roomsLeft: stay.quote.available,
+      roomsLeft: first.quote.available,
     },
     expiresNote: 'The link doesn’t hold the room: availability and the price are confirmed when the guest completes checkout.',
   };
@@ -127,7 +133,10 @@ export interface CreateBookingResult {
   currency: typeof CURRENCY;
   paymentStatus: 'PAY_AT_PROPERTY';
   hotel: { id: string; name: string };
+  /** The first (or only) room type; `roomTypes` lists every one in a mix. */
   roomType: { id: string; name: string };
+  /** Every room type booked: one reservation each, all under `code` (one entry unless it's a mix). */
+  roomTypes: { id: string; name: string; rooms: number; guests: number; total: number; code: string }[];
   checkIn: string;
   checkOut: string;
   nights: number;
@@ -183,58 +192,64 @@ export async function createBooking(input: CreateBookingInput): Promise<CreateBo
   const a = conciergeSchemas.createBooking.parse(input);
   const hotel = await findListedHotel(a.propertyId);
   // Check the stay before making the guest record; the booking service re-checks inside its transaction.
-  const stay = await bookableStay(hotel.id, a, 'Stays are limited to 30 nights online.');
+  const stay = await bookableRooms(hotel.id, a, 'Stays are limited to 30 nights online.');
   if ('error' in stay) throw badRequest(stay.error);
   const guest = await integrationGuest(a.guest);
-  const booking = await createSiteBooking({
+  // A mix of room types is one booking: one reservation per type, all under the same code.
+  const bookings = await createSiteBookings({
     userId: guest.id,
     propertyId: hotel.id,
-    roomTypeId: a.roomTypeId,
+    items: stay.lines.map((l) => ({ roomTypeId: l.roomType.id, rooms: l.rooms })),
     checkIn: a.checkIn,
     checkOut: a.checkOut,
     guests: a.guests,
-    rooms: a.rooms,
     notes: a.notes,
     paymentStatus: 'PAY_AT_PROPERTY',
     createdVia: `Booked by ${a.source} — pay at property`,
   });
+  const booking = bookings[0];
+  const totals = bookingTotals(bookings);
   const guestEmail = a.guest.email.trim().toLowerCase();
-  await prisma.booking.update({ where: { id: booking.id }, data: { guestEmail } });
-  await confirmPayAtProperty(booking.id);
+  await prisma.booking.updateMany({ where: { id: { in: bookings.map((b) => b.id) } }, data: { guestEmail } });
+  for (const b of bookings) await confirmPayAtProperty(b.id);
 
-  const total = Number(booking.totalPrice);
-  const sentToday = await prisma.booking.count({ where: { guestEmail, createdAt: { gte: new Date(Date.now() - 24 * 3600_000) } } });
+  const total = totals.total;
+  // Per booking, not per room type: a mix counts once.
+  const recent = await prisma.booking.findMany({ where: { guestEmail, createdAt: { gte: new Date(Date.now() - 24 * 3600_000) } }, select: { id: true, groupCode: true }, take: 50 });
+  const sentToday = new Set(recent.map((b) => b.groupCode ?? b.id)).size;
   const sendEmail = isEmailConfigured() && sentToday <= CONFIRMATIONS_PER_RECIPIENT_DAY;
   if (sendEmail) {
     await sendBookingConfirmation({
       to: guestEmail,
       guestName: a.guest.name.trim(),
       propertyName: booking.property.name,
-      roomTypeName: booking.roomType.name,
+      roomTypeName: totals.roomTypeName,
       checkIn: a.checkIn,
       checkOut: a.checkOut,
       guests: a.guests,
-      rooms: a.rooms,
+      rooms: totals.rooms,
+      roomsLabel: totals.roomsLabel,
       totalPrice: total.toFixed(2),
-      bookingId: booking.code ?? booking.id,
+      bookingId: totals.code,
       paymentStatus: 'PAY_AT_PROPERTY',
     });
   }
 
   return {
     bookingId: booking.id,
-    code: booking.code ?? booking.id,
+    code: totals.code,
     status: 'CONFIRMED',
     total,
     currency: CURRENCY,
     paymentStatus: 'PAY_AT_PROPERTY',
     hotel: { id: hotel.id, name: booking.property.name },
     roomType: { id: booking.roomTypeId, name: booking.roomType.name },
+    roomTypes: bookings.map((b) => ({ id: b.roomTypeId, name: b.roomType.name, rooms: b.rooms, guests: b.guests, total: Number(b.totalPrice), code: b.code ?? b.id })),
     checkIn: a.checkIn,
     checkOut: a.checkOut,
     nights: diffDays(a.checkIn, a.checkOut),
     guests: a.guests,
-    rooms: a.rooms,
+    rooms: totals.rooms,
     manage: integrationManageNote((await prisma.property.findUnique({ where: { id: hotel.id }, select: { phone: true } }))?.phone),
     confirmationEmailSent: sendEmail,
   };
@@ -283,17 +298,19 @@ export async function findBooking(input: FindBookingInput): Promise<FindBookingR
   const checkIn = toISODate(b.checkIn);
   const checkOut = toISODate(b.checkOut);
   const policy = policyFor(checkIn);
+  // A mix of room types reads as the one booking it is.
+  const group = await groupSummary(b);
   return {
     found: true,
     code: b.code ?? a.code,
     status: b.status,
     hotel: b.property,
-    room: b.roomType.name,
+    room: group?.label ?? b.roomType.name,
     checkIn,
     checkOut,
     nights: diffDays(checkIn, checkOut),
-    guests: b.guests,
-    rooms: b.rooms,
+    guests: group?.guests ?? b.guests,
+    rooms: group?.rooms ?? b.rooms,
     freeChangesUntil: policy.passed ? null : policy.deadlineLabel,
     manage: b.guestEmail
       ? integrationManageNote(b.property.phone)

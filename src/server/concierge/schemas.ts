@@ -5,6 +5,7 @@
  * ≤ 16 guests, ≤ 9 rooms, ≤ 30 nights (checked in the operations), ≤ 20 results.
  */
 import { z, type ZodTypeAny } from 'zod';
+import { MAX_ROOM_TYPES_PER_BOOKING, MAX_ROOMS_PER_BOOKING } from '@/lib/room-selection';
 import { isISODate } from '../dates';
 
 const isoDate = z
@@ -21,6 +22,17 @@ const stay = {
   checkOut: isoDate.describe('Departure date (YYYY-MM-DD), after checkIn; stays are at most 30 nights'),
   guests: guests.default(2).describe('Total guests in the party (1–16)'),
   rooms: rooms.default(1).describe('Rooms needed (1–9)'),
+};
+
+/** One room type (roomTypeId + rooms), or a mix of room types in one booking (roomTypes). */
+const roomChoice = {
+  roomTypeId: id('room_type_id from checkAvailability, for one room type (use roomTypes for a mix)').optional(),
+  roomTypes: z
+    .array(z.object({ roomTypeId: id('room_type_id from checkAvailability'), rooms: rooms.describe('Rooms of this type (1–9)') }))
+    .min(1)
+    .max(MAX_ROOM_TYPES_PER_BOOKING)
+    .optional()
+    .describe(`A mix of room types in one booking, e.g. 1 King and 2 Doubles: one entry per room type (up to ${MAX_ROOM_TYPES_PER_BOOKING} types, ${MAX_ROOMS_PER_BOOKING} rooms in all). Use instead of roomTypeId; rooms is then ignored. guests is the whole party`),
 };
 
 const fullName = z
@@ -49,7 +61,7 @@ export const conciergeSchemas = {
   }),
   bookingLink: z.object({
     propertyId: id('Hotel id from searchHotels'),
-    roomTypeId: id('room_type_id from checkAvailability'),
+    ...roomChoice,
     ...stay,
     guest: z
       .object({
@@ -62,7 +74,7 @@ export const conciergeSchemas = {
   }),
   requestBooking: z.object({
     propertyId: id('Hotel id from searchHotels'),
-    roomTypeId: id('room_type_id from checkAvailability'),
+    ...roomChoice,
     ...stay,
     name: z.string().trim().min(1).max(120).describe('Guest’s full name'),
     email: z.string().trim().toLowerCase().email().max(200).nullish().describe('Email for the booking link (email or phone is required)'),
@@ -72,7 +84,7 @@ export const conciergeSchemas = {
   }),
   createBooking: z.object({
     propertyId: id('Hotel id from searchHotels'),
-    roomTypeId: id('room_type_id from checkAvailability'),
+    ...roomChoice,
     ...stay,
     guest: z
       .object({
