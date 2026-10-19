@@ -17,7 +17,7 @@ const query = z.object({
  * POST /api/voice/elevenlabs/session?propertyId&audience&scope — ElevenLabs
  * (a hotel's front desk, or the all-hotels concierge without propertyId). Returns
  * a single-use signed URL for the private agent, the hotel's prompt and
- * greeting (sent as overrides), the client tools to register, and the signed
+ * greeting (dynamic variables, or overrides for a bring-your-own agent), the client tools to register, and the signed
  * token the browser uses for this session's tool calls.
  */
 export const POST = handleRoute(async (request: NextRequest) => {

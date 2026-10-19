@@ -10,7 +10,9 @@
  * it carries every booking-site tool (GUEST_AGENT_TOOLS); the prompt sent per
  * conversation says which apply, and the server refuses the rest. Hotel
  * specifics (name, today's date, house rules, skills, greeting) are sent per
- * conversation as prompt overrides. Agents and tools are re-synced whenever
+ * conversation as dynamic variables, which every agent accepts, rather than
+ * overrides, which ElevenLabs refuses unless each field is switched on in the
+ * agent's Security settings. Agents and tools are re-synced whenever
  * their configuration in this file changes (tracked by a hash).
  *
  * Phone lines: each hotel that turns one on gets its own phone agent, which
@@ -180,6 +182,13 @@ function toolConfig(spec: FunctionToolSpec, audience: Audience) {
 /** Shown on our agents in the ElevenLabs dashboard; nothing looks agents up by it. */
 const BRAND_TAG = PRODUCT_NAME.toLowerCase();
 
+/**
+ * The browser agents' prompt and greeting are these dynamic variables, filled
+ * per conversation. Wire contract: stored in each agent at ElevenLabs.
+ */
+const PROMPT_VARIABLE = 'hotelone_prompt';
+const GREETING_VARIABLE = 'hotelone_greeting';
+
 const CLIENT_EVENTS = ['conversation_initiation_metadata', 'audio', 'interruption', 'user_transcript', 'agent_response', 'agent_response_correction', 'client_tool_call', 'agent_tool_response', 'vad_score', 'client_error', 'ping'];
 
 function agentConfig(audience: Audience, toolIds: string[]) {
@@ -191,11 +200,17 @@ function agentConfig(audience: Audience, toolIds: string[]) {
     tags: [BRAND_TAG, guest ? 'guest' : 'staff', ENVIRONMENT],
     conversation_config: {
       agent: {
-        first_message: guest ? 'Hi, thanks for calling. How can I help?' : 'Hi — what do you need?',
+        first_message: `{{${GREETING_VARIABLE}}}`,
         language: 'en',
-        // The real, hotel-specific prompt arrives per conversation as an override.
+        // The real, hotel-specific prompt and greeting arrive per conversation; these only show in ElevenLabs' own test calls.
+        dynamic_variables: {
+          dynamic_variable_placeholders: {
+            [GREETING_VARIABLE]: guest ? 'Hi, thanks for calling. How can I help?' : 'Hi — what do you need?',
+            [PROMPT_VARIABLE]: guest ? 'You are a hotel booking voice assistant. Use your tools for every fact.' : 'You are a hotel’s hands-free staff assistant. Use the front_desk tool for every request.',
+          },
+        },
         prompt: {
-          prompt: guest ? 'You are a hotel booking voice assistant. Use your tools for every fact.' : 'You are a hotel’s hands-free staff assistant. Use the front_desk tool for every request.',
+          prompt: `{{${PROMPT_VARIABLE}}}`,
           llm: LLM,
           temperature: 0.3,
           tool_ids: toolIds,
@@ -208,8 +223,8 @@ function agentConfig(audience: Audience, toolIds: string[]) {
     },
     platform_settings: {
       auth: { enable_auth: true },
-      // Only what each conversation actually sends: the hotel's prompt and greeting.
-      overrides: { conversation_config_override: { agent: { first_message: true, prompt: { prompt: true } } } },
+      // Nothing is overridden any more (dynamic variables carry the prompt and greeting); sent as false because updates merge.
+      overrides: { conversation_config_override: { agent: { first_message: false, prompt: { prompt: false } } } },
       // Provider-side backstop on top of HotelOne's own per-hotel limits.
       call_limits: {
         agent_concurrency_limit: Number(process.env.ELEVENLABS_MAX_CONCURRENT || 20),
@@ -706,14 +721,21 @@ async function signedUrlFor(agentId: string): Promise<{ signedUrl: string; conve
 /**
  * Everything the browser needs to start one conversation: a single-use
  * signed URL for the private agent, the hotel-specific prompt and greeting
- * (sent as overrides), and the client tools to register.
+ * (as dynamic variables for our agents; as overrides for a bring-your-own
+ * agent, which is set up by hand for them), and the client tools to register.
  */
 export async function startElevenLabsConversation(input: {
   audience: Audience;
   prompts: { instructions: string; backendInstructions: string };
   firstMessage: string;
   tools: FunctionToolSpec[];
-}): Promise<{ signedUrl: string; conversationId: string | null; prompt: string; firstMessage: string; tools: string[] }> {
+}): Promise<{
+  signedUrl: string;
+  conversationId: string | null;
+  dynamicVariables?: Record<string, string>;
+  overrides?: { prompt: string; firstMessage: string };
+  tools: string[];
+}> {
   try {
     let agentId = await syncAgent(input.audience);
     let signed: { signedUrl: string; conversationId: string | null };
@@ -728,7 +750,11 @@ export async function startElevenLabsConversation(input: {
     }
     // The browser registers every tool the agent has, so a stray call gets a clear answer instead of an SDK error.
     const tools = input.audience === 'guest' ? GUEST_AGENT_TOOLS : input.tools;
-    return { ...signed, prompt: singleModelPrompt(input.prompts), firstMessage: input.firstMessage, tools: tools.map((t) => t.name) };
+    const prompt = singleModelPrompt(input.prompts);
+    const personalisation = ownAgent(input.audience)
+      ? { overrides: { prompt, firstMessage: input.firstMessage } }
+      : { dynamicVariables: { [PROMPT_VARIABLE]: prompt, [GREETING_VARIABLE]: input.firstMessage } };
+    return { ...signed, ...personalisation, tools: tools.map((t) => t.name) };
   } catch (e) {
     if (e instanceof DomainError) throw e;
     logError('voice/elevenlabs', 'ElevenLabs conversation start failed:', e instanceof ElevenLabsError ? `${e.status} ${e.detail}` : e);
