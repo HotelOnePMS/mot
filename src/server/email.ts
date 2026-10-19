@@ -360,7 +360,7 @@ export async function sendPasswordResetEmail(data: PasswordResetEmailData): Prom
     }
     return;
   }
-  const name = escapeHtml(oneLine(data.firstName) || 'there');
+  const name = escapeHtml(subjectText(data.firstName) || 'there');
   const url = escapeHtml(data.resetUrl);
   const html = `<!doctype html><html><body style="margin:0;padding:24px;background:${C.page};font-family:${FONT};color:${C.ink}">
 <div style="max-width:480px;margin:0 auto;background:${C.card};border:1px solid ${C.border};border-radius:12px;padding:28px">
@@ -371,7 +371,7 @@ export async function sendPasswordResetEmail(data: PasswordResetEmailData): Prom
 <p style="margin:0;font-size:13px;line-height:1.5;color:${C.muted}">Didn’t ask for this? You can ignore this email — your password won’t change.</p>
 </div></body></html>`;
   const text = [
-    `Hi ${oneLine(data.firstName) || 'there'},`,
+    `Hi ${subjectText(data.firstName) || 'there'},`,
     '',
     `We got a request to reset your ${PRODUCT_NAME} password. This link works once and expires in ${data.expiresInMinutes} minutes:`,
     data.resetUrl,
@@ -408,7 +408,7 @@ export async function sendDisputeAlert(data: DisputeAlertData): Promise<boolean>
     console.log(`[email] Skipping dispute alert to ${data.to.join(', ')} (RESEND_API_KEY not configured)`);
     return false;
   }
-  const subject = `A card payment was disputed — ${oneLine(data.propertyName)}${data.bookingCode ? ` (${oneLine(data.bookingCode)})` : ''}`;
+  const subject = `A card payment was disputed — ${subjectText(data.propertyName)}${data.bookingCode ? ` (${subjectText(data.bookingCode)})` : ''}`;
   const e = escapeHtml;
   const facts = [
     ['Amount', data.amount],
