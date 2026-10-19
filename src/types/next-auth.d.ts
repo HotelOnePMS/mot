@@ -14,6 +14,8 @@ declare module "next-auth" {
 
   interface User {
     role: UserRole
+    /** User.sessionVersion at sign-in; the session ends when it no longer matches. */
+    sv?: number
   }
 }
 
@@ -21,5 +23,6 @@ declare module "next-auth/jwt" {
   interface JWT {
     role?: UserRole
     id?: string
+    sv?: number
   }
 }

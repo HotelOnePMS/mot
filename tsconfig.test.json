@@ -9,5 +9,5 @@
     "incremental": false,
     "plugins": []
   },
-  "include": ["tests/**/*.ts", "src/lib/payments.ts", "src/lib/risk.ts", "src/server/payments/evidence.ts"]
+  "include": ["tests/**/*.ts", "src/lib/payments.ts", "src/lib/risk.ts", "src/lib/team-rules.ts", "src/server/payments/evidence.ts"]
 }

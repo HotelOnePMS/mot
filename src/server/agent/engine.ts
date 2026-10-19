@@ -321,7 +321,7 @@ async function* runBridged(input: AgentRunInput, message: string, today: string)
     return;
   }
   if (!can(actor, 'bridge.use')) {
-    yield { type: 'error', message: 'Your role can’t send work to the PMS.' };
+    yield { type: 'error', message: 'Your role can’t send work to the PMS. Ask a manager or the owner to do it, or to give you that access.' };
     return;
   }
   const intents = parseMessage(message, today);

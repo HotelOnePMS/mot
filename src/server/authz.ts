@@ -9,7 +9,7 @@
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { isStaffRole, type AppRole, type StaffRole } from '@/lib/routes';
-import { forbidden, unauthorized } from './errors';
+import { DomainError, forbidden, unauthorized } from './errors';
 
 export interface Actor {
   userId: string;
@@ -18,6 +18,8 @@ export interface Actor {
   email: string;
   /** 'ALL' for platform admins, otherwise the assigned property ids. */
   propertyIds: string[] | 'ALL';
+  /** Someone else chose this person's password: it must be changed before anything else. */
+  mustChangePassword?: boolean;
 }
 
 export const PERMISSIONS = {
@@ -52,7 +54,8 @@ export const PERMISSIONS = {
   'property.write': ['ADMIN', 'OWNER'],
   'property.create': ['ADMIN', 'OWNER'],
   'property.delete': ['ADMIN'],
-  'users.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // Team and guest lists with emails and phone numbers. Front desk uses /api/admin/team (names only, housekeeping.view) instead.
+  'users.view': ['ADMIN', 'OWNER', 'MANAGER'],
   'users.write': ['ADMIN', 'OWNER'],
   'analytics.view': ['ADMIN', 'OWNER', 'MANAGER'],
   'activity.view': ['ADMIN', 'OWNER', 'MANAGER'],
@@ -66,7 +69,10 @@ export const PERMISSIONS = {
   'skills.manage': ['ADMIN', 'OWNER', 'MANAGER'],
   'agentkeys.manage': ['ADMIN', 'OWNER'],
   'requests.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
-  'bridge.use': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // Free-text instructions to the hotel's own PMS (a browser or MCP session acting with the hotel's login):
+  // manager/owner by default, because it bypasses HotelOne's per-action roles. Grant to a front-desk
+  // person only deliberately (see docs in README "Roles and access").
+  'bridge.use': ['ADMIN', 'OWNER', 'MANAGER'],
   'bridge.manage': ['ADMIN', 'OWNER'],
 } as const satisfies Record<string, readonly StaffRole[]>;
 
@@ -99,6 +105,7 @@ export async function getActor(): Promise<Actor | null> {
       lastName: true,
       email: true,
       isActive: true,
+      mustChangePassword: true,
       assignedProperties: { select: { propertyId: true } },
     },
   });
@@ -108,6 +115,7 @@ export async function getActor(): Promise<Actor | null> {
     role: user.role as AppRole,
     name: `${user.firstName} ${user.lastName}`.trim(),
     email: user.email,
+    mustChangePassword: user.mustChangePassword,
     propertyIds: user.role === 'ADMIN' ? 'ALL' : user.assignedProperties.map((a) => a.propertyId),
   };
 }
@@ -122,6 +130,9 @@ export async function requireActor(): Promise<Actor> {
 export async function requireStaff(perm?: Permission): Promise<Actor> {
   const actor = await requireActor();
   if (!isStaffRole(actor.role)) throw forbidden('This area is for hotel staff.');
+  if (actor.mustChangePassword) {
+    throw new DomainError(403, 'PASSWORD_CHANGE_REQUIRED', 'Choose a new password before you continue.');
+  }
   if (perm) requirePermission(actor, perm);
   return actor;
 }

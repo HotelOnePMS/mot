@@ -181,7 +181,7 @@ function InviteDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenCha
           <>
             <DialogHeader>
               <DialogTitle>{created.name} is on the team</DialogTitle>
-              <DialogDescription>Share these sign-in details privately. They can change the password from their profile.</DialogDescription>
+              <DialogDescription>Share these sign-in details privately. This password is temporary: they’ll be asked to choose their own the first time they sign in.</DialogDescription>
             </DialogHeader>
             <pre className="whitespace-pre-wrap break-all rounded-xl border bg-surface-sunken p-4 font-mono text-xs leading-relaxed">{credentials}</pre>
             <DialogFooter>
