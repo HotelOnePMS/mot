@@ -2,12 +2,13 @@ import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import type { SkillsResponse } from '@/lib/dto';
+import { reservedShortcutName } from '@/server/agent/skills';
 import { can, requireStaff, resolvePropertyId } from '@/server/authz';
-import { conflict, forbidden } from '@/server/errors';
+import { badRequest, conflict, forbidden } from '@/server/errors';
 import { handleRoute, json, parseJson, parseQuery } from '@/server/http';
 import { recordAudit } from '@/server/services/audit';
-import { parametersFor, skillKey, upsertSkill, type MacroBody } from '@/server/skills';
-import { SKILLS_DEMO_LOCKED, guestAnswersLocked, skillView, skillsForAdmin } from '@/server/skills/admin';
+import { answerDescription, answerKey, parametersFor, skillKey, upsertSkill, type MacroBody } from '@/server/skills';
+import { SHORTCUT_NAME_RESERVED, SKILLS_DEMO_LOCKED, guestAnswersLocked, skillView, skillsForAdmin } from '@/server/skills/admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,13 +54,13 @@ export const POST = handleRoute(async (request: NextRequest) => {
 
   if (body.kind === 'ANSWER') {
     if (body.audience !== 'STAFF' && (await guestAnswersLocked(actor, propertyId))) throw forbidden(SKILLS_DEMO_LOCKED);
-    const key = `answer-${skillKey(body.question, 52)}`;
+    const key = answerKey(body.question);
     if (await prisma.agentSkill.findFirst({ where: { propertyId, key }, select: { id: true } })) throw conflict('There’s already an answer to that question — edit it instead.');
     const skill = await upsertSkill({
       propertyId,
       key,
       title: body.question,
-      description: `Saved answer. Use when someone asks: “${body.question.replace(/["“”]/g, '')}”`,
+      description: answerDescription(body.question),
       kind: 'ANSWER',
       audience: body.audience,
       body: { answer: body.answer },
@@ -71,6 +72,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
     return json({ skill: skillView(skill) }, { status: 201 });
   }
 
+  if (reservedShortcutName(body.name)) throw badRequest(SHORTCUT_NAME_RESERVED);
   const key = skillKey(body.name);
   if (await prisma.agentSkill.findFirst({ where: { propertyId, key }, select: { id: true } })) throw conflict('There’s already a shortcut with that name — pick another name or edit the existing one.');
   const macro: MacroBody = { steps: body.steps.map((command) => ({ command })) };

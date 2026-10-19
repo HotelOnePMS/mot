@@ -81,7 +81,7 @@ export function isAppHost(hostname: string): boolean {
 // Default property addresses on the platform's own domain, e.g. "oceanview-resort.hotelone.site"
 
 const SUBDOMAIN_PATTERN = /^(?!xn--)[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
-// Keep in step with the list in the 20261019_property_domains migration
+// Keep in step with the list in the 20261023_property_domains migration
 const RESERVED_SUBDOMAINS = new Set([
   'www', 'app', 'api', 'admin', 'dashboard', 'login', 'auth', 'account', 'book', 'booking', 'bookings',
   'mail', 'email', 'smtp', 'imap', 'ftp', 'ns1', 'ns2', 'cdn', 'static', 'assets', 'media',

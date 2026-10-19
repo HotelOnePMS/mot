@@ -17,6 +17,7 @@ import {
   MousePointerClick,
   Repeat,
   RotateCcw,
+  ShieldAlert,
   Sparkles,
   Timer,
   TimerOff,
@@ -28,6 +29,7 @@ import {
 } from 'lucide-react';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import type { BookingStatus, HousekeepingStatus, Occupancy, RoomStatus } from '@/lib/dto';
+import { RISK_FLAG_INFO, type RiskFlag } from '@/lib/risk';
 import { BOOKING_STATUS, HOUSEKEEPING_STATUS, OCCUPANCY, ROOM_STATUS, paymentLabel, type Tone } from '@/lib/status';
 import { cn } from '@/lib/utils';
 
@@ -84,7 +86,11 @@ const PAYMENT_LOOK: Record<string, Look> = {
   PAY_AT_PROPERTY: { variant: 'neutral', icon: Wallet },
   AWAITING_PAYMENT: { variant: 'warning', icon: Clock3 },
   EXPIRED: { variant: 'outline', icon: TimerOff, className: 'text-muted-foreground' },
+  DEPOSIT_PAID: { variant: 'info', icon: CreditCard },
+  PARTIALLY_REFUNDED: { variant: 'info', icon: RotateCcw },
   REFUNDED: { variant: 'info', icon: RotateCcw },
+  DISPUTED: { variant: 'danger', icon: ShieldAlert },
+  DISPUTE_LOST: { variant: 'danger', icon: ShieldAlert },
   FAILED: { variant: 'danger', icon: AlertTriangle },
 };
 
@@ -155,4 +161,34 @@ export function SourceBadge({ source, quiet = false, ...opts }: { source: 'agent
   const look = SOURCE_LOOK[source as keyof typeof SOURCE_LOOK];
   if (!look || (quiet && source === 'classic')) return null;
   return <StatusPill look={look} label={look.label} size="sm" {...opts} />;
+}
+
+/** A risk flag on a booking: a reason to look twice, with the explanation on hover. */
+export function RiskFlagBadge({ flag, ...opts }: { flag: RiskFlag } & BadgeOpts) {
+  const info = RISK_FLAG_INFO[flag];
+  if (!info) return null;
+  const strong = flag === 'RISK_HIGHEST' || flag === 'RISK_ELEVATED';
+  return (
+    <span title={info.description}>
+      <StatusPill look={{ variant: strong ? 'danger' : 'warning', icon: ShieldAlert }} label={info.label} size="sm" {...opts} />
+    </span>
+  );
+}
+
+/** Risk flags on one line for lists: the first two, then a count. Renders nothing for an unflagged booking. */
+export function RiskFlagList({ flags, className }: { flags: readonly RiskFlag[] | undefined; className?: string }) {
+  if (!flags?.length) return null;
+  const rest = flags.slice(2).map((f) => RISK_FLAG_INFO[f]?.label ?? f);
+  return (
+    <span className={cn('flex flex-wrap items-center gap-1', className)}>
+      {flags.slice(0, 2).map((f) => (
+        <RiskFlagBadge key={f} flag={f} />
+      ))}
+      {rest.length > 0 && (
+        <span className="text-xs text-muted-foreground" title={rest.join(', ')}>
+          +{rest.length} more
+        </span>
+      )}
+    </span>
+  );
 }

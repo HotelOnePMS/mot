@@ -5,14 +5,16 @@
 import { prisma } from '@/lib/prisma';
 import type { FrontDeskAlert, FrontDeskSummary, ISODate, OccupancyDay } from '@/lib/dto';
 import { assertPropertyAccess, requirePermission, type Actor } from '../authz';
-import { addDaysISO, atNoonUTC, eachNight, formatDay, hotelToday, toISODate } from '../dates';
+import { addDaysISO, atNoonUTC, eachNight, formatDay, toISODate } from '../dates';
 import { notFound } from '../errors';
 import { arrivalsOn, departuresOn, inHouse } from './bookings';
+import { todayAt } from './hotels';
 import { OCCUPYING_STATUSES } from './inventory';
 
-export async function frontDeskSummary(actor: Actor, propertyId: string, day: ISODate = hotelToday()): Promise<FrontDeskSummary> {
+export async function frontDeskSummary(actor: Actor, propertyId: string, requestedDay?: ISODate): Promise<FrontDeskSummary> {
   requirePermission(actor, 'frontdesk.view');
   assertPropertyAccess(actor, propertyId);
+  const day = requestedDay ?? (await todayAt(propertyId));
 
   const property = await prisma.property.findUnique({ where: { id: propertyId }, select: { id: true, name: true } });
   if (!property) throw notFound('Property');
@@ -150,7 +152,7 @@ export async function occupancySeries(propertyId: string, from: ISODate, to: ISO
         checkIn: { lt: atNoonUTC(to) },
         checkOut: { gt: atNoonUTC(from) },
       },
-      select: { checkIn: true, checkOut: true, rooms: true, totalPrice: true },
+      select: { checkIn: true, checkOut: true, rooms: true, totalPrice: true, subtotalPrice: true },
     }),
   ]);
   const totalRooms = roomTypes._sum.totalRooms ?? 0;
@@ -163,7 +165,8 @@ export async function occupancySeries(propertyId: string, from: ISODate, to: ISO
       if (date >= bIn && date < bOut) {
         const nights = Math.max(1, eachNight(bIn, bOut).length);
         roomsSold += b.rooms;
-        revenue += Number(b.totalPrice) / nights;
+        // Room revenue: taxes and fees are collected for others, so they stay out of revenue and ADR.
+        revenue += Number(b.subtotalPrice ?? b.totalPrice) / nights;
       }
     }
     return {

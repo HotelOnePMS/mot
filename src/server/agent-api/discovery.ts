@@ -2,7 +2,8 @@
  * Discovery documents for AI assistants and crawlers: /llms.txt (short),
  * /llms-full.txt (every tool and endpoint), /.well-known/agent-card.json
  * (A2A-style agent card) and /.well-known/mcp.json (where the MCP server
- * is). All absolute URLs use the origin the caller reached us on.
+ * is). All absolute URLs use this deployment's configured public origin
+ * (publicOrigin in ./http), never the request's Host or forwarding headers.
  */
 import { PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL, PRODUCT_URL } from '@/config/product';
 import type { JsonSchema } from '../concierge';
@@ -42,6 +43,7 @@ function limitsText(): string {
     `- ${l.read.anonymous!.max} requests a minute per IP address (${l.read.withKey.max} a minute with an API key).`,
     `- Booking requests: ${l.request.anonymous!.max} an hour per IP (${l.request.withKey.max} with a key). Bookings: ${l.book.withKey.max} an hour per key.`,
     `- Booking lookups: ${l.lookup.anonymous!.max} an hour per IP (${l.lookup.withKey.max} with a key).`,
+    `- With API keys, a hotel's keys together also share an hourly allowance (${l.book.perHotelWithKeys!.max} bookings, ${l.request.perHotelWithKeys!.max} booking requests, ${l.lookup.perHotelWithKeys!.max} lookups), and each hotel takes a limited number of booking requests an hour from callers without a key.`,
     '- Over the limit: HTTP 429 with Retry-After (MCP tool calls return an error result the model can explain).',
   ].join('\n');
 }

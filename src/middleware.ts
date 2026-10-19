@@ -63,17 +63,29 @@ function propertySite(request: NextRequest, propertyId: string): NextResponse | 
   return NextResponse.redirect(mainSiteUrl);
 }
 
-const isGuestAccountPath = (pathname: string) =>
-  pathname.startsWith('/dashboard') || pathname.startsWith('/profile') || pathname.startsWith('/bookings/');
+// Guest account pages, and everyone's account security.
+const isAccountPath = (pathname: string) =>
+  pathname.startsWith('/dashboard') ||
+  pathname.startsWith('/profile') ||
+  pathname.startsWith('/bookings/') ||
+  pathname.startsWith('/account');
 
 /**
  * Page-level access control. API routes enforce their own (stricter,
  * per-property) rules in src/server/authz.ts; this keeps people out of
- * screens they can't use and sends each role to its home. It also serves
- * hotels' booking pages on their own domains (see DEPLOYMENT.md).
+ * screens they can't use and sends each role to its home. It trusts only the signed
+ * cookie, which can be stale (role changed, account deactivated); /admin/layout.tsx
+ * re-checks against the database on every page load, and API routes always do.
+ * It also serves hotels' booking pages on their own domains (see DEPLOYMENT.md).
  */
 export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
+
+  // Pass the path to server layouts, which re-check the account against the database
+  // (the role in the cookie can be stale: the middleware has no database access).
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-pathname', pathname);
+  const next = () => NextResponse.next({ request: { headers: requestHeaders } });
 
   const hostname = normalizeDomain(request.headers.get('host') || '');
   if (hostname && !isAppHost(hostname)) {
@@ -95,7 +107,7 @@ export async function middleware(request: NextRequest) {
   }
 
   const isConsolePath = pathname === '/admin' || pathname.startsWith('/admin/');
-  if (!isConsolePath && !isGuestAccountPath(pathname)) return NextResponse.next();
+  if (!isConsolePath && !isAccountPath(pathname)) return next();
 
   const token = await getToken({
     req: request,
@@ -116,16 +128,17 @@ export async function middleware(request: NextRequest) {
 
   if (isConsolePath) {
     if (!token) return toLogin();
-    if (!isStaffRole(role)) return NextResponse.redirect(new URL('/dashboard', request.url));
+    if (!isStaffRole(role)) return NextResponse.redirect(new URL('/dashboard?notice=staff-only', request.url));
+    // The organization requires two-step sign-in and this person hasn't set it up (lib/auth.ts).
+    if (token.mfaSetup) return NextResponse.redirect(new URL('/account/security?required=1', request.url));
     if (pathname !== '/admin' && !canAccessConsolePath(role, pathname)) {
       return NextResponse.redirect(new URL(homeForRole(role), request.url));
     }
-    return NextResponse.next();
+    return next();
   }
 
-  // Guest account pages.
   if (!token) return toLogin();
-  return NextResponse.next();
+  return next();
 }
 
 // Every page (not API routes, Next.js internals or files), so hotels' domains work on all of them

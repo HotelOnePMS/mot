@@ -4,6 +4,7 @@ import { callerNumber } from '@/lib/phone';
 import { DomainError } from '@/server/errors';
 import { PHONE_SESSION_VARIABLE, PHONE_WEBHOOK_HEADER, isWhatsAppConversation, phonePropertyForAgent, singleModelPrompt, verifyPhoneWebhook } from '@/server/voice/elevenlabs';
 import { openPhoneSession } from '@/server/voice/sessions';
+import { logError } from '@/server/log';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,7 +60,7 @@ export async function POST(request: NextRequest) {
     });
     return answer(token, singleModelPrompt(ctx.prompts), ctx.firstMessage);
   } catch (e) {
-    if (!(e instanceof DomainError)) console.error('phone call start failed', e);
+    if (!(e instanceof DomainError)) logError('api/voice/phone/start', 'phone call start failed', e);
     else if (e.code !== 'RATE_LIMITED') console.warn(`phone call declined (${e.code}) for agent ${call.agent_id}`);
     return decline(e);
   }
