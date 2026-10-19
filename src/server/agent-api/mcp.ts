@@ -16,14 +16,14 @@ import { todayAt } from '../services/hotels';
 import { DomainError } from '../errors';
 import { prisma } from '@/lib/prisma';
 import { skillCatalogText } from '../skills';
-import { MAX_MCP_BODY_BYTES, clientIp, consumeAgentLimit, corsHeaders, errorHeaders, originAllowed, readBodyText } from './http';
+import { MAX_MCP_BODY_BYTES, clientIp, consumeAgentLimit, corsHeaders, errorHeaders, originAllowed, publicOrigin, readBodyText } from './http';
 import { agentKeyFromRequest, keyCanBook, type AgentKeyContext } from './keys';
 import { callTool, isToolName, listTools, type ScopedHotel, type ToolContext } from './tools';
 import type { RateLimitResult } from '../concierge';
 import { logError } from '@/server/log';
 
 /** Protocol revisions this server speaks, newest first. */
-export const MCP_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
+export const MCP_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'] as const;
 export const MCP_LATEST_VERSION = MCP_PROTOCOL_VERSIONS[0];
 /** Server version reported in serverInfo. */
 export const MCP_SERVER_VERSION = '1.0.0';
@@ -96,6 +96,15 @@ async function instructions(hotel: ScopedHotel | null, key: AgentKeyContext | nu
   return lines.join('\n');
 }
 
+/** The brand mark, for clients that show server icons: the SVG and the 180px PNG. */
+export function serverIcons() {
+  const origin = publicOrigin();
+  return [
+    { src: `${origin}/icon.svg`, mimeType: 'image/svg+xml', sizes: ['any'] },
+    { src: `${origin}/apple-icon`, mimeType: 'image/png', sizes: ['180x180'] },
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
@@ -135,7 +144,14 @@ async function dispatch(msg: RpcRequest, s: Session): Promise<RpcResponse | null
       return rpcResult(id, {
         protocolVersion,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: PRODUCT_NAME, title: s.hotel ? `${s.hotel.name} — book on ${PRODUCT_NAME}` : `${PRODUCT_NAME} — find and book hotels`, version: MCP_SERVER_VERSION },
+        serverInfo: {
+          name: PRODUCT_NAME,
+          title: s.hotel ? `${s.hotel.name} — book on ${PRODUCT_NAME}` : `${PRODUCT_NAME} — find and book hotels`,
+          version: MCP_SERVER_VERSION,
+          // Shown by clients and connector directories (2025-11-25; older clients ignore them).
+          websiteUrl: `${publicOrigin()}/assistants`,
+          icons: serverIcons(),
+        },
         instructions: await instructions(s.hotel, s.key),
       });
     }
