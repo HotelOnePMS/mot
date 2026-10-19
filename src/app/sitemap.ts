@@ -1,7 +1,7 @@
 import type { MetadataRoute } from 'next';
 import { prisma } from '@/lib/prisma';
 import { siteUrl } from '@/components/brand/site-url';
-import { LISTED_PROPERTY } from '@/server/concierge/facts';
+import { DIRECTORY_PROPERTY } from '@/server/concierge/facts';
 
 export const revalidate = 3600;
 
@@ -12,6 +12,9 @@ const STATIC_PAGES: { path: string; priority: number; changeFrequency: MetadataR
   { path: '/about', priority: 0.5, changeFrequency: 'monthly' },
   { path: '/developers/pms', priority: 0.4, changeFrequency: 'monthly' },
   { path: '/contact', priority: 0.5, changeFrequency: 'monthly' },
+  { path: '/terms', priority: 0.3, changeFrequency: 'yearly' },
+  { path: '/privacy', priority: 0.3, changeFrequency: 'yearly' },
+  { path: '/cookies', priority: 0.2, changeFrequency: 'yearly' },
   { path: '/login', priority: 0.3, changeFrequency: 'yearly' },
   { path: '/register', priority: 0.3, changeFrequency: 'yearly' },
 ];
@@ -27,9 +30,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }));
 
   try {
-    // Same rule as the public directory (/api/properties): listed properties only.
+    // Same rule as the public directory (/api/properties): listed properties that can take bookings.
     const properties = await prisma.property.findMany({
-      where: LISTED_PROPERTY,
+      where: DIRECTORY_PROPERTY,
       select: { id: true, updatedAt: true },
       orderBy: { createdAt: 'asc' },
       take: 5000,

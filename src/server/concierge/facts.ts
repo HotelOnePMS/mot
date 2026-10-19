@@ -14,6 +14,15 @@ import { formatClock } from '@/lib/format';
  */
 export const LISTED_PROPERTY = { isActive: true, setupPath: { not: 'VOICE' } } as const satisfies Prisma.PropertyWhereInput;
 
+/**
+ * What the public directory, the property picker and the sitemap show: listed
+ * properties that can actually take a booking (at least one active room type).
+ * Half-finished hotels stay reachable by direct link for their owners, but are
+ * not advertised. This is not a moderation check — see the PR notes on a
+ * `published`/verified flag.
+ */
+export const DIRECTORY_PROPERTY = { ...LISTED_PROPERTY, roomTypes: { some: { isActive: true } } } as const satisfies Prisma.PropertyWhereInput;
+
 /** The house policy every guest-facing answer quotes (voice tools, skills, concierge). */
 export const HOTEL_POLICY = {
   checkIn: 'from 3:00 PM',
