@@ -6,6 +6,7 @@ import { addDaysISO, dayOfWeek, diffDays, eachNight, isISODate } from '@/server/
 import { badRequest, notFound } from '@/server/errors';
 import { handleRoute, json, parseJson, parseQuery } from '@/server/http';
 import { recordAudit } from '@/server/services/audit';
+import { scheduleRateSync } from '@/server/channels/sync';
 import { nightlyInventory, nightlyRates } from '@/server/services/inventory';
 
 type Params = { params: Promise<{ roomTypeId: string }> };
@@ -85,6 +86,7 @@ export const POST = handleRoute(async (request: NextRequest, { params }: Params)
         })
       )
     );
+    scheduleRateSync(roomTypeId, [...unique.keys()]);
     await recordAudit(ctx, roomType.propertyId, 'RATES_UPDATE', `Updated ${unique.size} night${unique.size > 1 ? 's' : ''} of ${roomType.name} rates`, { roomTypeId });
     return json({ success: true, count: unique.size });
   }
@@ -99,6 +101,7 @@ export const POST = handleRoute(async (request: NextRequest, { params }: Params)
     const { count } = await prisma.roomTypeRate.deleteMany({
       where: { roomTypeId, date: { in: nights.map((d) => new Date(`${d}T00:00:00Z`)) } },
     });
+    scheduleRateSync(roomTypeId, nights);
     await recordAudit(ctx, roomType.propertyId, 'RATES_RESET', `Reset ${count} night${count === 1 ? '' : 's'} of ${roomType.name} to the base price`, { roomTypeId });
     return json({ success: true, count });
   }
@@ -121,6 +124,7 @@ export const POST = handleRoute(async (request: NextRequest, { params }: Params)
       })
     )
   );
+  scheduleRateSync(roomTypeId, nights);
   const how = body.price !== undefined ? `set to $${body.price}` : `adjusted ${(body.adjustPercent ?? 0) > 0 ? '+' : ''}${body.adjustPercent}%`;
   await recordAudit(ctx, roomType.propertyId, 'RATES_UPDATE', `${roomType.name}: ${updates.length} night${updates.length > 1 ? 's' : ''} ${how}`, { roomTypeId });
   return json({ success: true, count: updates.length });

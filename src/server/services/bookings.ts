@@ -10,6 +10,7 @@ import { BOOKING_STATUS } from '@/lib/status';
 import { assertPropertyAccess, can, requirePermission, scopeByProperty, type Actor, type Permission } from '../authz';
 import { addDaysISO, atNoonUTC, dayBounds, diffDays, formatDay, hotelToday, isISODate, toISODate } from '../dates';
 import { badRequest, conflict, DomainError, notFound } from '../errors';
+import { scheduleInventorySync } from '../channels/sync';
 import { recordAudit, type OpContext } from './audit';
 import { nightlyInventory, quoteStay } from './inventory';
 import { bookingInclude, floorNumber, toBookingSummary, type BookingWithRelations } from './mappers';
@@ -150,7 +151,7 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
   // both succeed. Retries on serialization failures and code collisions.
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      return await prisma.$transaction(
+      const booking = await prisma.$transaction(
         async (tx) => {
           const inventory = await nightlyInventory(tx, input.roomTypeId, input.checkIn, input.checkOut);
           if (inventory.minAvailable < rooms) {
@@ -183,6 +184,9 @@ export async function createBooking(input: CreateBookingInput): Promise<BookingW
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
       );
+      // OTAs see one room fewer on these nights.
+      scheduleInventorySync(booking.roomTypeId, booking.checkIn, booking.checkOut);
+      return booking;
     } catch (e) {
       const retryable =
         e instanceof Prisma.PrismaClientKnownRequestError &&
@@ -354,6 +358,12 @@ export async function transitionBooking(
     }
     return b;
   });
+
+  // Cancellations, no-shows, reinstatements and early departures change what OTAs can sell.
+  const occupying = (s: BookingStatus) => !['CANCELLED', 'NO_SHOW'].includes(s);
+  if (occupying(from) !== occupying(to) || data.checkOut) {
+    scheduleInventorySync(booking.roomTypeId, booking.checkIn, booking.checkOut);
+  }
 
   if (to === 'CHECKED_OUT' && updated.room) effects.push(`Room ${updated.room.roomNumber} marked dirty and queued for housekeeping`);
 

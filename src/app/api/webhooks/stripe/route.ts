@@ -3,6 +3,7 @@ import { getStripe, isStripeConfigured } from '@/lib/stripe';
 import { prisma } from '@/lib/prisma';
 import { sendBookingConfirmation } from '@/server/email';
 import { toDateString } from '@/lib/date-utils';
+import { scheduleInventorySync } from '@/server/channels/sync';
 
 /**
  * Stripe webhook — confirms bookings after successful Checkout payment.
@@ -105,6 +106,8 @@ export async function POST(request: NextRequest) {
       });
       if (count) {
         await prisma.bookingStatusHistory.create({ data: { bookingId, status: 'CANCELLED', notes: 'Online payment not completed — rooms released' } });
+        const released = await prisma.booking.findUnique({ where: { id: bookingId }, select: { roomTypeId: true, checkIn: true, checkOut: true } });
+        if (released) scheduleInventorySync(released.roomTypeId, released.checkIn, released.checkOut);
       }
     }
   }

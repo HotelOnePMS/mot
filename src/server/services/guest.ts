@@ -10,6 +10,7 @@ import type { Actor } from '../authz';
 import { hasPropertyAccess } from '../authz';
 import { HOTEL_TIMEZONE, addDaysISO, atNoonUTC, diffDays, formatDay, hotelToday, isISODate, toISODate } from '../dates';
 import { badRequest, conflict, forbidden, notFound } from '../errors';
+import { scheduleInventorySync } from '../channels/sync';
 import { recordAudit } from './audit';
 import { nightlyInventory, quoteStay } from './inventory';
 
@@ -90,6 +91,7 @@ export async function cancelOwnBooking(actor: Actor, bookingId: string, reason?:
       statusHistory: { create: { status: 'CANCELLED', notes: reason?.trim() ? `Cancelled by guest: ${reason.trim().slice(0, 300)}` : 'Cancelled by guest' } },
     },
   });
+  scheduleInventorySync(booking.roomTypeId, booking.checkIn, booking.checkOut);
   await recordAudit({ actor, source: 'classic' }, booking.propertyId, 'BOOKING_CANCELLED', `${booking.user.firstName} ${booking.user.lastName} cancelled ${booking.code ?? 'their booking'} online`, {
     bookingId: booking.id,
   });
@@ -154,6 +156,8 @@ export async function changeOwnStayDates(actor: Actor, bookingId: string, input:
       },
     },
   });
+  // Both the nights given up and the nights taken change on the OTAs.
+  scheduleInventorySync(booking.roomTypeId, newIn < oldIn ? newIn : oldIn, newOut > oldOut ? newOut : oldOut);
   await recordAudit({ actor, source: 'classic' }, booking.propertyId, 'BOOKING_DATES', `${booking.code ?? 'Booking'} moved to ${formatDay(newIn)}–${formatDay(newOut)}`, {
     bookingId: booking.id,
   });
