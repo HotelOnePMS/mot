@@ -20,6 +20,7 @@
     "seed": "node prisma/seed.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
     "@auth/prisma-adapter": "^2.10.0",
     "@elevenlabs/client": "^1.27.0",
     "@prisma/client": "^6.11.1",
@@ -50,6 +51,8 @@
     "prisma": "^6.11.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "resend": "^4.0.1",
     "sonner": "^2.0.7",
     "stripe": "^18.0.0",

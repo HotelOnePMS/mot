@@ -12,6 +12,7 @@ import {
   Settings2,
   Sparkles,
   BrushCleaning,
+  BrainCircuit,
   Users,
   AudioLines,
   Cable,
@@ -55,6 +56,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { label: 'Rates', href: '/admin/rate-calendar', icon: BadgeDollarSign, paths: ['FULL', 'VOICE'] },
       { label: 'Analytics', href: '/admin/analytics', icon: ChartLine },
+      { label: 'AI advisor', href: '/admin/advisor', icon: BrainCircuit, paths: ['FULL', 'VOICE'] },
     ],
   },
   {

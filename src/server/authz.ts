@@ -50,6 +50,8 @@ export const PERMISSIONS = {
   'users.write': ['ADMIN', 'OWNER'],
   'analytics.view': ['ADMIN', 'OWNER', 'MANAGER'],
   'activity.view': ['ADMIN', 'OWNER', 'MANAGER'],
+  // AI business advisor: portfolio-wide revenue and performance, read-only.
+  'advisor.use': ['ADMIN', 'OWNER'],
   'agent.use': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'mode.setDefault': ['ADMIN', 'OWNER', 'MANAGER'],
   'voice.use': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
