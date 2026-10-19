@@ -9,6 +9,7 @@ import { Resend } from 'resend';
 import { PRODUCT_DOMAIN, PRODUCT_NAME, PRODUCT_URL } from '@/config/product';
 import { money } from '@/lib/status';
 import { formatPhone } from '@/lib/format';
+import { logError } from '@/server/log';
 
 const resendApiKey = process.env.RESEND_API_KEY;
 const fromAddress = process.env.EMAIL_FROM || `${PRODUCT_NAME} <bookings@${PRODUCT_DOMAIN}>`;
@@ -37,6 +38,8 @@ export interface BookingEmailData {
   rooms: number;
   /** Amount in the hotel's currency, e.g. "240.00". */
   totalPrice: string;
+  /** The hotel's ISO 4217 currency (default USD). */
+  currency?: string;
   bookingId: string;
   /** PAID, DEPOSIT_PAID or PAY_AT_PROPERTY. */
   paymentStatus: string;
@@ -93,9 +96,9 @@ function nightsBetween(checkIn: string, checkOut: string): number | null {
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-function formatTotal(total: string): string {
+function formatTotal(total: string, currency?: string): string {
   const n = Number(total);
-  return Number.isFinite(n) ? money(n) : total;
+  return Number.isFinite(n) ? money(n, { currency }) : total;
 }
 
 interface Detail {
@@ -114,7 +117,7 @@ function confirmationContent(data: BookingEmailData) {
     { label: 'Check-out', value: formatDay(data.checkOut) },
     ...(nights ? [{ label: 'Length of stay', value: plural(nights, 'night') }] : []),
     { label: 'Guests', value: plural(data.guests, 'guest') },
-    { label: 'Total', value: formatTotal(data.totalPrice) },
+    { label: 'Total', value: formatTotal(data.totalPrice, data.currency) },
   ];
   return {
     paid: paid || deposit,
@@ -240,7 +243,7 @@ export async function sendBookingConfirmation(data: BookingEmailData): Promise<v
       text: confirmationText(data),
     });
   } catch (error) {
-    console.error('[email] Failed to send booking confirmation:', error);
+    logError('email', 'Failed to send booking confirmation:', error);
   }
 }
 
@@ -333,55 +336,98 @@ export async function sendGuestRequestAlert(data: GuestRequestAlertData): Promis
       text,
     });
   } catch (error) {
-    console.error('[email] Failed to send message alert:', error);
+    logError('email', 'Failed to send message alert:', error);
   }
 }
 
-export interface PasswordResetEmailData {
+// ---------------------------------------------------------------------------
+// Account emails: password reset and email verification
+// ---------------------------------------------------------------------------
+
+export interface AccountEmailData {
   to: string;
-  firstName: string;
-  /** Absolute one-time link to /reset-password?token=… */
-  resetUrl: string;
-  /** How long the link works, in minutes. */
-  expiresInMinutes: number;
+  name: string;
+  kind: 'RESET_PASSWORD' | 'VERIFY_EMAIL';
+  /** Absolute link with the single-use token. */
+  url: string;
+}
+
+function accountContent(data: AccountEmailData) {
+  return data.kind === 'RESET_PASSWORD'
+    ? {
+        subject: `Reset your ${PRODUCT_NAME} password`,
+        heading: 'Reset your password',
+        body: 'Someone (hopefully you) asked to reset the password for this account. The link works once, for the next hour.',
+        action: 'Choose a new password',
+        footer: 'Didn’t ask for this? Ignore this email: your password stays the same.',
+      }
+    : {
+        subject: `Verify your email for ${PRODUCT_NAME}`,
+        heading: 'Verify your email address',
+        body: 'Confirm this is your address so we can send you booking confirmations and help if you forget your password. The link works for 3 days.',
+        action: 'Verify my email',
+        footer: 'Didn’t create an account? Ignore this email.',
+      };
+}
+
+function accountHtml(data: AccountEmailData): string {
+  const c = accountContent(data);
+  const e = (v: unknown) => escapeHtml(v);
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>${e(c.heading)}</title>
+  </head>
+  <body style="margin: 0; padding: 0; background: ${C.page}; font-family: ${FONT}; color: ${C.ink};">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background: ${C.page};">
+      <tr>
+        <td align="center" style="padding: 32px 16px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 520px; background: ${C.card}; border: 1px solid ${C.border}; border-radius: 16px;">
+            <tr>
+              <td style="padding: 28px;">
+                <p style="margin: 0 0 16px; font-size: 15px; font-weight: 700; color: ${C.primary};">${PRODUCT_NAME}</p>
+                <h1 style="margin: 0 0 12px; font-size: 22px; line-height: 30px; font-weight: 700;">${e(c.heading)}</h1>
+                <p style="margin: 0 0 8px; font-size: 15px; line-height: 24px;">Hi ${e(data.name)},</p>
+                <p style="margin: 0 0 24px; font-size: 15px; line-height: 24px;">${e(c.body)}</p>
+                <a href="${e(data.url)}" style="display: inline-block; background: ${C.primary}; color: #ffffff; text-decoration: none; font-size: 15px; font-weight: 600; padding: 12px 20px; border-radius: 10px;">${e(c.action)}</a>
+                <p style="margin: 24px 0 0; font-size: 13px; line-height: 20px; color: ${C.muted};">Or paste this link into your browser:<br><span style="word-break: break-all;">${e(data.url)}</span></p>
+                <p style="margin: 16px 0 0; font-size: 13px; line-height: 20px; color: ${C.muted};">${e(c.footer)}</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
 }
 
 /**
- * Send the password-reset link. Without RESEND_API_KEY nothing is sent: in
- * development the link is printed to the server log so the flow can be tried;
- * in production only a warning is logged (a live reset link must never reach logs).
+ * Send a password-reset or verification link. Without Resend the link is
+ * only logged in development (so local sign-up still works), never in production.
  */
-export async function sendPasswordResetEmail(data: PasswordResetEmailData): Promise<void> {
+export async function sendAccountEmail(data: AccountEmailData): Promise<boolean> {
+  const c = accountContent(data);
   if (!resend) {
-    if (process.env.NODE_ENV === 'production') {
-      console.warn('[email] Password reset requested but RESEND_API_KEY is not configured — no email was sent.');
-    } else {
-      console.log(`[email] (dev) Password reset link for ${data.to}: ${data.resetUrl}`);
-    }
-    return;
+    if (process.env.NODE_ENV !== 'production') console.log(`[email] ${c.subject} for ${data.to}: ${data.url}`);
+    else console.warn(`[email] Skipping "${c.subject}" (RESEND_API_KEY not configured)`);
+    return false;
   }
-  const name = escapeHtml(subjectText(data.firstName) || 'there');
-  const url = escapeHtml(data.resetUrl);
-  const html = `<!doctype html><html><body style="margin:0;padding:24px;background:${C.page};font-family:${FONT};color:${C.ink}">
-<div style="max-width:480px;margin:0 auto;background:${C.card};border:1px solid ${C.border};border-radius:12px;padding:28px">
-<p style="margin:0 0 12px;font-size:18px;font-weight:600">Reset your ${PRODUCT_NAME} password</p>
-<p style="margin:0 0 20px;font-size:15px;line-height:1.5">Hi ${name}, we got a request to reset the password for your account. This link works once and expires in ${data.expiresInMinutes} minutes.</p>
-<p style="margin:0 0 24px"><a href="${url}" style="display:inline-block;background:${C.primary};color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 20px;border-radius:8px">Choose a new password</a></p>
-<p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:${C.muted}">If the button doesn’t work, paste this address into your browser:<br><span style="word-break:break-all">${url}</span></p>
-<p style="margin:0;font-size:13px;line-height:1.5;color:${C.muted}">Didn’t ask for this? You can ignore this email — your password won’t change.</p>
-</div></body></html>`;
-  const text = [
-    `Hi ${subjectText(data.firstName) || 'there'},`,
-    '',
-    `We got a request to reset your ${PRODUCT_NAME} password. This link works once and expires in ${data.expiresInMinutes} minutes:`,
-    data.resetUrl,
-    '',
-    'Didn’t ask for this? You can ignore this email — your password won’t change.',
-  ].join('\n');
   try {
-    await resend.emails.send({ from: fromAddress, to: data.to, subject: `Reset your ${PRODUCT_NAME} password`, html, text });
+    await resend.emails.send({
+      from: fromAddress,
+      to: data.to,
+      subject: c.subject,
+      html: accountHtml(data),
+      text: [c.heading, '', `Hi ${data.name},`, '', c.body, '', `${c.action}: ${data.url}`, '', c.footer].join('\n'),
+    });
+    return true;
   } catch (error) {
-    console.error('[email] Failed to send password reset email:', error);
+    logError('email', 'Failed to send account email:', error);
+    return false;
   }
 }
 
@@ -437,7 +483,7 @@ export async function sendDisputeAlert(data: DisputeAlertData): Promise<boolean>
     await resend.emails.send({ from: fromAddress, to: data.to, subject, html, text });
     return true;
   } catch (error) {
-    console.error('[email] Failed to send dispute alert:', error);
+    logError('email', 'Failed to send dispute alert:', error);
     return false;
   }
 }

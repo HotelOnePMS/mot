@@ -1,12 +1,14 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
-import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { isDemoEmail } from '@/config/product';
 import { badRequest, conflict, DomainError } from '@/server/errors';
+import { hashPassword, passwordProblem } from '@/server/auth/passwords';
 import { handleRoute, json, parseJson } from '@/server/http';
 import { VOICES } from '@/server/voice/live';
 import { toE164 } from '@/lib/phone';
+import { currencyOrDefault } from '@/lib/currency';
+import { isTimeZone } from '@/server/dates';
 import { cloudLoginUrlIssue, pmsLoginUrlSchema } from '@/server/schemas';
 import { scheduleConfigSkillSync } from '@/server/skills';
 
@@ -23,7 +25,7 @@ const schema = z.object({
     firstName: z.string().trim().min(1, 'is required').max(60),
     lastName: z.string().trim().min(1, 'is required').max(60),
     email: z.string().trim().toLowerCase().email('must be a valid email').refine((v) => !isDemoEmail(v), 'belongs to the public demo — use your own email'),
-    password: z.string().min(8, 'must be at least 8 characters').max(200),
+    password: z.string().max(200),
   }),
   property: z.object({
     name: z.string().trim().min(2).max(120),
@@ -35,6 +37,9 @@ const schema = z.object({
     phone: z.string().trim().min(5).max(40),
     tagline: z.string().trim().max(160).optional().nullable(),
     primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().nullable(),
+    /** The hotel's clock and currency (the onboarding form suggests the browser's time zone). */
+    timezone: z.string().trim().max(64).optional().nullable(),
+    currency: z.string().trim().toUpperCase().length(3).optional(),
   }),
   roomTypes: z
     .array(z.object({ name: z.string().trim().min(2).max(80), capacity: z.coerce.number().int().min(1).max(20), basePrice: z.coerce.number().min(0).max(100000), totalRooms: z.coerce.number().int().min(0).max(2000) }))
@@ -81,7 +86,9 @@ export const POST = handleRoute(async (request: NextRequest) => {
   if (await prisma.user.findUnique({ where: { email: body.account.email }, select: { id: true } })) {
     throw conflict('An account with this email already exists — sign in instead.');
   }
-  const passwordHash = await bcrypt.hash(body.account.password, 12);
+  const problem = passwordProblem(body.account.password, { email: body.account.email, name: body.account.firstName });
+  if (problem) throw badRequest(`Password: ${problem}`);
+  const passwordHash = await hashPassword(body.account.password);
 
   const result = await prisma.$transaction(async (tx) => {
     const user = await tx.user.create({
@@ -102,6 +109,8 @@ export const POST = handleRoute(async (request: NextRequest) => {
         isActive: true,
         isDemo: false,
         setupPath: body.path,
+        timezone: body.property.timezone && isTimeZone(body.property.timezone) ? body.property.timezone : null,
+        currency: currencyOrDefault(body.property.currency),
         // Hotels that keep their PMS start in the agent, where the bridge lives.
         interfaceMode: body.path === 'BRIDGE' ? 'AGENTIC' : 'CLASSIC',
       },

@@ -12,6 +12,7 @@ import { ZodError } from 'zod';
 import { PRODUCT_NAME } from '@/config/product';
 import { conciergeError, findListedHotel } from '../concierge';
 import { formatDay, hotelToday } from '../dates';
+import { todayAt } from '../services/hotels';
 import { DomainError } from '../errors';
 import { prisma } from '@/lib/prisma';
 import { skillCatalogText } from '../skills';
@@ -19,6 +20,7 @@ import { MAX_MCP_BODY_BYTES, clientIp, consumeAgentLimit, corsHeaders, errorHead
 import { agentKeyFromRequest, keyCanBook, type AgentKeyContext } from './keys';
 import { callTool, isToolName, listTools, type ScopedHotel, type ToolContext } from './tools';
 import type { RateLimitResult } from '../concierge';
+import { logError } from '@/server/log';
 
 /** Protocol revisions this server speaks, newest first. */
 export const MCP_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
@@ -68,13 +70,13 @@ function domainToRpc(e: DomainError): { status: number; code: number } {
 // ---------------------------------------------------------------------------
 
 async function instructions(hotel: ScopedHotel | null, key: AgentKeyContext | null): Promise<string> {
-  const today = hotelToday();
+  const today = hotel ? await todayAt(hotel.id) : hotelToday();
   const canBook = keyCanBook(key, hotel?.id ?? null);
   const lines = [
     hotel
       ? `This is ${hotel.name} in ${hotel.city}, ${hotel.state}, on ${PRODUCT_NAME}. Every tool here is about this hotel, so you never need a hotel id.`
       : `${PRODUCT_NAME} lists independent hotels, inns and motels and lets guests book them directly.`,
-    `Today is ${formatDay(today, 'long')}, ${today.slice(0, 4)} (${today}) in hotel time. Dates are YYYY-MM-DD; prices are USD. Turn relative dates like "next weekend" into dates yourself and say which dates you used.`,
+    `Today is ${formatDay(today, 'long')}, ${today.slice(0, 4)} (${today}) in hotel time. Dates are YYYY-MM-DD; prices are in each hotel's currency (its "currency" field, ISO 4217) and include its taxes and fees. Turn relative dates like "next weekend" into dates yourself and say which dates you used.`,
     '',
     'How to book:',
     hotel
@@ -260,7 +262,7 @@ export async function handleMcpPost(request: Request, propertyId: string | null 
       return reply(request, status, rpcError(null, code, e.message, e.details), errorHeaders(e), limits);
     }
     if (e instanceof ZodError) return reply(request, 400, rpcError(null, RPC.INVALID_PARAMS, e.issues[0]?.message ?? 'Invalid params'));
-    console.error('[mcp] failed', e);
+    logError('mcp', 'failed', e);
     return reply(request, 500, rpcError(null, RPC.INTERNAL_ERROR, 'Internal error — please try again shortly.'), {}, limits);
   }
 }

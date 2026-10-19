@@ -17,6 +17,7 @@ import type { AgentBlock } from '@/lib/agent/blocks';
 import type { ISODate } from '@/lib/dto';
 import type { Actor } from '../authz';
 import { can } from '../authz';
+import { todayAt } from '../services/hotels';
 import { hotelToday } from '../dates';
 import { DomainError } from '../errors';
 import { recordAudit } from '../services/audit';
@@ -37,6 +38,7 @@ import {
   type SkillParameters,
 } from '../skills';
 import { parseMessage, WRITE_KINDS, type Intent } from './nlu';
+import { logError } from '@/server/log';
 
 /** How many successful runs of the same command shape (within SUGGEST_WINDOW_DAYS) make a suggestion. */
 export const SUGGEST_AFTER = 3;
@@ -696,7 +698,7 @@ export async function expandShortcut(propertyId: string, skill: MacroSkill, rest
 
 /** In-house guests and today's arrivals, as one-tap answers to "who for?". */
 async function guestOptions(propertyId: string, shortcutName: string) {
-  const start = new Date(`${hotelToday()}T00:00:00Z`);
+  const start = new Date(`${await todayAt(propertyId)}T00:00:00Z`);
   const select = { code: true, id: true, status: true, user: { select: { firstName: true, lastName: true } }, room: { select: { roomNumber: true } } } as const;
   const [inHouse, arriving] = await Promise.all([
     prisma.booking.findMany({ where: { propertyId, status: 'CHECKED_IN' }, orderBy: { checkOut: 'asc' }, take: 6, select }),
@@ -755,7 +757,7 @@ export async function maybeSuggestShortcut(actor: Actor, propertyId: string, sha
     await recordAudit({ actor, source: 'system' }, propertyId, 'SKILL_SUGGEST', `Suggested a shortcut: “${shape.template}” (run ${count} times in ${SUGGEST_WINDOW_DAYS} days)`, { skillKey: skill.key });
     return skill;
   } catch (e) {
-    console.error('[agent] shortcut suggestion failed:', e);
+    logError('agent', 'shortcut suggestion failed:', e);
     return null;
   }
 }

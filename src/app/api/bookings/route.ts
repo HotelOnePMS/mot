@@ -54,6 +54,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
     paymentStatus: 'PAY_AT_PROPERTY',
     createdVia: 'Booked online — pay at property',
     onlinePayment: terms.onlinePayment ? { policy: terms.policy, depositNights: terms.depositNights } : undefined,
+    source: 'WEB',
     policyAcceptance: { version: terms.version, hash: terms.hash, text: terms.text, ip: clientIp(request), userAgent: request.headers.get('user-agent') },
   });
 
@@ -73,6 +74,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
         guests: booking.guests,
         paymentDue: Number(booking.paymentDue),
         totalPrice: Number(booking.totalPrice),
+        currency: booking.currency,
       },
       stripeAccountId: terms.stripeAccountId,
       guestEmail: user.email,
@@ -103,6 +105,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
     guests: input.guests,
     rooms: input.rooms,
     totalPrice: Number(booking.totalPrice).toFixed(2),
+    currency: booking.currency,
     bookingId: booking.code ?? booking.id,
     paymentStatus: 'PAY_AT_PROPERTY',
   });
@@ -117,6 +120,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
       checkOut: booking.checkOut,
       status: confirmed.status,
       totalPrice: Number(booking.totalPrice),
+      currency: booking.currency,
       paymentStatus: 'PAY_AT_PROPERTY',
     },
   });

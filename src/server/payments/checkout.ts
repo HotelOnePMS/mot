@@ -10,7 +10,7 @@ import { platformFeeCents, toCents } from '@/lib/payments';
 import { toDateString } from '@/lib/date-utils';
 import { DomainError } from '../errors';
 import { expireUnpaidBooking } from './expiry';
-import { CHECKOUT_SESSION_SECONDS, PAYMENT_CURRENCY } from './config';
+import { CHECKOUT_SESSION_SECONDS } from './config';
 
 export interface CheckoutBooking {
   id: string;
@@ -24,6 +24,8 @@ export interface CheckoutBooking {
   guests: number;
   paymentDue: number;
   totalPrice: number;
+  /** The hotel's currency (ISO 4217); online payments are only offered for two-decimal currencies (policy.ts). */
+  currency: string;
 }
 
 export async function createCheckoutSession(input: { booking: CheckoutBooking; stripeAccountId: string; guestEmail: string; siteUrl: string }): Promise<{ url: string; sessionId: string }> {
@@ -45,7 +47,7 @@ export async function createCheckoutSession(input: { booking: CheckoutBooking; s
         line_items: [
           {
             price_data: {
-              currency: PAYMENT_CURRENCY,
+              currency: booking.currency.toLowerCase(),
               product_data: { name: isDeposit ? `Deposit — ${label}` : label, description: dates },
               unit_amount: amount,
             },

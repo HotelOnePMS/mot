@@ -3,9 +3,10 @@
 import * as React from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import useSWR, { useSWRConfig } from 'swr';
-import type { InterfaceMode, StaffContext, StaffProperty } from '@/lib/dto';
-import { fetcher } from '@/lib/fetcher';
+import type { ISODate, InterfaceMode, StaffContext, StaffProperty } from '@/lib/dto';
+import { ApiError, fetcher } from '@/lib/fetcher';
 import { homeForProperty } from '@/lib/routes';
+import { CurrencyProvider } from '@/components/hotel/currency';
 
 interface ConsoleState {
   ctx: StaffContext | undefined;
@@ -13,6 +14,10 @@ interface ConsoleState {
   error: Error | undefined;
   property: StaffProperty | undefined;
   propertyId: string | undefined;
+  /** Today on the selected hotel's clock ('' until the context loads). */
+  today: ISODate;
+  /** The selected hotel's currency. */
+  currency: string;
   setPropertyId: (id: string) => void;
   /** The surface you're on right now: the agent workspace is Agentic, everything else Classic. */
   mode: InterfaceMode;
@@ -62,6 +67,11 @@ export function ConsoleProvider({ children }: { children: React.ReactNode }) {
   const { data: ctx, error, isLoading } = useSWR<StaffContext>('/api/admin/context', fetcher, {
     revalidateOnFocus: false,
   });
+
+  // Organizations that require two-step sign-in: send the person to set it up.
+  React.useEffect(() => {
+    if (error instanceof ApiError && error.code === 'MFA_SETUP_REQUIRED') router.replace('/account/security?required=1');
+  }, [error, router]);
 
   const userId = ctx?.user.id;
   const [propertyId, setPropertyIdState] = React.useState<string>();
@@ -160,6 +170,8 @@ export function ConsoleProvider({ children }: { children: React.ReactNode }) {
     error: error as Error | undefined,
     property,
     propertyId,
+    today: property?.today ?? ctx?.today ?? '',
+    currency: property?.currency ?? 'USD',
     setPropertyId,
     mode,
     preferredMode,
@@ -176,7 +188,11 @@ export function ConsoleProvider({ children }: { children: React.ReactNode }) {
     refresh,
     homeHref,
   };
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={value}>
+      <CurrencyProvider currency={value.currency}>{children}</CurrencyProvider>
+    </Ctx.Provider>
+  );
 }
 
 export function useConsole(): ConsoleState {

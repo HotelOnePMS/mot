@@ -31,6 +31,7 @@ interface Trip {
   guests: number;
   rooms: number;
   totalPrice: number;
+  currency: string;
   paymentStatus: string;
   property: { id: string; name: string; city: string; state: string; primaryColor: string | null; photos: { url: string }[] };
   roomType: { name: string; photos: { url: string }[] };
@@ -113,7 +114,7 @@ function TripCard({ trip, bookAgain }: { trip: Trip; bookAgain?: boolean }) {
           {fmtRange(trip.checkIn, trip.checkOut)} · {plural(nights, 'night')}
         </p>
         <p className="truncate text-sm text-muted-foreground">
-          {trip.roomType.name} · <span className="tabular">{price(trip.totalPrice)}</span>
+          {trip.roomType.name} · <span className="tabular">{price(trip.totalPrice, trip.currency)}</span>
         </p>
         {bookAgain && (
           <div className="mt-auto pt-4">

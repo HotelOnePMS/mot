@@ -7,7 +7,8 @@ import { prisma } from '@/lib/prisma';
 import type { HousekeepingStatus, HousekeepingTaskDTO, ISODate, Occupancy, RoomStatus } from '@/lib/dto';
 import { HOUSEKEEPING_STATUS } from '@/lib/status';
 import { assertPropertyAccess, requirePermission, type Actor } from '../authz';
-import { atNoonUTC, dayBounds, hotelToday } from '../dates';
+import { atNoonUTC, dayBounds } from '../dates';
+import { todayAt } from './hotels';
 import { badRequest, forbidden, notFound } from '../errors';
 import { recordAudit, type OpContext } from './audit';
 import { floorNumber, personName } from './mappers';
@@ -22,7 +23,7 @@ export async function listTasks(
 ): Promise<HousekeepingTaskDTO[]> {
   requirePermission(actor, 'housekeeping.view');
   assertPropertyAccess(actor, propertyId);
-  const today = hotelToday();
+  const today = await todayAt(propertyId);
   const tasks = await prisma.roomHousekeeping.findMany({
     where: {
       room: { propertyId },
@@ -131,7 +132,7 @@ export async function assignRoomCleaning(
 export async function planAutoAssign(actor: Actor, propertyId: string) {
   requirePermission(actor, 'housekeeping.assign');
   assertPropertyAccess(actor, propertyId);
-  const today = hotelToday();
+  const today = await todayAt(propertyId);
   const [team, rooms, openTasks, arrivalsByType] = await Promise.all([
     listTeam(actor, propertyId, ['HOUSEKEEPER']),
     prisma.room.findMany({

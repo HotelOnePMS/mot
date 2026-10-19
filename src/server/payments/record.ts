@@ -107,12 +107,13 @@ export async function recordPaymentSucceeded(paymentIntentId: string, opts_: { a
   const { paidCents, refundedCents } = await totalsFor(booking.id);
   const paymentStatus = bookingPaymentStatus({ totalCents: toCents(Number(booking.totalPrice)), paidCents, refundedCents });
   const money = (cents: number) => fromCents(cents).toFixed(2);
+  const shown = (cents: number) => `${money(cents)} ${booking.currency}`;
 
   // PENDING → CONFIRMED happens exactly once, whichever event arrives first.
   const confirmed = await prisma.booking.updateMany({ where: { id: booking.id, status: 'PENDING' }, data: { status: 'CONFIRMED', paymentStatus, stripePaymentIntentId: intent.id, expiresAt: null } });
   if (confirmed.count) {
     await prisma.bookingStatusHistory.create({
-      data: { bookingId: booking.id, status: 'CONFIRMED', notes: `Confirmed · ${kind === 'DEPOSIT' ? 'Deposit' : 'Payment'} of $${money(amountCents)} received by card (3D Secure: ${details.threeDSecure ?? 'n/a'})` },
+      data: { bookingId: booking.id, status: 'CONFIRMED', notes: `Confirmed · ${kind === 'DEPOSIT' ? 'Deposit' : 'Payment'} of ${shown(amountCents)} received by card (3D Secure: ${details.threeDSecure ?? 'n/a'})` },
     });
     const guestName = `${booking.user.firstName} ${booking.user.lastName}`.trim();
     await sendBookingConfirmation({
@@ -128,6 +129,7 @@ export async function recordPaymentSucceeded(paymentIntentId: string, opts_: { a
       bookingId: booking.code ?? booking.id,
       paymentStatus,
       amountPaid: money(paidCents - refundedCents),
+      currency: booking.currency,
     });
     return;
   }
@@ -146,8 +148,8 @@ export async function recordPaymentSucceeded(paymentIntentId: string, opts_: { a
           create: {
             status: free ? 'CONFIRMED' : 'CANCELLED',
             notes: free
-              ? `Confirmed · $${money(amountCents)} arrived after the hold expired and the rooms were still free`
-              : `$${money(amountCents)} arrived after the hold expired and the rooms are gone — refund this payment`,
+              ? `Confirmed · ${shown(amountCents)} arrived after the hold expired and the rooms were still free`
+              : `${shown(amountCents)} arrived after the hold expired and the rooms are gone — refund this payment`,
           },
         },
       },
@@ -191,7 +193,7 @@ export async function applyRefundState(input: { paymentIntentId: string; amountR
   if (status === payment.status && refundedCents === toCents(Number(payment.amountRefunded))) return;
   await prisma.payment.update({ where: { id: payment.id }, data: { amountRefunded: fromCents(refundedCents), status } });
 
-  const booking = await prisma.booking.findUnique({ where: { id: payment.bookingId }, select: { id: true, totalPrice: true, status: true, paymentStatus: true } });
+  const booking = await prisma.booking.findUnique({ where: { id: payment.bookingId }, select: { id: true, totalPrice: true, currency: true, status: true, paymentStatus: true } });
   if (!booking) return;
   // A dispute in progress keeps its own status until it closes.
   if (booking.paymentStatus === 'DISPUTED') return;
@@ -202,7 +204,7 @@ export async function applyRefundState(input: { paymentIntentId: string; amountR
       where: { id: booking.id },
       data: {
         paymentStatus,
-        statusHistory: { create: { status: booking.status, notes: `Refund recorded: $${fromCents(refundedCents).toFixed(2)} of $${fromCents(paidCents).toFixed(2)} refunded to the card` } },
+        statusHistory: { create: { status: booking.status, notes: `Refund recorded: ${fromCents(refundedCents).toFixed(2)} of ${fromCents(paidCents).toFixed(2)} ${booking.currency} refunded to the card` } },
       },
     });
   }

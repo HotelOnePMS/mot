@@ -160,7 +160,7 @@ export async function recordDispute(dispute: Stripe.Dispute): Promise<void> {
         where: { id: payment.bookingId },
         data: {
           paymentStatus: 'DISPUTED',
-          statusHistory: { create: { status: booking.status, notes: `Card dispute opened (${dispute.reason ?? 'no reason given'}), $${fromCents(dispute.amount).toFixed(2)}` } },
+          statusHistory: { create: { status: booking.status, notes: `Card dispute opened (${dispute.reason ?? 'no reason given'}), ${fromCents(dispute.amount).toFixed(2)} ${dispute.currency.toUpperCase()}` } },
         },
       });
     }

@@ -22,12 +22,12 @@ export default function ChangePasswordPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (loading) return;
-    if (password.length < 8) return setError('Use at least 8 characters.');
+    if (password.length < 10) return setError('Use at least 10 characters.');
     if (password !== confirm) return setError('The two passwords don’t match.');
     setLoading(true);
     setError('');
     try {
-      const res = await api<{ email: string }>('/api/auth/change-password', { method: 'POST', json: { currentPassword: current, password } });
+      const res = await api<{ email: string }>('/api/account/password', { method: 'POST', json: { current, next: password } });
       // Changing the password ends the old session; sign straight back in with the new one.
       const again = await signIn('credentials', { email: res.email, password, redirect: false });
       if (!again || again.error) {
@@ -50,8 +50,8 @@ export default function ChangePasswordPage() {
         <Field label="Temporary password" htmlFor="cp-current">
           <Input id="cp-current" type="password" autoComplete="current-password" required value={current} onChange={(e) => setCurrent(e.target.value)} className="h-11 text-base md:text-sm" />
         </Field>
-        <Field label="New password" htmlFor="cp-new" hint="At least 8 characters.">
-          <Input id="cp-new" type="password" autoComplete="new-password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className="h-11 text-base md:text-sm" />
+        <Field label="New password" htmlFor="cp-new" hint="At least 10 characters.">
+          <Input id="cp-new" type="password" autoComplete="new-password" required minLength={10} value={password} onChange={(e) => setPassword(e.target.value)} className="h-11 text-base md:text-sm" />
         </Field>
         <Field label="Confirm new password" htmlFor="cp-confirm">
           <Input id="cp-confirm" type="password" autoComplete="new-password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} className="h-11 text-base md:text-sm" />

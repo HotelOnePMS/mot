@@ -13,7 +13,7 @@ import { prisma } from '@/lib/prisma';
 import type { AgentBlock, AgentContextState, AgentEvent } from '@/lib/agent/blocks';
 import type { Actor } from '../authz';
 import { assertPropertyAccess, can } from '../authz';
-import { hotelToday } from '../dates';
+import { todayAt } from '../services/hotels';
 import { recordAudit } from '../services/audit';
 import { enqueueTask, getConnection } from '../services/bridge';
 import { runMcpTaskInline } from '../pms/run';
@@ -143,7 +143,7 @@ export async function* runAgent(input: AgentRunInput): AsyncGenerator<AgentEvent
     return;
   }
   const message = input.message.trim().slice(0, 600);
-  const today = hotelToday();
+  const today = await todayAt(propertyId);
   const ctx: ToolCtx = { actor, propertyId, propertyName: property.name, today, memory: { ...input.memory }, message };
   const bridged = property.setupPath === 'BRIDGE';
   const audit = (summary: string, data: Record<string, unknown>) => recordAudit({ actor, source: 'agent' }, propertyId, 'COMMAND', summary, { message: message.slice(0, 300), ...data });
@@ -440,7 +440,7 @@ export async function confirmPlan(actor: Actor, token: string): Promise<ConfirmR
   ];
   for (const t of bridged) blocks.push({ type: 'bridgeTask', taskId: t.id, system: t.system, instruction: t.instruction, kind: t.kind, mode: t.mode });
   const context: AgentContextState = {};
-  const today = hotelToday();
+  const today = await todayAt(plan.pid);
   for (const id of [...touched].slice(0, 2)) {
     const b = await prisma.booking.findUnique({ where: { id }, include: bookingInclude });
     if (!b) continue;

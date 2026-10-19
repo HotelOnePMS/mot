@@ -110,7 +110,9 @@ export default function ProfilePage() {
     try {
       await api('/api/profile', { method: 'PUT', json: pw });
       setPw({ currentPassword: '', newPassword: '' });
-      toast.success('Password changed');
+      // A new password ends every session, this one too.
+      toast.success('Password changed. Sign in with your new password.');
+      await signOut({ callbackUrl: '/login?reset=1' });
     } catch (err) {
       setPwError((err as Error).message);
     } finally {
@@ -255,8 +257,8 @@ export default function ProfilePage() {
                           onChange={(e) => setPw({ ...pw, currentPassword: e.target.value })}
                         />
                       </Field>
-                      <Field label="New password" htmlFor="pf-new" hint="At least 8 characters.">
-                        <Input id="pf-new" type="password" required minLength={8} autoComplete="new-password" value={pw.newPassword} onChange={(e) => setPw({ ...pw, newPassword: e.target.value })} />
+                      <Field label="New password" htmlFor="pf-new" hint="At least 10 characters. You’ll sign in again afterwards.">
+                        <Input id="pf-new" type="password" required minLength={10} autoComplete="new-password" value={pw.newPassword} onChange={(e) => setPw({ ...pw, newPassword: e.target.value })} />
                       </Field>
                     </div>
                     {pwError && (

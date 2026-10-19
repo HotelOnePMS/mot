@@ -228,9 +228,9 @@ export function ReservationList({
               </td>
               <td className="py-3 pl-3 pr-4 text-right align-middle font-medium tabular">
                 {b.status === 'CANCELLED' || b.status === 'NO_SHOW' ? (
-                  <span className="text-muted-foreground line-through decoration-muted-foreground/60">{formatMoney(b.totalPrice, currency, { cents: false })}</span>
+                  <span className="text-muted-foreground line-through decoration-muted-foreground/60">{formatMoney(b.totalPrice, b.currency ?? currency, { cents: false })}</span>
                 ) : (
-                  formatMoney(b.totalPrice, currency, { cents: false })
+                  formatMoney(b.totalPrice, b.currency ?? currency, { cents: false })
                 )}
               </td>
             </tr>
@@ -250,7 +250,7 @@ export function ReservationList({
                     {b.guest.name}
                   </Link>
                   <span className={cn('shrink-0 font-semibold tabular', (b.status === 'CANCELLED' || b.status === 'NO_SHOW') && 'text-muted-foreground line-through')}>
-                    {formatMoney(b.totalPrice, currency, { cents: false })}
+                    {formatMoney(b.totalPrice, b.currency ?? currency, { cents: false })}
                   </span>
                 </div>
                 <p className="mt-0.5 text-sm tabular text-foreground/90">

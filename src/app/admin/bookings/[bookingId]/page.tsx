@@ -131,8 +131,7 @@ function BackLink() {
 
 export default function BookingDetailPage() {
   const { bookingId } = useParams<{ bookingId: string }>();
-  const { ctx, can, askAgent } = useConsole();
-  const today = ctx?.today ?? '';
+  const { can, askAgent, today } = useConsole();
   const { data, error, isLoading } = useSWR<Detail>(`/api/admin/bookings/${bookingId}`, fetcher);
   const { transition, pending } = useBookingActions();
   const [dialog, setDialog] = React.useState<DialogKind | null>(null);

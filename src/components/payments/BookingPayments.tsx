@@ -106,7 +106,7 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
     setError('');
     try {
       await api(`/api/admin/bookings/${booking.id}/refund`, { method: 'POST', json: { paymentId, amount: Math.round(value * 100) / 100, reason: reason.trim() || undefined } });
-      toast.success(`Refunded ${formatMoney(value, 'USD', { cents: true })} to the guest’s card`);
+      toast.success(`Refunded ${formatMoney(value, booking.currency, { cents: true })} to the guest’s card`);
       await Promise.all([mutate(`/api/admin/bookings/${booking.id}`), mutate(`/api/admin/bookings/${booking.id}/payment`), mutate(`/api/admin/bookings/${booking.id}/refund`)]);
       onOpenChange(false);
     } catch (e) {
@@ -130,20 +130,20 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
             <Callout tone={info.deadlinePassed ? 'warning' : 'info'}>
               {info.deadlinePassed
                 ? `Free cancellation ended at ${info.deadlineLabel}. The policy doesn’t require a refund now; you can still refund any amount.`
-                : `Cancelled or cancelling before the free-cancellation deadline (${info.deadlineLabel}): the policy suggests refunding ${formatMoney(info.suggested, 'USD', { cents: true })}.`}
+                : `Cancelled or cancelling before the free-cancellation deadline (${info.deadlineLabel}): the policy suggests refunding ${formatMoney(info.suggested, booking.currency, { cents: true })}.`}
             </Callout>
             {info.payments.length > 1 && (
               <Field label="Payment" htmlFor="refund-payment">
                 <select id="refund-payment" value={paymentId} onChange={(e) => setPaymentId(e.target.value)} className="h-10 w-full rounded-lg border border-input bg-surface px-3 text-sm">
                   {info.payments.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {formatMoney(p.amount, 'USD', { cents: true })} · {p.cardBrand ?? 'Card'} {p.cardLast4 ? `ending ${p.cardLast4}` : ''} · {formatMoney(p.refundable, 'USD', { cents: true })} left
+                      {formatMoney(p.amount, booking.currency, { cents: true })} · {p.cardBrand ?? 'Card'} {p.cardLast4 ? `ending ${p.cardLast4}` : ''} · {formatMoney(p.refundable, booking.currency, { cents: true })} left
                     </option>
                   ))}
                 </select>
               </Field>
             )}
-            <Field label="Amount to refund (USD)" htmlFor="refund-amount" hint={payment ? `Up to ${formatMoney(payment.refundable, 'USD', { cents: true })} on this payment.` : undefined}>
+            <Field label={`Amount to refund (${booking.currency})`} htmlFor="refund-amount" hint={payment ? `Up to ${formatMoney(payment.refundable, booking.currency, { cents: true })} on this payment.` : undefined}>
               <Input id="refund-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
             </Field>
             <Field label="Reason" optional htmlFor="refund-reason" hint="For your records.">
@@ -161,7 +161,7 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
             Not now
           </Button>
           <Button disabled={!valid} loading={busy} loadingText="Refunding…" onClick={refund}>
-            <RotateCcw aria-hidden /> Refund {valid ? formatMoney(value, 'USD', { cents: true }) : ''}
+            <RotateCcw aria-hidden /> Refund {valid ? formatMoney(value, booking.currency, { cents: true }) : ''}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -239,9 +239,9 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
           <h2 className="text-base font-semibold tracking-tight">Payment</h2>
           <PaymentBadge status={b.paymentStatus} />
         </div>
-        <p className="mt-3 text-3xl font-semibold tracking-tight tabular">{formatMoney(b.totalPrice, 'USD', { cents: true })}</p>
+        <p className="mt-3 text-3xl font-semibold tracking-tight tabular">{formatMoney(b.totalPrice, b.currency, { cents: true })}</p>
         <p className="text-xs text-muted-foreground">
-          {formatMoney(nightly, 'USD', { cents: true })} average a night · {b.nights} night{b.nights === 1 ? '' : 's'}
+          {formatMoney(nightly, b.currency, { cents: true })} average a night · {b.nights} night{b.nights === 1 ? '' : 's'}
           {b.rooms > 1 ? ` × ${b.rooms} rooms` : ''}
         </p>
 
@@ -249,11 +249,11 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
           <dl className="mt-4 grid grid-cols-2 gap-2 text-sm">
             <div className="rounded-xl bg-muted px-3 py-2">
               <dt className="text-xs text-muted-foreground">Paid online</dt>
-              <dd className="font-medium tabular">{formatMoney(b.amountPaid, 'USD', { cents: true })}</dd>
+              <dd className="font-medium tabular">{formatMoney(b.amountPaid, b.currency, { cents: true })}</dd>
             </div>
             <div className="rounded-xl bg-muted px-3 py-2">
               <dt className="text-xs text-muted-foreground">Balance at the property</dt>
-              <dd className="font-medium tabular">{formatMoney(balance, 'USD', { cents: true })}</dd>
+              <dd className="font-medium tabular">{formatMoney(balance, b.currency, { cents: true })}</dd>
             </div>
           </dl>
         )}
@@ -308,7 +308,7 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
           <Callout tone="danger" icon={ShieldAlert} className="mt-4">
             <p className="font-semibold">Card dispute {data.disputes[0].status.replace(/_/g, ' ')}</p>
             <p>
-              {formatMoney(data.disputes[0].amount, 'USD', { cents: true })} disputed{data.disputes[0].reason ? ` (${data.disputes[0].reason.replace(/_/g, ' ')})` : ''}.{' '}
+              {formatMoney(data.disputes[0].amount, b.currency, { cents: true })} disputed{data.disputes[0].reason ? ` (${data.disputes[0].reason.replace(/_/g, ' ')})` : ''}.{' '}
               {can('disputes.view') && (
                 <Link href={`/admin/disputes?dispute=${data.disputes[0].id}`} className="font-medium underline underline-offset-2">
                   Review the evidence

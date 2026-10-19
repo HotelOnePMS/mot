@@ -1,9 +1,10 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { requireStaff, resolvePropertyId } from '@/server/authz';
-import { addDaysISO, diffDays, hotelToday, isISODate } from '@/server/dates';
+import { addDaysISO, diffDays, isISODate } from '@/server/dates';
 import { badRequest } from '@/server/errors';
 import { handleRoute, json, parseQuery } from '@/server/http';
+import { todayAt } from '@/server/services/hotels';
 import { occupancyForActor } from '@/server/services/frontdesk';
 
 const query = z.object({
@@ -17,7 +18,7 @@ export const GET = handleRoute(async (request: NextRequest) => {
   const actor = await requireStaff('frontdesk.view');
   const q = parseQuery(request, query);
   const propertyId = await resolvePropertyId(actor, q.propertyId);
-  const from = q.from ?? hotelToday();
+  const from = q.from ?? (await todayAt(propertyId));
   const to = q.to ?? addDaysISO(from, 14);
   if (to <= from) throw badRequest('`to` must be after `from`.');
   if (diffDays(from, to) > 92) throw badRequest('Ranges are limited to 92 nights.');

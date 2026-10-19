@@ -66,6 +66,8 @@ export const CONSOLE_ACCESS: { prefix: string; roles: readonly StaffRole[] }[] =
   { prefix: '/admin/skills', roles: ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'] },
   // Managers can see and share the hotel's assistant link; keys need 'agentkeys.manage'.
   { prefix: '/admin/assistants', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
+  // Hotel groups: owners who administer one (the API checks which), and platform admins.
+  { prefix: '/admin/organization', roles: ['ADMIN', 'OWNER'] },
 ];
 
 export function canAccessConsolePath(role: string | null | undefined, pathname: string): boolean {

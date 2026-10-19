@@ -10,6 +10,7 @@ import { createHmac } from 'crypto';
 import type { BridgeTask, PmsConnection } from '@prisma/client';
 import { PRODUCT_NAME } from '@/config/product';
 import { DomainError } from '../errors';
+import { logError } from '@/server/log';
 
 export const OPERATOR_MODEL = process.env.BRIDGE_OPERATOR_MODEL || 'computer-use-preview';
 const OPERATOR_TOOL = process.env.BRIDGE_OPERATOR_TOOL === 'computer' ? 'computer' : 'computer_use_preview';
@@ -151,7 +152,7 @@ export async function operatorStep(input: {
     });
   } catch (e) {
     if (e instanceof DomainError) throw e;
-    console.error('Bridge operator step failed:', (e as Error).message);
+    logError('bridge/operator', 'Bridge operator step failed:', (e as Error).message);
     throw new DomainError(502, 'OPERATOR_UPSTREAM', 'The PMS operator couldn’t reach the model. It will retry.');
   }
 

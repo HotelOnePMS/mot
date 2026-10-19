@@ -13,6 +13,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import type { AgentApiKey } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { DomainError, conflict, notFound } from '../errors';
+import { logError } from '@/server/log';
 
 export const AGENT_KEY_PREFIX = 'ho_live_';
 /** What a key may do beyond the public tools. */
@@ -111,7 +112,7 @@ export async function agentKeyFromRequest(request: Request): Promise<AgentKeyCon
   if (row.propertyId && !property?.isActive) throw invalidKey('This API key’s hotel isn’t taking bookings on HotelOne right now, so the key is paused. Ask the hotel.');
   if (row.createdById && !creator?.isActive) throw invalidKey('This API key stopped working because the person who created it no longer has access. Ask the hotel for a new one.');
   if (!row.lastUsedAt || Date.now() - row.lastUsedAt.getTime() > TOUCH_EVERY_MS) {
-    void prisma.agentApiKey.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } }).catch((e) => console.error('[agent-api] could not record key use', e));
+    void prisma.agentApiKey.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } }).catch((e) => logError('agent-api', 'could not record key use', e));
   }
   return { id: row.id, name: row.name, prefix: row.prefix, propertyId: row.propertyId, scopes: row.scopes };
 }

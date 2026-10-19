@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ZodError, type ZodTypeAny, type infer as ZodInfer } from 'zod';
 import { DomainError, badRequest } from './errors';
+import { logError } from '@/server/log';
 
 /**
  * Wraps a route handler so DomainErrors and validation errors become
@@ -32,7 +33,7 @@ export function errorResponse(e: unknown): Response {
     const msg = first ? `${first.path.join('.') || 'input'}: ${first.message}` : 'Invalid input';
     return NextResponse.json({ error: msg, message: msg, code: 'VALIDATION', details: { issues: e.issues } }, { status: 400 });
   }
-  console.error('Unhandled route error:', e);
+  logError('http', 'Unhandled route error:', e);
   return NextResponse.json(
     { error: 'Something went wrong on our side. Please try again.', message: 'Internal server error', code: 'INTERNAL' },
     { status: 500 }

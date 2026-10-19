@@ -32,6 +32,7 @@ interface PropertyCard {
   roomTypeCount: number;
   maxCapacity: number;
   fromPrice: number | null;
+  currency: string;
   available: boolean | null;
   isDemo: boolean;
 }
@@ -144,7 +145,7 @@ function StayCard({ p, query, nights, index, href }: { p: PropertyCard; query: Q
               <>
                 {p.fromPrice !== null && (
                   <p className="text-sm text-muted-foreground">
-                    From <span className="font-semibold text-foreground tabular">{price(Math.round(p.fromPrice))}</span> / night per room
+                    From <span className="font-semibold text-foreground tabular">{price(Math.round(p.fromPrice), p.currency)}</span> / night per room
                   </p>
                 )}
                 <p className="text-xs text-muted-foreground">{block.detail}</p>
@@ -152,11 +153,11 @@ function StayCard({ p, query, nights, index, href }: { p: PropertyCard; query: Q
             ) : p.fromPrice !== null ? (
               <>
                 <p className="text-sm text-muted-foreground">
-                  From <span className="text-lg font-semibold text-foreground tabular">{price(Math.round(p.fromPrice))}</span> / night
+                  From <span className="text-lg font-semibold text-foreground tabular">{price(Math.round(p.fromPrice), p.currency)}</span> / night
                 </p>
                 {query.dated && nights > 0 && (
                   <p className="text-xs text-muted-foreground tabular">
-                    {price(Math.round(p.fromPrice * nights))} total · {plural(nights, 'night')}
+                    {price(Math.round(p.fromPrice * nights), p.currency)} total · {plural(nights, 'night')}
                   </p>
                 )}
               </>

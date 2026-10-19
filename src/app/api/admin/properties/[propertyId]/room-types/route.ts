@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { staffGuard } from '@/server/guard';
+import { logError } from '@/server/log';
 
 // GET /api/admin/properties/[propertyId]/room-types
 export async function GET(
@@ -32,7 +33,7 @@ export async function GET(
     
     return NextResponse.json(roomTypes);
   } catch (error) {
-    console.error('Error fetching room types:', error);
+    logError('api/admin/properties/[propertyId]/room-types', 'Error fetching room types:', error);
     return NextResponse.json(
       { error: 'Failed to fetch room types' },
       { status: 500 }

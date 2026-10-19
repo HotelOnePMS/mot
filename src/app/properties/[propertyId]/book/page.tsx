@@ -88,6 +88,17 @@ function rememberBooking(key: string, id: string, code: string | null) {
 const listWords = (words: string[]) => (words.length > 1 ? `${words.slice(0, -1).join(', ')} and ${words.at(-1)}` : (words[0] ?? ''));
 
 /** "Jamie Lee Smith" → first "Jamie", last "Lee Smith". */
+/** "US dollars", "Euro (EUR)": the currency the hotel prices in. */
+function currencyName(code: string): string {
+  if (code === 'USD') return 'US dollars';
+  try {
+    const name = new Intl.DisplayNames(['en'], { type: 'currency' }).of(code);
+    return name && name !== code ? `${name} (${code})` : code;
+  } catch {
+    return code;
+  }
+}
+
 function splitName(full: string): { firstName: string; lastName: string } {
   const [firstName = '', ...rest] = full.trim().split(/\s+/);
   return { firstName, lastName: rest.join(' ') };
@@ -243,7 +254,7 @@ function GuestAuth({ onDone, form, setForm }: { onDone: () => void; form: GuestF
             </Field>
           )}
         </div>
-        <Field label="Password" htmlFor="g-pass" hint={mode === 'register' ? 'At least 8 characters. You’ll use it to manage your booking.' : undefined}>
+        <Field label="Password" htmlFor="g-pass" hint={mode === 'register' ? 'At least 10 characters. You’ll use it to manage your booking.' : undefined}>
           <Input
             id="g-pass"
             type="password"
@@ -748,6 +759,25 @@ function Checkout() {
                           <dd className="tabular">{price(quote.subtotal, cur)}</dd>
                         </div>
                       )}
+                      {quote.charges?.length > 0 && (
+                        <>
+                          {nightsCount <= 7 && (
+                            <div className="flex justify-between gap-3 border-t pt-1.5 text-muted-foreground">
+                              <dt>Room total</dt>
+                              <dd className="tabular">{price(quote.subtotal, cur)}</dd>
+                            </div>
+                          )}
+                          {quote.charges.map((c) => (
+                            <div key={c.name} className="flex justify-between gap-3 text-muted-foreground">
+                              <dt>
+                                {c.name}
+                                {c.kind === 'PERCENT' ? ` (${Number(c.rate.toFixed(3))}%)` : ''}
+                              </dt>
+                              <dd className="tabular">{price(c.amount, cur)}</dd>
+                            </div>
+                          ))}
+                        </>
+                      )}
                       <div className="flex justify-between gap-3 text-muted-foreground">
                         <dt>Booking fee</dt>
                         <dd>None</dd>
@@ -760,7 +790,8 @@ function Checkout() {
                   )}
                   {quote && (
                     <p className="mt-2 text-xs text-muted-foreground">
-                      Prices in {cur === 'USD' ? 'US dollars' : cur}. Local taxes, if any, are settled with the hotel.
+                      Prices in {currencyName(cur)}.{' '}
+                      {quote.charges?.length ? 'The total includes the hotel’s taxes and fees.' : 'Any local taxes are paid at the hotel.'}
                     </p>
                   )}
                 </div>

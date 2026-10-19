@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { DIRECTORY_PROPERTY } from '@/server/concierge/facts';
+import { logError } from '@/server/log';
 
 export async function GET() {
   try {
@@ -20,7 +21,7 @@ export async function GET() {
     
     return NextResponse.json(properties);
   } catch (error) {
-    console.error('Error fetching properties:', error);
+    logError('api/properties/dropdown', 'Error fetching properties:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

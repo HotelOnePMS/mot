@@ -126,7 +126,7 @@ export function BookingRow({
         )}
         <BookingStatusBadge status={b.status} />
         {variant === 'departures' && b.paymentStatus !== 'PAID' && <PaymentBadge status={b.paymentStatus} />}
-        <span className="hidden w-20 text-right text-sm font-medium tabular md:inline">{formatMoney(b.totalPrice, 'USD', { cents: false })}</span>
+        <span className="hidden w-20 text-right text-sm font-medium tabular md:inline">{formatMoney(b.totalPrice, b.currency, { cents: false })}</span>
         {actions && (
           // Above the stretched link, so these stay clickable.
           <div className="relative z-10 flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>

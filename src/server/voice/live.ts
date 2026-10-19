@@ -12,6 +12,7 @@
 import OpenAI from 'openai';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { forbidden, DomainError } from '../errors';
+import { logError } from '@/server/log';
 
 export const LIVE_MODEL = process.env.OPENAI_LIVE_MODEL || 'gpt-live-1';
 // Same default the OpenAI playground uses for Live delegation.
@@ -73,7 +74,7 @@ export async function createLiveSession(input: {
   } catch (e) {
     if (e instanceof DomainError) throw e;
     const { status, reason } = describeOpenAIError(e, `${LIVE_MODEL} (voice) or ${VOICE_BACKEND_MODEL} (reasoning)`);
-    console.error('GPT-Live session creation failed:', status, e instanceof Error ? e.message : e);
+    logError('voice/live', 'GPT-Live session creation failed:', status, e instanceof Error ? e.message : e);
     // Staff-facing reason; the session route shows guests a gentler line.
     throw new DomainError(502, 'VOICE_UPSTREAM', reason, { status });
   }
@@ -561,7 +562,7 @@ export function guestPrompts(p: {
     // WhatsApp may be text or a call: plain amounts read well and the voice says them naturally.
     whatsapp
       ? 'Keep replies short — a sentence or two. Write prices as plain amounts ("$227 a night") and dates like "Fri, Oct 23". Repeat dates back before acting on them.'
-      : 'Speak in short sentences. Say prices as natural amounts ("two hundred and twenty-seven dollars a night"). Repeat dates back before acting on them.',
+      : 'Speak in short sentences. Say prices as natural amounts in the hotel’s currency ("two hundred and twenty-seven dollars a night"; use the currency the tools report). Repeat dates back before acting on them.',
     'Whenever the guest asks about rooms, prices, availability, policies, the hotel, or an existing booking, delegate — never answer facts from memory.',
     whatsapp ? '' : 'If you are waiting on a result, say a brief natural filler ("let me check that for you").',
     !live
@@ -641,7 +642,7 @@ export function conciergePrompts(p: { product: string; today: string; timezone: 
     `You are the ${p.product} concierge: a friendly voice assistant that helps people find and book a room at the independent hotels on ${p.product}. Warm, calm and brief.`,
     `Open with a short welcome: say you’re ${p.product}’s AI concierge and ask where and when they’d like to stay.`,
     'Speak in short sentences. Ask for what is missing — where, which dates, how many guests — one question at a time.',
-    'Say prices as natural amounts ("one hundred and eighty-nine dollars a night"). Repeat dates back before acting on them.',
+    'Say prices as natural amounts in the hotel’s currency ("one hundred and eighty-nine dollars a night"; use the currency the tools report). Repeat dates back before acting on them.',
     'Whenever the guest asks about hotels, rooms, prices, availability, policies or a booking, delegate — never answer facts from memory.',
     'If you are waiting on a result, say a brief natural filler ("let me look").',
     'Offer at most three hotels at a time, each with its name, town and price.',

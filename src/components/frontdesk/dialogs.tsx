@@ -191,7 +191,7 @@ export function CheckInDialog({ booking, open, onOpenChange }: { booking: Bookin
           </Callout>
         )}
         {booking.paymentStatus === 'AWAITING_PAYMENT' && (
-          <Callout tone="warning">Online payment didn’t complete — collect {money(booking.totalPrice)} at the desk.</Callout>
+          <Callout tone="warning">Online payment didn’t complete — collect {money(booking.totalPrice, { currency: booking.currency })} at the desk.</Callout>
         )}
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
@@ -283,7 +283,7 @@ export function CheckOutDialog({ booking, open, onOpenChange, today }: { booking
         {(early || unpaid) && (
           <div className="space-y-2">
             {early && <Callout tone="info">Early departure — the unused nights go back on sale.</Callout>}
-            {unpaid && <Callout tone="warning">Balance of {money(balance)} to settle before the guest leaves.</Callout>}
+            {unpaid && <Callout tone="warning">Balance of {money(balance, { currency: booking.currency })} to settle before the guest leaves.</Callout>}
           </div>
         )}
         <DialogFooter>

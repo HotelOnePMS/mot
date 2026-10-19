@@ -32,7 +32,7 @@ export const HOTEL_POLICY = {
   cancellation: 'Free cancellation and date changes until 3:00 PM (hotel time) the day before arrival.',
 } as const;
 
-/** Prices are quoted in this currency everywhere (see StayQuote.currency). */
+/** The currency of hotels that never chose one; each hotel quotes in its own (Property.currency, StayQuote.currency). */
 export const CURRENCY = 'USD' as const;
 
 /**

@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
-import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { requireStaff, type Actor } from '@/server/authz';
 import { badRequest, forbidden, notFound } from '@/server/errors';
+import { hashPassword, passwordProblem } from '@/server/auth/passwords';
 import { handleRoute, json, parseJson } from '@/server/http';
 import { describeTeamChange, shouldEndSessions } from '@/lib/team-rules';
 import { recordTeamAudit } from '@/server/services/team-audit';
@@ -36,7 +36,7 @@ export const GET = handleRoute(async (_req: NextRequest, { params }: Params) => 
 
 const patchSchema = z.object({
   email: z.string().trim().toLowerCase().email().optional(),
-  password: z.string().min(8).optional().or(z.literal('')),
+  password: z.string().max(200).optional().or(z.literal('')),
   firstName: z.string().trim().min(1).max(60).optional(),
   lastName: z.string().trim().min(1).max(60).optional(),
   phone: z.string().trim().max(40).nullable().optional(),
@@ -59,6 +59,10 @@ export const PATCH = handleRoute(async (request: NextRequest, { params }: Params
   }
   if (body.email && body.email.toLowerCase() !== user.email.toLowerCase() && (await prisma.user.findUnique({ where: { email: body.email } }))) {
     throw duplicateEmailError(actor);
+  }
+  if (body.password) {
+    const problem = passwordProblem(body.password, { email: body.email ?? user.email });
+    if (problem) throw badRequest(`Password: ${problem}`);
   }
 
   // The property list the person ends up with (non-admins only replace assignments inside their own properties).
@@ -88,6 +92,8 @@ export const PATCH = handleRoute(async (request: NextRequest, { params }: Params
   // A password chosen by someone else is temporary: the person must replace it at next sign-in.
   const passwordChosenByOther = !!body.password && userId !== actor.userId;
 
+  const emailChanged = body.email !== undefined && body.email.toLowerCase() !== user.email.toLowerCase();
+
   const updated = await prisma.$transaction(async (tx) => {
     const u = await tx.user.update({
       where: { id: userId },
@@ -98,9 +104,11 @@ export const PATCH = handleRoute(async (request: NextRequest, { params }: Params
         ...(body.phone !== undefined ? { phone: body.phone || null } : {}),
         ...(body.role !== undefined ? { role: body.role } : {}),
         ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
-        ...(body.password ? { password: await bcrypt.hash(body.password, 12), mustChangePassword: passwordChosenByOther } : {}),
+        ...(body.password ? { password: await hashPassword(body.password), passwordChangedAt: new Date(), mustChangePassword: passwordChosenByOther } : {}),
         // Ends every existing session of this person (see the jwt callback in src/lib/auth.ts).
         ...(endSessions ? { sessionVersion: { increment: 1 } } : {}),
+        // The new address hasn't been proven yet.
+        ...(emailChanged ? { emailVerifiedAt: null } : {}),
       },
     });
     if (body.assignedPropertyIds) {

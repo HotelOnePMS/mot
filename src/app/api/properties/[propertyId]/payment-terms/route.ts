@@ -15,7 +15,7 @@ export const GET = handleRoute(async (_req: NextRequest, { params }: Params) => 
   const { propertyId } = await params;
   const property = await prisma.property.findFirst({
     where: { id: propertyId, ...LISTED_PROPERTY },
-    select: { paymentPolicy: true, depositNights: true, stripeChargesEnabled: true, stripeAccountId: true },
+    select: { paymentPolicy: true, depositNights: true, stripeChargesEnabled: true, stripeAccountId: true, currency: true },
   });
   if (!property) throw notFound('Property');
   const t = termsFor(property);

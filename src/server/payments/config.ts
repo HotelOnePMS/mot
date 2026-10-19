@@ -11,5 +11,5 @@ export const HOLD_MINUTES = 35;
 /** Checkout session lifetime in seconds (Stripe's minimum is 30 minutes; a little extra absorbs request latency). */
 export const CHECKOUT_SESSION_SECONDS = 30 * 60 + 30;
 
-/** The only currency online payments use today (the app prices in USD). */
+/** Fallback when Stripe reports no currency; checkout charges in the hotel's own currency. */
 export const PAYMENT_CURRENCY = 'usd';

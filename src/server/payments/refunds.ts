@@ -12,6 +12,7 @@ import { toISODate } from '../dates';
 import { recordAudit } from '../services/audit';
 import { getBookingForStaff } from '../services/bookings';
 import { policyFor } from '../services/guest';
+import { hotelLocale } from '../services/hotels';
 import { applyRefundState } from './record';
 
 export interface RefundInfo {
@@ -37,7 +38,8 @@ export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
     booking.status === 'CANCELLED'
       ? (await prisma.bookingStatusHistory.findFirst({ where: { bookingId: booking.id, status: 'CANCELLED' }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }))?.createdAt
       : undefined;
-  const policy = policyFor(toISODate(booking.checkIn), cancelledAt ?? new Date());
+  const { timezone } = await hotelLocale(booking.propertyId);
+  const policy = policyFor(toISODate(booking.checkIn), timezone, cancelledAt ?? new Date());
   const rows = payments.map((p) => ({
     id: p.id,
     amount: Number(p.amount),
@@ -63,7 +65,7 @@ export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
   };
 }
 
-/** Refund part or all of one payment. `amount` is in dollars; omit it to refund what is left. */
+/** Refund part or all of one payment. `amount` is in the payment's currency; omit it to refund what is left. */
 export async function refundPayment(bookingId: string, input: { paymentId: string; amount?: number; reason?: string }): Promise<{ refunded: number; remaining: number }> {
   const actor = await requireStaff('payments.refund');
   const booking = await getBookingForStaff(actor, bookingId);
@@ -79,7 +81,7 @@ export async function refundPayment(bookingId: string, input: { paymentId: strin
   const left = refundableCents(paid, already);
   const cents = input.amount === undefined ? left : toCents(input.amount);
   if (!Number.isFinite(cents) || cents <= 0) throw badRequest('Enter an amount to refund.');
-  if (cents > left) throw badRequest(`Only $${fromCents(left).toFixed(2)} is left to refund on this payment.`);
+  if (cents > left) throw badRequest(`Only ${fromCents(left).toFixed(2)} ${payment.currency.toUpperCase()} is left to refund on this payment.`);
 
   const stripe = getStripe();
   const account = payment.property.stripeAccountId ? { stripeAccount: payment.property.stripeAccountId } : undefined;
@@ -100,7 +102,7 @@ export async function refundPayment(bookingId: string, input: { paymentId: strin
   const charge = typeof intent.latest_charge === 'object' ? intent.latest_charge : null;
   const total = charge ? charge.amount_refunded : already + cents;
   await applyRefundState({ paymentIntentId: payment.stripePaymentIntentId, amountRefundedCents: total });
-  await recordAudit({ actor, source: 'classic' }, booking.propertyId, 'PAYMENT_REFUND', `Refunded $${fromCents(cents).toFixed(2)} on ${booking.code ?? 'booking'}${input.reason ? ` (${input.reason.slice(0, 80)})` : ''}`, {
+  await recordAudit({ actor, source: 'classic' }, booking.propertyId, 'PAYMENT_REFUND', `Refunded ${fromCents(cents).toFixed(2)} ${payment.currency.toUpperCase()} on ${booking.code ?? 'booking'}${input.reason ? ` (${input.reason.slice(0, 80)})` : ''}`, {
     bookingId: booking.id,
     paymentId: payment.id,
   });
