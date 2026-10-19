@@ -7,7 +7,8 @@
  *    first) onto the two names Prisma reads,
  *    DATABASE_URL and DIRECT_URL — same order as src/lib/db-url.ts.
  * 2. With a database: applies pending migrations and, when SEED_DEMO=true,
- *    creates the demo once (the seed never wipes on Vercel).
+ *    creates the demo once (the seed never wipes on Vercel); with
+ *    PROPERTY_DOMAIN_BASE set, syncs hotels' default subdomains.
  *    Without one: still builds, so the first deploy works and a database can
  *    be connected afterwards (Vercel → Storage → Postgres, then redeploy).
  * 3. prisma generate + next build.
@@ -45,6 +46,8 @@ if (!pooled) {
 } else {
   run('prisma migrate deploy');
   if (env.SEED_DEMO === 'true') run('node prisma/seed.js', { NODE_ENV: 'production' });
+  // Default booking page addresses (see DEPLOYMENT.md → Hotel booking page domains)
+  if (env.PROPERTY_DOMAIN_BASE) run('node scripts/sync-property-subdomains.mjs');
 }
 
 run('next build');
