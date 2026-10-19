@@ -21,7 +21,7 @@ export type AgentKeyScope = (typeof AGENT_KEY_SCOPES)[number];
 /** Characters of the key kept for display ("ho_live_AbC1"). */
 export const AGENT_KEY_DISPLAY_LENGTH = 12;
 /** Why keys can't be created or revoked here in the public demo (src/server/demo.ts demoHotelLocked). */
-export const AGENT_KEYS_DEMO_LOCKED = 'API keys aren’t available on demo hotels or with the shared demo logins. Set up your own hotel (Get started) to connect your own assistants.';
+export const AGENT_KEYS_DEMO_LOCKED = 'API keys aren’t available on demo hotels or with the shared demo logins. Set up your own hotel to connect your own assistants.';
 /** Active keys a hotel (or the all-hotels pool) may hold at once. */
 export const MAX_ACTIVE_KEYS = 25;
 /**

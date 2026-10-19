@@ -34,7 +34,13 @@ function Code({ children, label }: { children: string; label: string }) {
   return (
     <figure className="mt-4">
       <figcaption className="text-2xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</figcaption>
-      <pre className="mt-2 max-w-full overflow-x-auto rounded-xl border bg-surface-sunken p-4 font-mono text-xs leading-relaxed text-foreground">
+      {/* Focusable so keyboard users can scroll long lines sideways. */}
+      <pre
+        tabIndex={0}
+        role="region"
+        aria-label={label}
+        className="mt-2 max-w-full overflow-x-auto rounded-xl border bg-surface-sunken p-4 font-mono text-xs leading-relaxed text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      >
         <code>{children}</code>
       </pre>
     </figure>
@@ -207,7 +213,7 @@ await sendHotelOneEvent(url, secret, {
           <dl className="mt-5 space-y-3 rounded-2xl border bg-card p-5 text-sm">
             <div>
               <dt className="font-semibold">Endpoint</dt>
-              <dd className="mt-1 break-all font-mono text-xs text-muted-foreground">POST {origin}/api/pms/events/&lt;connectionId&gt;</dd>
+              <dd className="mt-1 break-words font-mono text-xs text-muted-foreground">POST {origin}/api/pms/events/&lt;connectionId&gt;</dd>
             </div>
             <div>
               <dt className="font-semibold">Body (JSON, up to 64 KB)</dt>
@@ -220,9 +226,9 @@ await sendHotelOneEvent(url, secret, {
             <div>
               <dt className="font-semibold">Signature</dt>
               <dd className="mt-1 text-muted-foreground">
-                <span className="break-all font-mono text-xs">X-HotelOne-Timestamp: &lt;unix seconds&gt;</span>
+                <span className="break-words font-mono text-xs">X-HotelOne-Timestamp: &lt;unix seconds&gt;</span>
                 <br />
-                <span className="break-all font-mono text-xs">X-HotelOne-Signature: sha256=&lt;hex HMAC-SHA256(secret, timestamp + &quot;.&quot; + raw body)&gt;</span>
+                <span className="break-words font-mono text-xs">X-HotelOne-Signature: sha256=&lt;hex HMAC-SHA256(secret, timestamp + &quot;.&quot; + raw body)&gt;</span>
                 <br />
                 Deliveries more than 5 minutes off our clock are rejected; an <code className="font-mono text-xs">id</code> seen in the last 24 hours is accepted once.
               </dd>
@@ -266,7 +272,7 @@ await sendHotelOneEvent(url, secret, {
                   Talk to us
                 </Link>{' '}
                 <span className="text-muted-foreground">
-                  — or write to <a className="underline-offset-4 hover:underline" href={`mailto:${PRODUCT_SUPPORT_EMAIL}`}>{PRODUCT_SUPPORT_EMAIL}</a> for a test hotel
+                  — or write to <a className="font-medium text-primary underline-offset-4 hover:underline" href={`mailto:${PRODUCT_SUPPORT_EMAIL}`}>{PRODUCT_SUPPORT_EMAIL}</a> for a test hotel
                 </span>
               </li>
             </ul>

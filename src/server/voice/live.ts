@@ -315,7 +315,7 @@ const SEARCH_HOTELS: FunctionToolSpec = {
   parameters: obj(
     {
       location: { type: ['string', 'null'], description: 'Where the guest wants to stay, e.g. "Santa Cruz, CA"' },
-      query: { type: ['string', 'null'], description: 'A hotel name or other words to match, if the guest named one' },
+      query: { type: ['string', 'null'], description: 'A hotel name, or what the guest wants (e.g. "ocean view", "sauna", "motel")' },
       check_in: { type: ['string', 'null'], description: 'Arrival date (YYYY-MM-DD), if known' },
       check_out: { type: ['string', 'null'], description: 'Departure date (YYYY-MM-DD), if known' },
       guests,

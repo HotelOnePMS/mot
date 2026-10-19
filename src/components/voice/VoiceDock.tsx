@@ -989,8 +989,11 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
   const shown = live && session ? session : (target ?? session);
   const name = shown?.name ?? PRODUCT_NAME;
   const scope = shown?.scope ?? "global";
+  // Said after "the": "the Saltwater Inn front desk", never "the The Saltwater Inn…".
   const deskName =
-    scope === "hotel" ? `${name} front desk` : `${PRODUCT_NAME} concierge`;
+    scope === "hotel"
+      ? `${name.replace(/^the\s+/i, "")} front desk`
+      : `${PRODUCT_NAME} concierge`;
   const [announce, setAnnounce] = React.useState("");
   const prevState = React.useRef(voice.state);
   React.useEffect(() => {
@@ -1251,11 +1254,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
                       {live ? (
                         <>
                           <IconButton
-                            label={
-                              voice.muted
-                                ? "Turn microphone on"
-                                : "Turn microphone off"
-                            }
+                            label="Mute microphone"
                             aria-pressed={voice.muted}
                             variant="outline"
                             size="icon-lg"

@@ -233,7 +233,7 @@ export function Callout({
   return (
     <div
       className={cn(
-        "flex items-start gap-3 rounded-xl border border-transparent px-4 py-3 text-sm",
+        "flex flex-wrap items-start gap-3 rounded-xl border border-transparent px-4 py-3 text-sm sm:flex-nowrap",
         TONE_SOFT[tone],
         tone === "neutral" && "border-border text-foreground",
         className
@@ -241,11 +241,11 @@ export function Callout({
       {...props}
     >
       {Icon && <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />}
-      <div className="min-w-0 flex-1 leading-relaxed">
+      <div className="min-w-0 flex-1 basis-[calc(100%-2rem)] leading-relaxed sm:basis-auto">
         {title && <p className="font-semibold">{title}</p>}
         {children && <div className={cn(title && "mt-0.5")}>{children}</div>}
       </div>
-      {action && <div className="shrink-0 self-center">{action}</div>}
+      {action && <div className={cn("shrink-0 sm:self-center", Icon && "ml-7 sm:ml-0")}>{action}</div>}
     </div>
   )
 }

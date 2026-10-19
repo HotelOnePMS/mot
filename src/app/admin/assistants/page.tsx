@@ -154,7 +154,7 @@ function NewKeyDialog({ created, hotelName, origin, onClose }: { created: { key:
         <DialogHeader>
           <DialogTitle>Copy your new key now</DialogTitle>
           <DialogDescription>
-            This is the only time you’ll see “{created?.record.name}”. Give it to the developer or partner it’s for, and keep it somewhere safe.
+            This is the only time you’ll see this key (“{created?.record.name}”). Give it to the developer or partner it’s for, and keep it somewhere safe.
           </DialogDescription>
         </DialogHeader>
         {created && (
@@ -171,7 +171,7 @@ function NewKeyDialog({ created, hotelName, origin, onClose }: { created: { key:
                 : 'Anyone with this key can use your hotel’s assistant tools under your name. If it leaks, revoke it and make a new one.'}
             </Callout>
             <p className="text-sm text-muted-foreground">
-              It’s sent as <code className={code}>Authorization: Bearer …</code> to <code className={cn(code, 'break-all')}>{origin}/api/mcp</code> or the REST API.
+              It’s sent as <code className={code}>Authorization: Bearer …</code> to <code className={cn(code, 'break-words')}>{origin}/api/mcp</code> or the REST API.
             </p>
           </div>
         )}

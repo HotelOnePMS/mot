@@ -72,6 +72,8 @@ const SCHEMAS: Record<string, JsonSchema> = {
     hotels: { type: 'array', items: ref('HotelSummary') },
     matched: int('Hotels that matched before the limit.'),
     stay: nullable(obj({ checkIn: date('Arrival'), checkOut: date('Departure'), nights: int(), guests: int(), rooms: int() })),
+    note: str('Only when results are not exact matches (closest places, or the place without the query words): what to tell the person.'),
+    places: { type: 'array', description: 'Only when no hotel is in the place asked for: every town with HotelOne hotels, e.g. "Santa Cruz, CA".', items: str() },
   }),
   HotelDetails: obj(
     {

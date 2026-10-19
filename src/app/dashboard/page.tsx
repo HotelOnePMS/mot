@@ -77,7 +77,7 @@ function NextTrip({ trip }: { trip: Trip }) {
                 {trip.room ? ` · ${trip.room.roomNumber}` : ''}
               </dd>
             </div>
-            <div>
+            <div data-voice-avoid>
               <dt className="text-xs text-muted-foreground">Confirmation</dt>
               <dd className="font-mono font-semibold tracking-wider">{trip.code ?? '—'}</dd>
             </div>

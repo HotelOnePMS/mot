@@ -97,7 +97,7 @@ const TOOLS: ToolDef[] = [
     annotations: READ,
     globalOnly: true,
     describe: () =>
-      'Find HotelOne hotels by place (city, state, zip or area) or by name. Pass checkIn and checkOut (YYYY-MM-DD) to get live availability and the cheapest price for the stay; guests and rooms default to 2 and 1. Start here, then call check_availability for the hotel the person picks. Each hotel has an id (propertyId) for the other tools.',
+      'Find HotelOne hotels by place (city, state, zip or area), by name, or by what the person wants (query: "ocean view", "sauna", "motel"). Pass checkIn and checkOut (YYYY-MM-DD) to get live availability and the cheapest price for the stay; guests and rooms default to 2 and 1. If the result has a note, pass it on: results may be the closest places, and with no hotels in the place, places lists where HotelOne has hotels. Start here, then call check_availability for the hotel the person picks. Each hotel has an id (propertyId) for the other tools.',
     run: async (args) => ({ ...(await searchHotels(args)) }),
   },
   {

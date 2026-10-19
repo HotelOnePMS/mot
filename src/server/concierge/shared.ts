@@ -175,7 +175,9 @@ export function lastNameMatches(stored: string, given: string, direct: boolean):
   const g = nameKey(given);
   if (!g || !s) return false;
   if (s === g) return true;
-  return direct && s.endsWith(` ${g}`);
+  // "Smith" finds a stored "Lee Smith" (middle names end up in the last name); the code is still required.
+  void direct;
+  return s.endsWith(` ${g}`);
 }
 
 /**

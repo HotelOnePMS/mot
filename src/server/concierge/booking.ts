@@ -262,18 +262,25 @@ export async function createBooking(input: CreateBookingInput, opts: { keyId?: s
   const stay = await bookableStay(hotel.id, a, 'Stays are limited to 30 nights online.');
   if ('error' in stay) throw badRequest(stay.error);
   const guest = await integrationGuest(a.guest);
-  const booking = await createSiteBooking({
-    userId: guest.id,
-    propertyId: hotel.id,
-    roomTypeId: a.roomTypeId,
-    checkIn: a.checkIn,
-    checkOut: a.checkOut,
-    guests: a.guests,
-    rooms: a.rooms,
-    notes: a.notes,
-    paymentStatus: 'PAY_AT_PROPERTY',
-    createdVia: `Booked by ${a.source} — pay at property`,
-  });
+  let booking: Awaited<ReturnType<typeof createSiteBooking>>;
+  try {
+    booking = await createSiteBooking({
+      userId: guest.id,
+      propertyId: hotel.id,
+      roomTypeId: a.roomTypeId,
+      checkIn: a.checkIn,
+      checkOut: a.checkOut,
+      guests: a.guests,
+      rooms: a.rooms,
+      notes: a.notes,
+      paymentStatus: 'PAY_AT_PROPERTY',
+      createdVia: `Booked by ${a.source} — pay at property`,
+    });
+  } catch (e) {
+    // Sold out or busy: the guest record was made for this booking alone, so don't leave it behind.
+    await prisma.user.delete({ where: { id: guest.id } }).catch(() => undefined);
+    throw e;
+  }
   const guestEmail = a.guest.email.trim().toLowerCase();
   await prisma.booking.update({ where: { id: booking.id }, data: { guestEmail } });
   await confirmPayAtProperty(booking.id);
@@ -316,7 +323,7 @@ export async function createBooking(input: CreateBookingInput, opts: { keyId?: s
 }
 
 /** How the guest of a direct booking changes or cancels: they have no account here, so through the hotel. */
-function integrationManageNote(phone: string | null | undefined): string {
+export function integrationManageNote(phone: string | null | undefined): string {
   return `To change or cancel, the guest contacts the hotel${phone ? ` at ${phone}` : ''} with the confirmation code (free until 3 PM hotel time the day before arrival), or asks their assistant to look the booking up with the code and their last name.`;
 }
 
@@ -341,8 +348,8 @@ export type FindBookingResult =
       /** "3:00 PM on Thu, Oct 22" while free changes are still possible, else null. */
       freeChangesUntil: string | null;
       manage: string;
-      /** The guest's booking page (they sign in to change or cancel). */
-      bookingUrl: string;
+      /** The guest's booking page (they sign in to change or cancel); null for direct bookings by API key. */
+      bookingUrl: string | null;
     };
 
 /**
@@ -373,6 +380,7 @@ export async function findBooking(input: FindBookingInput): Promise<FindBookingR
     manage: b.guestEmail
       ? integrationManageNote(b.property.phone)
       : 'The guest can change dates or cancel by signing in at the booking site with the email they booked with.',
-    bookingUrl: bookingPageUrl(b.id),
+    // Direct bookings have no account to sign in to, so no booking page for them.
+    bookingUrl: b.guestEmail ? null : bookingPageUrl(b.id),
   };
 }
