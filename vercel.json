@@ -3,5 +3,6 @@
   "framework": "nextjs",
   "installCommand": "npm install",
   "buildCommand": "node scripts/vercel-build.mjs",
-  "regions": ["iad1"]
+  "regions": ["iad1"],
+  "crons": [{ "path": "/api/channels/cron?full=1", "schedule": "0 10 * * *" }]
 }

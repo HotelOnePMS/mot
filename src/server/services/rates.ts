@@ -7,6 +7,7 @@ import type { ISODate } from '@/lib/dto';
 import { assertPropertyAccess, requirePermission } from '../authz';
 import { addDaysISO, dayOfWeek, diffDays, eachNight, formatDay } from '../dates';
 import { badRequest, notFound } from '../errors';
+import { scheduleRateSync } from '../channels/sync';
 import { recordAudit, type OpContext } from './audit';
 import { nightlyRates } from './inventory';
 
@@ -39,6 +40,7 @@ export async function changeRates(
     const { count } = await prisma.roomTypeRate.deleteMany({
       where: { roomTypeId, date: { in: nights.map((d) => new Date(`${d}T00:00:00Z`)) } },
     });
+    scheduleRateSync(roomTypeId, nights);
     const summary = `${roomType.name} ${range}: reset to base price`;
     await recordAudit(ctx, roomType.propertyId, 'RATES_RESET', summary, { roomTypeId });
     return { count, summary };
@@ -61,6 +63,7 @@ export async function changeRates(
       })
     )
   );
+  scheduleRateSync(roomTypeId, nights);
   const how = 'price' in change ? `set to $${change.price}` : `${change.adjustPercent > 0 ? '+' : ''}${change.adjustPercent}%`;
   const summary = `${roomType.name} ${range}: ${how}`;
   await recordAudit(ctx, roomType.propertyId, 'RATES_UPDATE', summary, { roomTypeId, nights: updates.length });
