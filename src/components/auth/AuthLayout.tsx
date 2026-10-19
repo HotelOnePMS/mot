@@ -44,6 +44,14 @@ export function AuthLayout({ children, aside }: { children: React.ReactNode; asi
               Contact
             </Link>
             <span aria-hidden>·</span>
+            <Link href="/terms" className={footLink}>
+              Terms
+            </Link>
+            <span aria-hidden>·</span>
+            <Link href="/privacy" className={footLink}>
+              Privacy
+            </Link>
+            <span aria-hidden>·</span>
             <a href={`mailto:${PRODUCT_SUPPORT_EMAIL}`} className={footLink}>
               {PRODUCT_SUPPORT_EMAIL}
             </a>

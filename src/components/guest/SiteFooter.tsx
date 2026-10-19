@@ -34,11 +34,18 @@ const COLUMNS = [
   },
 ];
 
+const LEGAL_LINKS = [
+  { href: '/terms', label: 'Terms' },
+  { href: '/privacy', label: 'Privacy' },
+  { href: '/cookies', label: 'Cookies' },
+];
+
 const GUEST_LINKS = [
   { href: '/properties', label: 'Find a stay' },
   { href: '/dashboard', label: 'My trips' },
   { href: '/profile', label: 'Profile' },
   { href: '/contact', label: 'Help' },
+  ...LEGAL_LINKS,
 ];
 
 const linkClass =
@@ -121,7 +128,14 @@ export function SiteFooter({ variant = 'platform', className }: { variant?: 'pla
           <p>
             © {year} {PRODUCT_NAME}. All rights reserved.
           </p>
-          <p>Built for independent hotels, inns and motels.</p>
+          <nav aria-label="Legal" className="flex flex-wrap items-center gap-x-5 gap-y-1">
+            {LEGAL_LINKS.map((l) => (
+              <Link key={l.href} href={l.href} className={cn(linkClass, 'min-h-10 text-xs md:min-h-0')}>
+                {l.label}
+              </Link>
+            ))}
+            <span>Built for independent hotels, inns and motels.</span>
+          </nav>
         </div>
       </div>
     </footer>
