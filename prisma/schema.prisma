@@ -73,9 +73,19 @@ model Property {
   interfaceMode InterfaceMode  @default(CLASSIC)
   // How the hotel adopted StayOS: everything on StayOS, keeping their PMS, or voice only
   setupPath     SetupPath      @default(FULL)
+  // Online payments (Stripe Connect Express, direct charges): the hotel's own connected account.
+  stripeAccountId        String?        @unique
+  stripeChargesEnabled   Boolean        @default(false)
+  stripePayoutsEnabled   Boolean        @default(false)
+  stripeDetailsSubmitted Boolean        @default(false)
+  paymentPolicy          PaymentPolicy  @default(PAY_AT_PROPERTY)
+  // Nights charged at booking when paymentPolicy is DEPOSIT.
+  depositNights          Int            @default(1)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
   bookings    Booking[]
+  payments    Payment[]
+  disputes    Dispute[]
   photos      PropertyPhoto[]
   roomTypes   RoomType[]
   rooms       Room[]
@@ -184,8 +194,16 @@ model Booking {
   /// Direct bookings by an integration's API key: the contact email it sent. Those bookings belong to a
   /// guest record made for that booking alone, never to an existing account (see src/server/concierge).
   guestEmail    String?
+  /// Online payments: what is charged at booking (deposit or full amount); null for pay-at-property bookings.
+  paymentDue    Decimal?               @db.Decimal(10, 2)
+  /// Unpaid online bookings hold their rooms until this moment, then are released.
+  expiresAt     DateTime?
   createdAt     DateTime               @default(now())
   updatedAt     DateTime               @updatedAt
+  payments      Payment[]
+  disputes      Dispute[]
+  policyAcceptance BookingPolicyAcceptance?
+  checklist     BookingChecklist?
   statusHistory BookingStatusHistory[]
   property      Property               @relation(fields: [propertyId], references: [id])
   roomType      RoomType               @relation(fields: [roomTypeId], references: [id])
@@ -196,6 +214,7 @@ model Booking {
   @@index([propertyId, checkOut])
   @@index([roomTypeId, checkIn, checkOut])
   @@index([roomId])
+  @@index([status, paymentStatus, expiresAt])
   @@map("bookings")
 }
 
@@ -222,6 +241,12 @@ model RoomTypeRate {
   @@unique([roomTypeId, date])
   @@index([date])
   @@map("room_type_rates")
+}
+
+enum PaymentPolicy {
+  PAY_AT_PROPERTY
+  DEPOSIT
+  FULL_PREPAYMENT
 }
 
 enum UserRole {
@@ -562,4 +587,114 @@ model AgentApiKey {
   property    Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
   @@map("agent_api_keys")
+}
+
+/// One card payment collected through Stripe on the hotel's connected account. No card data is stored:
+/// only the cardholder and risk details Stripe reports for the charge. Kept apart from the guest's name.
+model Payment {
+  id                      String    @id @default(cuid())
+  bookingId               String
+  propertyId              String
+  stripePaymentIntentId   String    @unique
+  stripeChargeId          String?   @unique
+  stripeCheckoutSessionId String?
+  /// DEPOSIT | FULL
+  kind                    String    @default("FULL")
+  /// PENDING | SUCCEEDED | FAILED | PARTIALLY_REFUNDED | REFUNDED
+  status                  String    @default("PENDING")
+  amount                  Decimal   @db.Decimal(10, 2)
+  amountRefunded          Decimal   @default(0) @db.Decimal(10, 2)
+  applicationFee          Decimal?  @db.Decimal(10, 2)
+  currency                String    @default("usd")
+  cardholderName          String?
+  billingEmail            String?
+  billingCountry          String?
+  cardCountry             String?
+  cardBrand               String?
+  cardLast4               String?
+  /// Stripe's 3D Secure result: authenticated | attempt_acknowledged | exempted | not_supported | failed | processing_error | not_attempted
+  threeDSecure            String?
+  /// Stripe Radar outcome: normal | elevated | highest | not_assessed | unknown
+  riskLevel               String?
+  riskScore               Int?
+  failureMessage          String?
+  paidAt                  DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  booking                 Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  property                Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([propertyId, createdAt])
+  @@map("payments")
+}
+
+/// A card dispute (chargeback) opened on a hotel's Stripe account, with the evidence we assembled for it.
+model Dispute {
+  id                String    @id @default(cuid())
+  stripeDisputeId   String    @unique
+  stripeChargeId    String?
+  bookingId         String?
+  propertyId        String
+  amount            Decimal   @db.Decimal(10, 2)
+  currency          String    @default("usd")
+  reason            String?
+  /// Stripe's status: warning_needs_response | needs_response | under_review | won | lost | ...
+  status            String
+  evidenceDueBy     DateTime?
+  /// The evidence summary built from our own records (see src/server/payments/evidence.ts).
+  evidenceSummary   Json?
+  evidenceSubmittedAt DateTime?
+  evidenceSubmittedById String?
+  ownerNotifiedAt   DateTime?
+  closedAt          DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  booking           Booking?  @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  property          Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, createdAt])
+  @@index([bookingId])
+  @@map("disputes")
+}
+
+/// The cancellation/refund policy a guest accepted at booking: exact text, its hash and version, when and from where.
+model BookingPolicyAcceptance {
+  bookingId   String   @id
+  version     String
+  hash        String
+  text        String
+  acceptedAt  DateTime @default(now())
+  ip          String?
+  userAgent   String?
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("booking_policy_acceptances")
+}
+
+/// Front-desk checklist for bookings carrying risk flags: who ticked what, and when.
+model BookingChecklist {
+  bookingId             String    @id
+  idMatchedAt           DateTime?
+  idMatchedById         String?
+  cardShownAt           DateTime?
+  cardShownById         String?
+  registrationSignedAt  DateTime?
+  registrationSignedById String?
+  updatedAt             DateTime  @updatedAt
+  booking               Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("booking_checklists")
+}
+
+/// Stripe webhook events already handled, so redeliveries are ignored (idempotency).
+model StripeEvent {
+  id          String    @id
+  type        String
+  account     String?
+  startedAt   DateTime  @default(now())
+  processedAt DateTime?
+
+  @@index([processedAt, startedAt])
+  @@map("stripe_events")
 }
