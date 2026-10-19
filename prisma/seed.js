@@ -432,7 +432,18 @@ async function main() {
   await task('LOOKUP', 'who is arriving today?', 'DONE', '6 arrivals today: Patel (room 12), Moreno (14), Lee (unassigned), Okafor (21), Nguyen (unassigned), Fischer (7).', 4);
   await task('ACTION', 'check in Moreno into room 14', 'DONE', 'Checked in Ana Moreno to room 14 in Cloudbeds. Balance $0.00 (prepaid).', 3.8);
   await task('ACTION', 'move the Lee reservation to an accessible room', 'NEEDS_HELP', 'Two reservations named Lee arrive today (D. Lee and M. Lee). Which one should I move?', 3.5);
-  await prisma.voiceAgentConfig.create({ data: { propertyId: harbor.id, voice: 'cedar', greeting: 'Harbor Motel, how can I help?', handoffPhone: '+1 831 555 0177' } });
+  // Harbor keeps its own PMS, so the voice quotes Harbor's own times and policy.
+  await prisma.voiceAgentConfig.create({
+    data: {
+      propertyId: harbor.id,
+      voice: 'cedar',
+      greeting: 'Harbor Motel, how can I help?',
+      handoffPhone: '+1 831 555 0177',
+      checkInTime: '15:00',
+      checkOutTime: '11:00',
+      cancellationPolicy: 'Free cancellation until 24 hours before arrival; after that the first night is charged.',
+    },
+  });
   await audit(owner.id, harbor.id, 'BRIDGE_SETUP', 'Connected Cloudbeds (desktop connector)', 'classic', 50);
 
   // ---------- listing-only demo properties ----------

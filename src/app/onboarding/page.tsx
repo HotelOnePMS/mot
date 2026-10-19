@@ -25,6 +25,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/fetcher';
+import { HALF_HOURS, formatClock } from '@/lib/format';
+import { toE164 } from '@/lib/phone';
 import { cn } from '@/lib/utils';
 import { PRODUCT_NAME, isDemoEmail } from '@/config/product';
 import { Logo } from '@/components/brand/Logo';
@@ -50,7 +52,6 @@ const PATHS: { id: Path; icon: LucideIcon; title: string; text: string; badge: s
   { id: 'VOICE', icon: AudioLines, title: 'Just voice', text: 'A voice front desk that answers calls with your real rooms and prices.', badge: 'Fastest' },
 ];
 const SYSTEMS = ['Cloudbeds', 'Mews', 'Oracle OPERA Cloud', 'Little Hotelier', 'RoomRaccoon', 'eZee Absolute', 'innRoad', 'WebRezPro', 'SkyTouch', 'Hotelogix', 'Other'];
-const VOICES = ['marin', 'cedar', 'gleam', 'willow', 'coral', 'sage', 'verse'];
 const SWATCH_NAMES: Record<string, string> = {
   '#0E7490': 'Lagoon',
   '#1D4ED8': 'Royal blue',
@@ -78,7 +79,10 @@ const FIELD_IDS: Record<string, string> = {
   other: 'o-other',
   loginUrl: 'o-url',
   greeting: 'o-greet',
-  handoffPhone: 'o-hand',
+  checkInTime: 'o-cin',
+  checkOutTime: 'o-cout',
+  cancellationPolicy: 'o-cancel',
+  transferNumber: 'o-transfer',
 };
 const fieldId = (key: string) => {
   const room = /^room-(\d+)-(\w+)$/.exec(key);
@@ -97,7 +101,8 @@ const SERVER_MESSAGES: Record<string, string> = {
   name: 'Use 2 to 120 characters.',
   loginUrl: 'Use the full address, starting with https://',
   greeting: 'Use up to 300 characters.',
-  handoffPhone: 'Use up to 40 characters.',
+  cancellationPolicy: 'Use up to 500 characters.',
+  transferNumber: 'Use the international format, like +1 831 555 0100.',
   'room:name': 'Use 2 to 80 characters.',
   'room:capacity': 'From 1 to 20.',
   'room:basePrice': `Use a price up to ${usd.format(100000)}.`,
@@ -121,7 +126,7 @@ function serverProblem(e: ApiError, path: Path, sentRooms: number[], hasLoginUrl
   else if (scope === 'property' && typeof a === 'string' && PROPERTY_FIELDS.has(a)) found = { step: 2, key: a, kind: a };
   else if (scope === 'roomTypes' && typeof a === 'number' && typeof b === 'string' && sentRooms[a] !== undefined) found = { step: 3, key: `room-${sentRooms[a]}-${b}`, kind: `room:${b}` };
   else if (scope === 'bridge' && path === 'BRIDGE') found = a === 'loginUrl' ? { step: 3, key: 'loginUrl', kind: 'loginUrl' } : { step: 3, key: 'system', kind: 'system' };
-  else if (scope === 'voice' && path === 'VOICE' && (a === 'greeting' || a === 'handoffPhone')) found = { step: 3, key: a, kind: a };
+  else if (scope === 'voice' && path === 'VOICE' && typeof a === 'string' && a in FIELD_IDS) found = { step: 3, key: a, kind: a };
   if (!found) return null;
   return { step: found.step, key: found.key, message: SERVER_MESSAGES[found.kind] ?? 'Check this entry and try again.' };
 }
@@ -201,7 +206,7 @@ function StepIntro({ headingRef, title, children }: { headingRef: React.Ref<HTML
   );
 }
 
-function Preview({ path, name, tagline, color, rooms, greeting, voice, system, mode }: { path: Path; name: string; tagline: string; color: string; rooms: RoomDraft[]; greeting: string; voice: string; system: string; mode: string }) {
+function Preview({ path, name, tagline, color, rooms, greeting, system, mode }: { path: Path; name: string; tagline: string; color: string; rooms: RoomDraft[]; greeting: string; system: string; mode: string }) {
   const hotel = name || 'Your hotel';
   if (path === 'VOICE') {
     return (
@@ -213,9 +218,9 @@ function Preview({ path, name, tagline, color, rooms, greeting, voice, system, m
         </span>
         <p className="mt-8 text-sm text-inverse-foreground/70">Callers hear</p>
         <p className="mt-2 max-w-sm text-balance font-display text-2xl leading-snug">“{greeting || `Thanks for calling ${hotel} — how can I help?`}”</p>
-        <p className="mt-6 max-w-xs text-sm leading-relaxed text-inverse-foreground/75">Then it answers with live prices and availability, and takes messages for your team.</p>
+        <p className="mt-6 max-w-xs text-sm leading-relaxed text-inverse-foreground/75">Then it quotes your prices, takes booking requests and messages, and emails each one to you to confirm.</p>
         <p className="mt-6 inline-flex items-center gap-1.5 rounded-full border border-inverse-foreground/15 bg-inverse-foreground/10 px-3 py-1 text-xs font-medium">
-          <Sparkles className="h-3.5 w-3.5" /> Voice: {voice[0].toUpperCase() + voice.slice(1)}
+          <Sparkles className="h-3.5 w-3.5" /> Answers 24/7 · says it’s a virtual assistant
         </p>
       </div>
     );
@@ -282,7 +287,22 @@ function Preview({ path, name, tagline, color, rooms, greeting, voice, system, m
   );
 }
 
-function RoomRows({ rooms, errors, setRoom, removeRoom, addRoom }: { rooms: RoomDraft[]; errors: Errors; setRoom: (i: number, k: keyof RoomDraft, v: string) => void; removeRoom: (i: number) => void; addRoom: () => void }) {
+function RoomRows({
+  rooms,
+  errors,
+  setRoom,
+  removeRoom,
+  addRoom,
+  showCount = true,
+}: {
+  rooms: RoomDraft[];
+  errors: Errors;
+  setRoom: (i: number, k: keyof RoomDraft, v: string) => void;
+  removeRoom: (i: number) => void;
+  addRoom: () => void;
+  /** How many rooms of each type: only hotels whose bookings live in HotelOne need it. */
+  showCount?: boolean;
+}) {
   return (
     <div className="space-y-3">
       <ul className="space-y-3 sm:space-y-2">
@@ -290,8 +310,14 @@ function RoomRows({ rooms, errors, setRoom, removeRoom, addRoom }: { rooms: Room
           const labelClass = i > 0 ? 'sm:sr-only' : undefined;
           const label = r.name.trim() || `room type ${i + 1}`;
           return (
-            <li key={i} className="relative grid grid-cols-3 items-start gap-3 rounded-xl border bg-card p-3 sm:grid-cols-[minmax(0,1fr)_76px_116px_80px_40px] sm:gap-2 sm:border-0 sm:bg-transparent sm:p-0">
-              <Field label="Room type" htmlFor={`rt-n-${i}`} labelClassName={labelClass} error={errors[`room-${i}-name`]} className="col-span-3 pr-12 sm:col-span-1 sm:pr-0">
+            <li
+              key={i}
+              className={cn(
+                'relative grid items-start gap-3 rounded-xl border bg-card p-3 sm:gap-2 sm:border-0 sm:bg-transparent sm:p-0',
+                showCount ? 'grid-cols-3 sm:grid-cols-[minmax(0,1fr)_76px_116px_80px_40px]' : 'grid-cols-2 sm:grid-cols-[minmax(0,1fr)_76px_116px_40px]'
+              )}
+            >
+              <Field label="Room type" htmlFor={`rt-n-${i}`} labelClassName={labelClass} error={errors[`room-${i}-name`]} className={cn('pr-12 sm:col-span-1 sm:pr-0', showCount ? 'col-span-3' : 'col-span-2')}>
                 <Input id={`rt-n-${i}`} value={r.name} onChange={(e) => setRoom(i, 'name', e.target.value)} placeholder="Ocean King" maxLength={80} />
               </Field>
               <Field label="Sleeps" htmlFor={`rt-c-${i}`} labelClassName={labelClass} error={errors[`room-${i}-capacity`]}>
@@ -305,9 +331,11 @@ function RoomRows({ rooms, errors, setRoom, removeRoom, addRoom }: { rooms: Room
                   <Input id={`rt-b-${i}`} type="number" inputMode="decimal" min={0} step="any" className="pl-6" value={r.basePrice} onChange={(e) => setRoom(i, 'basePrice', e.target.value)} placeholder="189" />
                 </div>
               </Field>
-              <Field label="Rooms" htmlFor={`rt-t-${i}`} labelClassName={labelClass} error={errors[`room-${i}-totalRooms`]}>
-                <Input id={`rt-t-${i}`} type="number" inputMode="numeric" min={0} value={r.totalRooms} onChange={(e) => setRoom(i, 'totalRooms', e.target.value)} placeholder="10" />
-              </Field>
+              {showCount && (
+                <Field label="Rooms" htmlFor={`rt-t-${i}`} labelClassName={labelClass} error={errors[`room-${i}-totalRooms`]}>
+                  <Input id={`rt-t-${i}`} type="number" inputMode="numeric" min={0} value={r.totalRooms} onChange={(e) => setRoom(i, 'totalRooms', e.target.value)} placeholder="10" />
+                </Field>
+              )}
               <div className={cn('absolute right-3 top-10 sm:static', i === 0 && 'sm:pt-7')}>
                 <IconButton type="button" label={`Remove ${label}`} variant="ghost" className="text-muted-foreground hover:text-foreground" onClick={() => removeRoom(i)}>
                   <Trash2 />
@@ -337,7 +365,7 @@ function Onboarding() {
   const [prop, setProp] = React.useState({ name: '', type: 'Hotel', address: '', city: '', state: '', zipCode: '', phone: '', tagline: '', primaryColor: BRAND_SWATCHES[0] });
   const [rooms, setRooms] = React.useState<RoomDraft[]>([{ ...EMPTY_ROOM }]);
   const [bridge, setBridge] = React.useState({ system: '', other: '', mode: 'DESKTOP' as 'DESKTOP' | 'CLOUD', loginUrl: '' });
-  const [voice, setVoice] = React.useState({ voice: 'marin', greeting: '', handoffPhone: '' });
+  const [voice, setVoice] = React.useState({ greeting: '', checkInTime: '15:00', checkOutTime: '11:00', cancellationPolicy: '', transferNumber: '' });
   const [errors, setErrors] = React.useState<Errors>({});
   const [formError, setFormError] = React.useState<{ message: string; signIn?: boolean } | null>(null);
   const [busy, setBusy] = React.useState(false);
@@ -404,6 +432,13 @@ function Onboarding() {
       if (url && !(/^https?:\/\//i.test(url) && URL.canParse(url))) e.loginUrl = 'Paste the full sign-in address, starting with https:// (or http:// on your own network).';
       else if (url && bridge.mode === 'CLOUD' && !/^https:\/\//i.test(url)) e.loginUrl = 'The cloud browser needs an address that starts with https://';
     }
+    if (s === 3 && path === 'VOICE') {
+      // The voice quotes these prices, so it needs at least one.
+      if (!rooms.some((r) => r.name.trim())) e['room-0-name'] = 'Add at least one room type with its price — the voice quotes it to callers.';
+      const transfer = voice.transferNumber.trim();
+      if (transfer && !toE164(transfer)) e.transferNumber = 'Use the international format with the country code, like +1 831 555 0100.';
+      else if (transfer && toE164(transfer) === toE164(prop.phone)) e.transferNumber = 'Use a different number from your front desk line — forwarded calls would loop back to the assistant.';
+    }
     // The PMS path has no room rows (the hotel's system already has its rooms), so rows typed on another path don't count.
     if (s === 3 && path !== 'BRIDGE') {
       rooms.forEach((r, i) => {
@@ -463,7 +498,17 @@ function Onboarding() {
             .map((i) => rooms[i])
             .map((r) => ({ name: r.name.trim(), capacity: Number(r.capacity) || 2, basePrice: Number(r.basePrice), totalRooms: Number(r.totalRooms) || 0 })),
           ...(path === 'BRIDGE' ? { bridge: { system: systemName, mode: bridge.mode, loginUrl: bridge.loginUrl.trim() || null } } : {}),
-          voice: { voice: voice.voice, greeting: voice.greeting.trim() || null, handoffPhone: voice.handoffPhone.trim() || null },
+          ...(path === 'VOICE'
+            ? {
+                voice: {
+                  greeting: voice.greeting.trim() || null,
+                  checkInTime: voice.checkInTime,
+                  checkOutTime: voice.checkOutTime,
+                  cancellationPolicy: voice.cancellationPolicy.trim() || null,
+                  transferNumber: voice.transferNumber.trim() || null,
+                },
+              }
+            : {}),
         },
       });
       const login = await signIn('credentials', { email: account.email.trim().toLowerCase(), password: account.password, redirect: false });
@@ -517,7 +562,7 @@ function Onboarding() {
       ? 'Next: your dashboard, with a short checklist to go live.'
       : path === 'BRIDGE'
         ? `Next: connect ${systemName || 'your system'} — it takes about two minutes.`
-        : 'Next: try your voice front desk and connect your phone line.';
+        : 'Next: hear it with a test call, then connect your phone number.';
 
   return (
     <div className="grid min-h-dvh bg-background lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
@@ -748,52 +793,81 @@ function Onboarding() {
 
                 {step === 3 && path === 'VOICE' && (
                   <>
-                    <StepIntro headingRef={headingRef} title="Shape your voice front desk">
-                      Callers hear this voice 24/7. You can change any of it later.
+                    <StepIntro headingRef={headingRef} title="What should the voice tell callers?">
+                      It answers 24/7 with these prices and policies. You can change any of it later.
                     </StepIntro>
-                    <div className="mt-6 space-y-4">
-                      <Field label="Greeting" optional htmlFor="o-greet" error={errors.greeting} hint="The first thing callers hear. Leave it blank to use the example.">
-                        <Input id="o-greet" maxLength={300} value={voice.greeting} onChange={(e) => setV({ greeting: e.target.value }, 'greeting')} placeholder={`Thanks for calling ${prop.name || 'us'} — how can I help?`} />
-                      </Field>
-                      <div className="grid gap-4 sm:grid-cols-2 sm:gap-3">
-                        <Field label="Voice" htmlFor="o-voice">
-                          <Select value={voice.voice} onValueChange={(v) => setV({ voice: v })}>
-                            <SelectTrigger id="o-voice">
+                    <div className="mt-6">
+                      <h2 className="font-semibold">Rooms and nightly prices</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">The voice quotes these. You can set different prices for busy nights afterwards.</p>
+                      <div className="mt-4">
+                        <RoomRows rooms={rooms} errors={errors} setRoom={setRoom} removeRoom={removeRoom} addRoom={addRoom} showCount={false} />
+                      </div>
+                    </div>
+                    <div className="mt-8 space-y-4 border-t pt-6">
+                      <div className="grid grid-cols-2 gap-3">
+                        <Field label="Check-in from" htmlFor="o-cin">
+                          <Select value={voice.checkInTime} onValueChange={(v) => setV({ checkInTime: v })}>
+                            <SelectTrigger id="o-cin">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {VOICES.map((v) => (
-                                <SelectItem key={v} value={v}>
-                                  {v[0].toUpperCase() + v.slice(1)}
+                              {HALF_HOURS.map((t) => (
+                                <SelectItem key={t} value={t}>
+                                  {formatClock(t)}
                                 </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
                         </Field>
-                        <Field label="Transfer calls to" optional htmlFor="o-hand" error={errors.handoffPhone} hint="When a guest needs a person. Leave it blank to use your front desk number.">
-                          <div className="relative">
-                            <Phone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-                            <Input
-                              id="o-hand"
-                              type="tel"
-                              inputMode="tel"
-                              autoComplete="tel"
-                              maxLength={40}
-                              className="pl-9"
-                              value={voice.handoffPhone}
-                              onChange={(e) => setV({ handoffPhone: e.target.value }, 'handoffPhone')}
-                              placeholder={prop.phone}
-                            />
-                          </div>
+                        <Field label="Check-out by" htmlFor="o-cout">
+                          <Select value={voice.checkOutTime} onValueChange={(v) => setV({ checkOutTime: v })}>
+                            <SelectTrigger id="o-cout">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {HALF_HOURS.map((t) => (
+                                <SelectItem key={t} value={t}>
+                                  {formatClock(t)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </Field>
                       </div>
-                    </div>
-                    <div className="mt-8 border-t pt-6">
-                      <h2 className="font-semibold">Rooms and starting prices</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">So the voice can quote them. Add them now or later.</p>
-                      <div className="mt-4">
-                        <RoomRows rooms={rooms} errors={errors} setRoom={setRoom} removeRoom={removeRoom} addRoom={addRoom} />
-                      </div>
+                      <Field label="Cancellation policy" optional htmlFor="o-cancel" error={errors.cancellationPolicy} hint="In your words. Left blank, the voice offers to take a message instead of guessing.">
+                        <Input
+                          id="o-cancel"
+                          maxLength={500}
+                          value={voice.cancellationPolicy}
+                          onChange={(e) => setV({ cancellationPolicy: e.target.value }, 'cancellationPolicy')}
+                          placeholder="Free cancellation until 24 hours before arrival"
+                        />
+                      </Field>
+                      <Field label="Greeting" optional htmlFor="o-greet" error={errors.greeting} hint="The first thing callers hear. Leave it blank to use the example.">
+                        <Input id="o-greet" maxLength={300} value={voice.greeting} onChange={(e) => setV({ greeting: e.target.value }, 'greeting')} placeholder={`Thanks for calling ${prop.name || 'us'} — how can I help?`} />
+                      </Field>
+                      <Field
+                        label="Put callers through to"
+                        optional
+                        htmlFor="o-transfer"
+                        error={errors.transferNumber}
+                        hint="A mobile or direct line for when a caller asks for a person — not a number that forwards to the assistant. Leave it blank to take messages instead."
+                      >
+                        <div className="relative">
+                          <Phone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                          <Input
+                            id="o-transfer"
+                            type="tel"
+                            inputMode="tel"
+                            autoComplete="tel"
+                            maxLength={40}
+                            className="pl-9"
+                            value={voice.transferNumber}
+                            onChange={(e) => setV({ transferNumber: e.target.value }, 'transferNumber')}
+                            placeholder="+1 831 555 0100"
+                          />
+                        </div>
+                      </Field>
                     </div>
                   </>
                 )}
@@ -900,7 +974,6 @@ function Onboarding() {
             color={prop.primaryColor}
             rooms={rooms}
             greeting={voice.greeting}
-            voice={voice.voice}
             system={systemName}
             mode={bridge.mode}
           />

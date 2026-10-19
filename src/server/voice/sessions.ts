@@ -12,12 +12,14 @@ import { prisma } from '@/lib/prisma';
 import { roleLabel } from '@/lib/status';
 import { assertPropertyAccess, getActor, hasPropertyAccess, requireStaff } from '../authz';
 import { DomainError, badRequest, notFound } from '../errors';
+import { runsOnHotelOne } from '../concierge/facts';
 import { skillCatalogText } from '../skills';
 import { guestContext } from './guestTools';
 import {
   CONCIERGE_TOOLS,
   GUEST_TOOLS,
   PHONE_TOOLS,
+  REQUEST_ONLY_GUEST_TOOLS,
   STAFF_TOOLS,
   conciergePrompts,
   guestPrompts,
@@ -115,7 +117,7 @@ export async function openVoiceSession<T>(
   if (!q.propertyId) throw badRequest('propertyId is required.');
   const property = await prisma.property.findFirst({
     where: { id: q.propertyId, isActive: true },
-    select: { id: true, name: true, voiceAgent: true },
+    select: { id: true, name: true, setupPath: true, voiceAgent: true },
   });
   if (!property) throw notFound('Property');
   const cfg = property.voiceAgent;
@@ -142,7 +144,14 @@ export async function openVoiceSession<T>(
     return { result: session.result, token: signVoiceToken({ sid: session.id, pid: property.id, aud: 'STAFF', uid: actor.userId, sc: 'HOTEL' }) };
   }
 
-  if (cfg && (!cfg.enabled || !cfg.guestWidget)) throw new DomainError(403, 'VOICE_OFF', `${property.name} isn’t taking voice calls online right now.`);
+  // The hotel's own team can always try it (the console's test call), even with "Talk to us" switched off.
+  const viewer = await getActor().catch(() => null);
+  const team = !!viewer && viewer.role !== 'CUSTOMER' && hasPropertyAccess(viewer, property.id);
+  // Voice-only hotels have no public booking page: on the web, only their team's test call.
+  if ((cfg && !cfg.enabled) || (!team && ((cfg && !cfg.guestWidget) || property.setupPath === 'VOICE'))) {
+    throw new DomainError(403, 'VOICE_OFF', `${property.name} isn’t taking voice calls online right now.`);
+  }
+  const live = runsOnHotelOne(property.setupPath);
   const clientKey = createHash('sha256').update(`${clientIp(request)}|${property.id}`).digest('hex').slice(0, 32);
   const ctx: VoiceSessionContext = {
     audience: 'guest',
@@ -155,16 +164,15 @@ export async function openVoiceSession<T>(
       houseRules: cfg?.instructions,
       handoffPhone: cfg?.handoffPhone,
       skills: await guestSkills(property.id),
+      liveInventory: live,
       ...today,
     }),
     firstMessage: cfg?.greeting?.trim() || `Hi, thanks for calling ${property.name}. How can I help?`,
-    tools: GUEST_TOOLS,
+    tools: live ? GUEST_TOOLS : REQUEST_ONLY_GUEST_TOOLS,
   };
   const session = await reserve({ propertyId: property.id, audience: 'GUEST', clientKey }, guestLimits(property.id, 'WEB', clientKey), () => start(ctx)).catch(async (e) => {
     // The provider's reason is for the hotel's team (e.g. a test call from the console), not for guests.
-    if (!(e instanceof DomainError) || e.code !== 'VOICE_UPSTREAM') throw e;
-    const viewer = await getActor().catch(() => null);
-    if (viewer && viewer.role !== 'CUSTOMER' && hasPropertyAccess(viewer, property.id)) throw e;
+    if (!(e instanceof DomainError) || e.code !== 'VOICE_UPSTREAM' || team) throw e;
     throw new DomainError(502, 'VOICE_UPSTREAM', `${property.name}’s voice line isn’t available right now — please try again later${cfg?.handoffPhone ? ` or call ${cfg.handoffPhone}` : ''}.`);
   });
   return { result: session.result, token: signVoiceToken({ sid: session.id, pid: property.id, aud: 'GUEST', uid: null, sc: 'HOTEL' }) };
@@ -250,7 +258,7 @@ export async function openPhoneSession(input: {
   const channel = whatsapp ? 'WHATSAPP' : 'PHONE';
   const property = await prisma.property.findFirst({
     where: { id: input.propertyId, isActive: true },
-    select: { id: true, name: true, voiceAgent: true, phoneLine: true },
+    select: { id: true, name: true, setupPath: true, voiceAgent: true, phoneLine: true },
   });
   if (!property) throw notFound('Property');
   const cfg = property.voiceAgent;
@@ -267,6 +275,7 @@ export async function openPhoneSession(input: {
       houseRules: cfg?.instructions,
       phone: { callerNumber: input.callerNumber, canTransfer: !!line.transferNumber && !whatsapp, whatsapp },
       skills: await guestSkills(property.id),
+      liveInventory: runsOnHotelOne(property.setupPath),
       ...guestContext(),
     }),
     // The hotel's greeting is written for calls ("Thanks for calling…"); WhatsApp gets a neutral one.

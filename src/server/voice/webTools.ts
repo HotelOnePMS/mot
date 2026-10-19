@@ -25,6 +25,7 @@ import {
   hotelDetails,
   searchHotels,
 } from '../concierge';
+import { runsOnHotelOne } from '../concierge/facts';
 import { availabilityOptions } from '../concierge/shared';
 import { useSkill as runSkill } from '../skills';
 import { CLIENT_ONLY_TOOLS, type VoiceScope } from './live';
@@ -89,6 +90,9 @@ async function hotelFor(session: WebVoiceSession, given: string | null | undefin
 
 const hotelOnly = (tool: string) => ({ error: `${tool} isn’t available on a hotel’s own line — this conversation is only about this hotel.` });
 
+/** Front-desk tools that hotels keeping their own system answer through guestTools: prices without availability, requests instead of checkout. */
+const REQUEST_ONLY_DESK_TOOLS = new Set(['get_property_info', 'check_availability', 'start_booking', 'request_booking']);
+
 /**
  * Runs one booking-site voice tool. Throws ZodError / DomainError for bad
  * input and rule failures (see `webToolOutput`).
@@ -99,6 +103,16 @@ export async function runWebTool(session: WebVoiceSession, name: string, raw: un
 
   if (CLIENT_ONLY_TOOLS.has(name)) {
     return { error: `${name} works on the guest’s screen while checkout is open. Call start_booking first to open checkout.` };
+  }
+
+  if (hotel && REQUEST_ONLY_DESK_TOOLS.has(name)) {
+    // Voice-only and keep-your-PMS hotels aren't listed (hotelDetails refuses them): their team's test call quotes prices and takes requests.
+    const p = await prisma.property.findUnique({ where: { id: session.pid! }, select: { setupPath: true } });
+    if (!runsOnHotelOne(p?.setupPath)) {
+      const h = await hotelFor(session, optionalId.parse(args.property_id));
+      if ('error' in h) return h;
+      return runGuestTool(h.id, name, args);
+    }
   }
 
   switch (name) {
@@ -194,6 +208,9 @@ export async function runWebTool(session: WebVoiceSession, name: string, raw: un
         say: `I’ve opened the checkout for the ${s.roomType.name} on your screen.`,
       };
     }
+
+    case 'request_booking':
+      return { error: 'Use start_booking to open the checkout on the guest’s screen.' };
 
     case 'find_booking': {
       const a = z.object({ confirmation_code: z.string().trim().min(4).max(20), last_name: z.string().trim().min(1).max(60) }).parse(args);

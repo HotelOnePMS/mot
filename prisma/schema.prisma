@@ -359,6 +359,13 @@ model VoiceAgentConfig {
   handoffPhone String?
   /// Show "Talk to us" on the public booking page.
   guestWidget  Boolean  @default(true)
+  /// Hotels that keep their own system (voice only, keep your PMS): their own times ("15:00") and policy.
+  /// Hotels running fully on HotelOne always quote the booking engine's policy.
+  checkInTime        String?
+  checkOutTime       String?
+  cancellationPolicy String?
+  /// Where new messages and booking requests from callers are emailed (comma-separated).
+  notifyEmail        String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)

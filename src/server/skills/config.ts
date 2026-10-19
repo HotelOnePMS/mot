@@ -8,7 +8,7 @@ import { Prisma } from '@prisma/client';
 import { after } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { money } from '@/lib/status';
-import { HOTEL_POLICY, cleanFaqs } from '../concierge/facts';
+import { cleanFaqs, hotelPolicy, runsOnHotelOne } from '../concierge/facts';
 import { cleanSkillText, shortHash, skillKey, type AnswerBody, type SkillAudience } from './types';
 
 /** Tools discovered on a hotel's PMS MCP server (src/server/pms/tools.ts) — CONFIG rows this sync leaves alone. */
@@ -108,10 +108,12 @@ async function desiredSkills(propertyId: string): Promise<ConfigSkill[] | null> 
       email: true,
       amenities: true,
       roomTypes: { where: { isActive: true }, orderBy: { basePrice: 'asc' }, select: { name: true, capacity: true, basePrice: true, amenities: true } },
-      voiceAgent: { select: { faqs: true } },
+      setupPath: true,
+      voiceAgent: { select: { faqs: true, checkInTime: true, checkOutTime: true, cancellationPolicy: true } },
     },
   });
   if (!p) return null;
+  const policy = hotelPolicy(p.setupPath, p.voiceAgent);
   const out: ConfigSkill[] = [];
 
   // FAQ text is typed by hotel staff and read by models: one-line questions, no control characters.
@@ -154,7 +156,11 @@ async function desiredSkills(propertyId: string): Promise<ConfigSkill[] | null> 
     description: 'Check-in and check-out times, and the free cancellation and date-change policy. Use when a guest asks when they can arrive or must leave, or about cancelling or changing dates.',
     audience: 'GUEST',
     kind: 'ANSWER',
-    body: { answer: `Check-in is ${HOTEL_POLICY.checkIn} and check-out is ${HOTEL_POLICY.checkOut}. ${HOTEL_POLICY.cancellation}` },
+    body: {
+      answer: runsOnHotelOne(p.setupPath)
+        ? `Check-in is ${policy.checkIn} and check-out is ${policy.checkOut}. ${policy.cancellation}`
+        : [`Check-in: ${policy.checkIn}`, `Check-out: ${policy.checkOut}`, `Cancellation: ${policy.cancellation}`].join('\n'),
+    },
   });
 
   if (p.roomTypes.length) {

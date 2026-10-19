@@ -529,6 +529,117 @@ export async function phoneLineStatus(propertyId: string): Promise<{ agentId: st
   }
 }
 
+// --- Connecting numbers from the console ----------------------------------------
+// The same thing the account owner can do in ElevenLabs (Agents → Phone numbers),
+// without handing anyone that account: HotelOne imports the number and points it
+// at the hotel's own phone agent.
+
+type AccountNumber = { phone_number_id?: string; phone_number?: string; label?: string | null; provider?: string; assigned_agent?: { agent_id?: string; agent_name?: string } | null };
+
+/** A number in the ElevenLabs account, as platform admins pick from it. */
+export interface AccountNumberInfo {
+  id: string;
+  phoneNumber: string;
+  label: string | null;
+  provider: string;
+  /** The agent it rings now (another hotel's, or none). */
+  agentName: string | null;
+  /** Already rings this hotel. */
+  thisHotel: boolean;
+}
+
+async function withPhoneErrors<T>(what: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    if (e instanceof DomainError) throw e;
+    console.error(`ElevenLabs ${what} failed:`, e instanceof ElevenLabsError ? `${e.status} ${e.detail}` : e);
+    throw new DomainError(502, 'VOICE_UPSTREAM', describeElevenLabsError(e));
+  }
+}
+
+const TWILIO_BASE = (process.env.TWILIO_API_BASE || 'https://api.twilio.com').replace(/\/$/, '');
+
+/**
+ * Proves whoever is connecting the number controls it: the Twilio account
+ * must accept the credentials and hold the number. Checked before anything
+ * changes at ElevenLabs, so nobody can point another hotel's number at theirs.
+ */
+async function verifyTwilioNumber(accountSid: string, authToken: string, phoneNumber: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${TWILIO_BASE}/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(phoneNumber)}`, {
+      headers: { Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}` },
+      signal: AbortSignal.timeout(15_000),
+      cache: 'no-store',
+    });
+  } catch {
+    throw new DomainError(502, 'VOICE_UPSTREAM', 'Couldn’t reach Twilio just now — try again in a moment.');
+  }
+  if (res.status === 401 || res.status === 404) throw new DomainError(400, 'TWILIO_AUTH', 'Twilio didn’t accept that Account SID and Auth Token. Copy both again from the Twilio Console home page.');
+  if (!res.ok) throw new DomainError(502, 'VOICE_UPSTREAM', `Twilio returned an error (${res.status}). Try again in a moment.`);
+  const body = (await res.json().catch(() => ({}))) as { incoming_phone_numbers?: { phone_number?: string }[] };
+  if (!body.incoming_phone_numbers?.some((n) => n.phone_number === phoneNumber)) {
+    throw new DomainError(400, 'TWILIO_NUMBER', `${phoneNumber} isn’t a number in that Twilio account. Check it under Phone Numbers → Active numbers in Twilio.`);
+  }
+}
+
+/**
+ * Import a Twilio number into ElevenLabs and point it at this hotel's phone
+ * agent. ElevenLabs sets the number's voice webhook in Twilio itself. The
+ * Twilio credentials go straight to Twilio (to check them) and ElevenLabs;
+ * HotelOne doesn't keep them.
+ */
+export async function connectTwilioNumber(propertyId: string, input: { phoneNumber: string; accountSid: string; authToken: string }): Promise<void> {
+  await verifyTwilioNumber(input.accountSid, input.authToken, input.phoneNumber);
+  await withPhoneErrors('number import', async () => {
+    const agentId = await syncPhoneAgent(propertyId);
+    const hotel = (await phoneAgentInput(propertyId)).hotel;
+    // Already in the account (connected before, or to another agent): point it at this hotel — Twilio just confirmed it's theirs.
+    const existing = (await call<AccountNumber[]>('GET', '/v1/convai/phone-numbers')).find((n) => n.phone_number === input.phoneNumber);
+    if (existing?.phone_number_id) {
+      await call('PATCH', `/v1/convai/phone-numbers/${encodeURIComponent(existing.phone_number_id)}`, { agent_id: agentId });
+      return;
+    }
+    const created = await call<{ phone_number_id: string }>('POST', '/v1/convai/phone-numbers', {
+      provider: 'twilio',
+      phone_number: input.phoneNumber,
+      label: `${hotel.slice(0, 60)} · ${PRODUCT_NAME}`,
+      sid: input.accountSid,
+      token: input.authToken,
+      agent_id: agentId,
+    });
+    // Assign explicitly too, in case the import didn't take agent_id.
+    await call('PATCH', `/v1/convai/phone-numbers/${encodeURIComponent(created.phone_number_id)}`, { agent_id: agentId });
+  });
+}
+
+/** Every number in the ElevenLabs account (platform admins only: it spans every hotel). */
+export async function accountNumbers(propertyId: string): Promise<AccountNumberInfo[]> {
+  return withPhoneErrors('number list', async () => {
+    const agentId = await syncPhoneAgent(propertyId);
+    const all = await call<AccountNumber[]>('GET', '/v1/convai/phone-numbers');
+    return all
+      .filter((n) => n.phone_number_id && n.phone_number)
+      .map((n) => ({
+        id: n.phone_number_id!,
+        phoneNumber: n.phone_number!,
+        label: n.label ?? null,
+        provider: n.provider ?? 'phone',
+        agentName: n.assigned_agent?.agent_name ?? null,
+        thisHotel: n.assigned_agent?.agent_id === agentId,
+      }));
+  });
+}
+
+/** Point a number that's already in the ElevenLabs account at this hotel's phone agent. */
+export async function assignAccountNumber(propertyId: string, phoneNumberId: string): Promise<void> {
+  await withPhoneErrors('number assignment', async () => {
+    const agentId = await syncPhoneAgent(propertyId);
+    await call('PATCH', `/v1/convai/phone-numbers/${encodeURIComponent(phoneNumberId)}`, { agent_id: agentId });
+  });
+}
+
 /**
  * Create or update one agent (and, through `build`, its tools) so it matches
  * `desiredHash`. `build` syncs the tools and returns the agent body.

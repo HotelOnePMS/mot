@@ -4,18 +4,19 @@ import * as React from 'react';
 import Link from 'next/link';
 import useSWR from 'swr';
 import { toast } from 'sonner';
-import { Check, ChevronDown, CircleDashed, CirclePause, CheckCircle2, MessageCircle, Phone, PhoneCall, RefreshCw, TriangleAlert } from 'lucide-react';
+import { Check, ChevronDown, CircleDashed, CirclePause, CheckCircle2, Eye, EyeOff, MessageCircle, Phone, PhoneCall, Plug, RefreshCw, TriangleAlert } from 'lucide-react';
 import { api, fetcher } from '@/lib/fetcher';
 import { formatPhone } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL } from '@/config/product';
-import { Button } from '@/components/ui/button';
+import { Button, IconButton } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Field } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Callout, Skeleton } from '@/components/ui/primitives';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useConsole, usePropertyUrl } from '@/components/console/ConsoleProvider';
 import { CopyButton } from '@/components/setup/CopyButton';
 import { DeveloperNote } from '@/components/setup/DeveloperNote';
@@ -104,6 +105,160 @@ function DialCode({ value, children, copyable }: { value: string; children: Reac
         <code className={cn(code, 'break-all')}>{value}</code>
         {copyable && <CopyButton iconOnly value={value} label={`Copy ${value}`} />}
       </dd>
+    </div>
+  );
+}
+
+interface AccountNumber {
+  id: string;
+  phoneNumber: string;
+  label: string | null;
+  provider: string;
+  agentName: string | null;
+  thisHotel: boolean;
+}
+
+/**
+ * Connect a number to this hotel without opening ElevenLabs: a Twilio number
+ * (whoever owns the Twilio account), or — for the platform team — any number
+ * already in the ElevenLabs account.
+ */
+function ConnectNumber({ propertyId, isAdmin, onConnected }: { propertyId: string; isAdmin: boolean; onConnected: () => void }) {
+  const [phone, setPhone] = React.useState('');
+  const [sid, setSid] = React.useState('');
+  const [token, setToken] = React.useState('');
+  const [showToken, setShowToken] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [accountNumbers, setAccountNumbers] = React.useState<AccountNumber[] | null>(null);
+  const [picked, setPicked] = React.useState('');
+  const [loadingNumbers, setLoadingNumbers] = React.useState(false);
+
+  async function connectTwilio(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    setError(null);
+    if (!phone.trim() || !sid.trim() || !token.trim()) {
+      setError('Fill in the number, the Account SID and the Auth Token.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api<{ phoneNumber: string }>('/api/admin/voice/phone/numbers', { method: 'POST', json: { propertyId, phoneNumber: phone, accountSid: sid, authToken: token } });
+      toast.success(`${formatPhone(res.phoneNumber)} now rings your voice front desk`);
+      setToken('');
+      onConnected();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadAccountNumbers() {
+    setLoadingNumbers(true);
+    setError(null);
+    try {
+      const res = await api<{ numbers: AccountNumber[] }>(`/api/admin/voice/phone/numbers?propertyId=${encodeURIComponent(propertyId)}`);
+      setAccountNumbers(res.numbers);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoadingNumbers(false);
+    }
+  }
+
+  async function assign() {
+    if (!picked || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api<{ phoneNumber: string }>('/api/admin/voice/phone/numbers', { method: 'PUT', json: { propertyId, phoneNumberId: picked } });
+      toast.success(`${formatPhone(res.phoneNumber)} now rings this hotel`);
+      setPicked('');
+      setAccountNumbers(null);
+      onConnected();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <form onSubmit={connectTwilio} noValidate className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Twilio phone number" hint="The number you bought in Twilio, with the country code.">
+            <Input type="tel" inputMode="tel" autoComplete="off" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+1 831 555 0123" maxLength={40} />
+          </Field>
+          <Field label="Account SID" hint="On the Twilio Console home page. Starts with AC.">
+            <Input autoComplete="off" spellCheck={false} value={sid} onChange={(e) => setSid(e.target.value.trim())} placeholder="AC…" maxLength={40} className="font-mono" />
+          </Field>
+        </div>
+        <Field label="Auth Token" hint={`Next to the Account SID. ${PRODUCT_NAME} checks it with Twilio and hands it to ElevenLabs once to set up the number — it isn’t stored here.`}>
+          <div className="relative sm:max-w-md">
+            <Input
+              type={showToken ? 'text' : 'password'}
+              autoComplete="off"
+              spellCheck={false}
+              value={token}
+              onChange={(e) => setToken(e.target.value.trim())}
+              maxLength={128}
+              className="pr-12 font-mono"
+            />
+            <IconButton
+              type="button"
+              size="icon-sm"
+              label={showToken ? 'Hide token' : 'Show token'}
+              aria-pressed={showToken}
+              className="absolute right-0.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              onClick={() => setShowToken((v) => !v)}
+            >
+              {showToken ? <EyeOff /> : <Eye />}
+            </IconButton>
+          </div>
+        </Field>
+        {error && (
+          <p role="alert" className="flex items-start gap-1.5 text-sm font-medium text-destructive">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden /> {error}
+          </p>
+        )}
+        <Button type="submit" variant="agent" loading={busy} loadingText="Connecting…">
+          <Plug aria-hidden /> Connect number
+        </Button>
+      </form>
+
+      {isAdmin && (
+        <div className="space-y-3 border-t pt-4">
+          <p className="text-sm font-medium">Platform team: use a number already in ElevenLabs</p>
+          {accountNumbers === null ? (
+            <Button variant="outline" size="sm" onClick={() => void loadAccountNumbers()} loading={loadingNumbers} loadingText="Loading numbers…">
+              Show the account’s numbers
+            </Button>
+          ) : accountNumbers.length === 0 ? (
+            <p className="text-sm text-muted-foreground">There are no numbers in the ElevenLabs account yet.</p>
+          ) : (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Select value={picked} onValueChange={setPicked}>
+                <SelectTrigger className="sm:max-w-sm" aria-label="Number to connect">
+                  <SelectValue placeholder="Choose a number" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accountNumbers.map((n) => (
+                    <SelectItem key={n.id} value={n.id} disabled={n.thisHotel}>
+                      {formatPhone(n.phoneNumber)} · {n.thisHotel ? 'this hotel' : n.agentName ? `rings ${n.agentName}` : 'not connected'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button variant="secondary" onClick={() => void assign()} disabled={!picked} loading={busy && !!picked} loadingText="Connecting…">
+                Connect to this hotel
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -335,18 +490,45 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
         )}
       </Card>
 
+      {data.status && data.canManage && propertyId && (
+        <Card className="p-5 sm:p-6">
+          {hasNumber ? (
+            <details className="group">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-lg text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                Connect another number
+                <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" aria-hidden />
+              </summary>
+              <div className="mt-4">
+                <ConnectNumber propertyId={propertyId} isAdmin={isAdmin} onConnected={() => void mutate()} />
+              </div>
+            </details>
+          ) : (
+            <>
+              <h2 className="text-base font-semibold tracking-tight">Connect a number</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Bought a number in Twilio? Connect it here and it rings your voice front desk straight away. No number yet? See step 1 below.
+              </p>
+              <div className="mt-5">
+                <ConnectNumber propertyId={propertyId} isAdmin={isAdmin} onConnected={() => void mutate()} />
+              </div>
+            </>
+          )}
+        </Card>
+      )}
+
       {/* Setup checklist */}
       {data.checked && data.line.enabled && (
         <Card className="p-5 sm:p-6">
           <h2 className="text-base font-semibold tracking-tight">{hasNumber ? 'How calls reach the assistant' : 'Connect your number'}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {hasNumber ? 'Your number is connected. Open a step to check or change it.' : 'Five short steps. Open each one for the details.'}
+            {hasNumber ? 'Your number is connected. Open a step to check or change it.' : 'Five short steps — most hotels are done in ten minutes.'}
           </p>
           <ol className="mt-4 space-y-2.5">
             <Step n={1} title="Get a phone number for the assistant" who="You, or whoever handles your phones" done={hasNumber} defaultOpen={!hasNumber}>
               <ul className="list-disc space-y-1.5 pl-5 marker:text-muted-foreground">
                 <li>
-                  <span className="text-foreground">Most countries:</span> a local number from Twilio — about $1.15 a month in the US.
+                  <span className="text-foreground">Most countries:</span> a local number from Twilio — about $1.15 a month in the US. In Twilio, open{' '}
+                  <strong className="font-medium text-foreground">Phone Numbers → Buy a number</strong>, pick one with Voice, then connect it above.
                 </li>
                 <li>
                   <span className="text-foreground">India:</span> an Indian provider such as Exotel. Ask ElevenLabs about India data residency first.
@@ -357,10 +539,10 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
               </ul>
             </Step>
 
-            <Step n={2} title="Connect the number to this hotel" who={`Whoever runs your ${PRODUCT_NAME} ElevenLabs account`} done={hasNumber}>
+            <Step n={2} title="Connect the number to this hotel" who="With Connect a number above — or in ElevenLabs" done={hasNumber}>
               <p>
-                In ElevenLabs, open <strong className="font-medium text-foreground">Agents → Phone numbers → Import number</strong> and choose the agent{' '}
-                <strong className="font-medium text-foreground">{agentName}</strong>. Already imported? Open the number and switch its agent.
+                A Twilio number: use <strong className="font-medium text-foreground">Connect a number</strong> above. Exotel or a SIP trunk: whoever runs your {PRODUCT_NAME} ElevenLabs account opens{' '}
+                <strong className="font-medium text-foreground">Agents → Phone numbers → Import number</strong> and chooses the agent <strong className="font-medium text-foreground">{agentName}</strong>.
               </p>
               <p>Hotel owners don’t need access to that account — send the number and these details to the person who runs it.</p>
               <div className="flex flex-col gap-2 rounded-lg border bg-surface-sunken/50 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -411,7 +593,10 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
             </Step>
 
             <Step n={5} title="Test it">
-              <p>Press Refresh — numbers appear above once they’re connected to this hotel’s agent. Then call your hotel number and let it ring through, or send the WhatsApp number a message.</p>
+              <p>
+                Call the assistant’s number directly first — ask for a room next weekend, then leave a message and check it lands in Messages. Then call your hotel number and let it ring through, or send the WhatsApp
+                number a message.
+              </p>
             </Step>
           </ol>
           <p className="mt-5 border-t pt-4 text-xs leading-relaxed text-muted-foreground">

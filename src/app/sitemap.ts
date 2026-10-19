@@ -1,6 +1,7 @@
 import type { MetadataRoute } from 'next';
 import { prisma } from '@/lib/prisma';
 import { siteUrl } from '@/components/brand/site-url';
+import { LISTED_PROPERTY } from '@/server/concierge/facts';
 
 export const revalidate = 3600;
 
@@ -26,9 +27,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }));
 
   try {
-    // Same rule as the public directory (/api/properties): active properties only.
+    // Same rule as the public directory (/api/properties): listed properties only.
     const properties = await prisma.property.findMany({
-      where: { isActive: true },
+      where: LISTED_PROPERTY,
       select: { id: true, updatedAt: true },
       orderBy: { createdAt: 'asc' },
       take: 5000,

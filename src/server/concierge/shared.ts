@@ -8,6 +8,7 @@ import { prisma } from '@/lib/prisma';
 import type { StayQuote } from '@/lib/dto';
 import { diffDays, formatDay, hotelToday } from '../dates';
 import { publicSiteUrl } from '../public-url';
+import { alertTeam } from '../services/guestRequests';
 import { propertyAvailability, quoteStay } from '../services/inventory';
 import { checkoutPath } from './urls';
 
@@ -78,6 +79,29 @@ export async function availabilityOptions(propertyId: string, a: StayInput): Pro
   };
 }
 
+/** Prices for a stay at a hotel that keeps its own system (guest voice tool `check_availability` shape there). */
+export interface PriceOptionsResult {
+  stay: string;
+  /** Read out instead of availability: HotelOne can't see this hotel's bookings. */
+  availability: string;
+  options: Omit<AvailabilityOption, 'available' | 'rooms_left'>[];
+}
+
+/**
+ * `check_availability` for hotels that keep their own system: the prices of
+ * every active room type from the rate calendar, without claiming anything
+ * is free — the hotel's team confirms that.
+ */
+export async function priceOptions(propertyId: string, a: StayInput): Promise<PriceOptionsResult | { error: string }> {
+  const result = await availabilityOptions(propertyId, a);
+  if ('error' in result) return result;
+  return {
+    stay: result.stay,
+    availability: 'Not shown here: the front desk checks it. Quote the price, then offer to send a booking request so they can confirm the room is free.',
+    options: result.options.map(({ available: _a, rooms_left: _r, ...o }) => o),
+  };
+}
+
 /** A room type and stay that can be booked right now. */
 export interface BookableStay {
   roomType: { id: string; name: string; capacity: number };
@@ -90,14 +114,20 @@ export interface BookableStay {
  * that it fits the party, and that enough rooms are free. Error wording is
  * the phone line's `request_booking` (only the long-stay line varies).
  */
-export async function bookableStay(propertyId: string, a: StayInput & { roomTypeId: string }, longStayMessage: string): Promise<BookableStay | { error: string }> {
+export async function bookableStay(
+  propertyId: string,
+  a: StayInput & { roomTypeId: string },
+  longStayMessage: string,
+  /** False for hotels that keep their own system: HotelOne can't see their availability, so their team checks it. */
+  liveInventory = true,
+): Promise<BookableStay | { error: string }> {
   const error = stayDateError(a, longStayMessage);
   if (error) return { error };
   const rt = await prisma.roomType.findFirst({ where: { id: a.roomTypeId, propertyId, isActive: true }, select: { id: true, name: true, capacity: true } });
   if (!rt) return { error: 'That room type isn’t available here — check availability again.' };
   if (a.guests > rt.capacity * a.rooms) return { error: `The ${rt.name} sleeps up to ${rt.capacity} per room — add a room or choose a larger room.` };
   const quote = await quoteStay(prisma, { roomTypeId: rt.id, checkIn: a.checkIn, checkOut: a.checkOut, rooms: a.rooms, guests: a.guests });
-  if (quote.available < a.rooms) return { error: `The ${rt.name} is no longer free for those dates — check availability again.` };
+  if (liveInventory && quote.available < a.rooms) return { error: `The ${rt.name} is no longer free for those dates — check availability again.` };
   return { roomType: rt, quote, nights: diffDays(a.checkIn, a.checkOut) };
 }
 
@@ -111,6 +141,8 @@ export interface BookingRequestInput extends StayInput {
   notes?: string | null;
   /** GuestRequest.source: PHONE | WHATSAPP (phone line) · AGENT | VOICE (concierge). */
   source: string;
+  /** Where it came from, as the team reads it ("Test call"); defaults by source. */
+  label?: string;
 }
 
 /** What `request_booking` returns once the request is saved. */
@@ -128,31 +160,36 @@ const REQUEST_LABEL: Record<string, string> = { WHATSAPP: 'WhatsApp', AGENT: 'AI
 
 /**
  * The phone line's `request_booking`: validates the stay and saves a
- * GuestRequest for the team with the quoted total and the pre-filled checkout
- * link to send the guest. Nothing is booked until the guest finishes online.
+ * GuestRequest for the team with the quoted total. Hotels on HotelOne get the
+ * pre-filled checkout link to send the guest (nothing is booked until the
+ * guest finishes online); hotels that keep their own system check
+ * availability and book it there, then confirm with the guest.
  */
-export async function submitBookingRequest(propertyId: string, a: BookingRequestInput): Promise<BookingRequestSaved | { error: string }> {
+export async function submitBookingRequest(propertyId: string, a: BookingRequestInput, liveInventory = true): Promise<BookingRequestSaved | { error: string }> {
   if (!a.phone && !a.email) return { error: 'Ask for an email or a callback number so the team can confirm the booking.' };
-  const stay = await bookableStay(propertyId, a, 'Stays over 30 nights go through the team — take a message instead.');
+  const stay = await bookableStay(propertyId, a, 'Stays over 30 nights go through the team — take a message instead.', liveInventory);
   if ('error' in stay) return stay;
   const { roomType: rt, nights } = stay;
   const total: number | null = stay.quote.total;
   // The same pre-filled checkout the booking page opens: staff send it to the guest to finish online.
   const link = `${publicSiteUrl() ?? ''}${checkoutPath(propertyId, { roomTypeId: rt.id, checkIn: a.checkIn, checkOut: a.checkOut, guests: a.guests, rooms: a.rooms })}`;
   const message = [
-    `${REQUEST_LABEL[a.source] ?? 'Phone'} booking request: ${rt.name}, ${formatDay(a.checkIn, 'weekday')} to ${formatDay(a.checkOut, 'weekday')} (${nights} night${nights > 1 ? 's' : ''}), ${a.guests} guest${a.guests > 1 ? 's' : ''}${a.rooms > 1 ? `, ${a.rooms} rooms` : ''}.`,
+    `${a.label ?? REQUEST_LABEL[a.source] ?? 'Phone'} booking request: ${rt.name}, ${formatDay(a.checkIn, 'weekday')} to ${formatDay(a.checkOut, 'weekday')} (${nights} night${nights > 1 ? 's' : ''}), ${a.guests} guest${a.guests > 1 ? 's' : ''}${a.rooms > 1 ? `, ${a.rooms} rooms` : ''}.`,
     total !== null ? `Quoted total: $${total.toFixed(2)}.` : '',
-    a.notes ? `Notes: ${a.notes}` : '',
-    `Confirm with the guest, then send them this link to finish booking: ${link}`,
+    a.notes ? `Notes: ${a.notes.trim()}${/[.!?]$/.test(a.notes.trim()) ? '' : '.'}` : '',
+    liveInventory ? `Confirm with the guest, then send them this link to finish booking: ${link}` : 'Check it’s free in your system, book it there, then confirm with the guest.',
   ]
     .filter(Boolean)
     .join(' ');
   const r = await prisma.guestRequest.create({ data: { propertyId, name: a.name, phone: a.phone || null, email: a.email || null, message, source: a.source } });
+  alertTeam(r.id);
   return {
     saved: true,
     reference: r.id.slice(-6).toUpperCase(),
     quoted_total: total,
-    say: `I’ve sent your request to the team — they’ll confirm and send you a link to finish booking${a.email ? ' by email' : ''}. It isn’t booked until then.`,
+    say: liveInventory
+      ? `I’ve sent your request to the team — they’ll confirm and send you a link to finish booking${a.email ? ' by email' : ''}. It isn’t booked until then.`
+      : `I’ve sent your request to the front desk — they’ll check the room is free and ${a.phone ? 'call you back' : 'email you'} to confirm. It isn’t booked until then.`,
   };
 }
 

@@ -200,6 +200,12 @@ export function verifyVoiceToken(token: string): VoiceTokenPayload {
 // Tool schemas
 // ---------------------------------------------------------------------------
 
+/** "2026-10-16" → "Friday, 2026-10-16": models resolve "this Friday" far more reliably with the weekday spelled out. */
+const dayWithWeekday = (day: string) => {
+  const d = new Date(`${day}T12:00:00Z`);
+  return Number.isNaN(d.getTime()) ? day : `${d.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })}, ${day}`;
+};
+
 const obj = (properties: Record<string, unknown>, required: string[]) => ({ type: 'object', properties, required, additionalProperties: false });
 const date = (description: string) => ({ type: 'string', description: `${description} (YYYY-MM-DD)` });
 
@@ -251,12 +257,12 @@ const LEAVE_MESSAGE: FunctionToolSpec = {
   strict: true,
 };
 
-/** Phone callers have no screen to check out on, so the team finishes phone bookings. */
+/** Phone callers have no screen to check out on, and some hotels confirm every booking themselves: the team finishes these. */
 const REQUEST_BOOKING: FunctionToolSpec = {
   type: 'function',
   name: 'request_booking',
   description:
-    'Send a phone booking to the hotel team once the caller has chosen a room from check_availability. The team confirms it and sends the guest a link to finish booking online — it is not booked until then. Never take card details by phone.',
+    'Send a booking request to the hotel team once the guest has chosen a room from check_availability. The team confirms it with the guest — it is not booked until then. Never take card details.',
   parameters: obj(
     {
       room_type_id: { type: 'string', description: 'id from check_availability' },
@@ -457,6 +463,13 @@ export const GUEST_TOOLS: FunctionToolSpec[] = [
   WEB_USE_SKILL,
 ];
 
+/**
+ * The booking page and the console's test call for hotels that keep their own
+ * system (voice only, keep your PMS): no on-screen checkout or reservation
+ * look-ups — the team confirms booking requests.
+ */
+export const REQUEST_ONLY_GUEST_TOOLS: FunctionToolSpec[] = [WEB_PROPERTY_INFO, WEB_CHECK_AVAILABILITY, REQUEST_BOOKING, WEB_LEAVE_MESSAGE, WEB_USE_SKILL];
+
 /** The HotelOne concierge across every listed hotel (GLOBAL web sessions). */
 export const CONCIERGE_TOOLS: FunctionToolSpec[] = [
   SEARCH_HOTELS,
@@ -473,9 +486,12 @@ export const CONCIERGE_TOOLS: FunctionToolSpec[] = [
 
 /**
  * Every booking-site tool, for the one ElevenLabs guest agent that serves
- * both scopes (its prompt, sent per conversation, says which apply).
+ * both scopes and every kind of hotel (its prompt, sent per conversation,
+ * says which apply).
  */
-export const GUEST_AGENT_TOOLS: FunctionToolSpec[] = [...new Map([...CONCIERGE_TOOLS, ...GUEST_TOOLS].map((t) => [t.name, t])).values()];
+export const GUEST_AGENT_TOOLS: FunctionToolSpec[] = [
+  ...new Map([...CONCIERGE_TOOLS, ...GUEST_TOOLS, ...REQUEST_ONLY_GUEST_TOOLS].map((t) => [t.name, t])).values(),
+];
 
 export const STAFF_TOOLS: FunctionToolSpec[] = [
   {
@@ -517,9 +533,15 @@ export function guestPrompts(p: {
   phone?: { callerNumber: string | null; canTransfer: boolean; whatsapp?: boolean };
   /** The hotel's active guest answer skills (skillCatalogText), so the agent knows what it can answer. */
   skills?: string | null;
+  /**
+   * False for hotels that keep their own system (voice only, keep your PMS):
+   * the voice quotes prices, but the team confirms availability and bookings.
+   */
+  liveInventory?: boolean;
 }) {
   const phone = p.phone;
   const whatsapp = !!phone?.whatsapp;
+  const live = p.liveInventory ?? true;
   // On the phone, the hotel's number is usually the one that forwarded them here: take a message instead.
   const person =
     phone?.canTransfer && !whatsapp
@@ -542,36 +564,48 @@ export function guestPrompts(p: {
       : 'Speak in short sentences. Say prices as natural amounts ("two hundred and twenty-seven dollars a night"). Repeat dates back before acting on them.',
     'Whenever the guest asks about rooms, prices, availability, policies, the hotel, or an existing booking, delegate — never answer facts from memory.',
     whatsapp ? '' : 'If you are waiting on a result, say a brief natural filler ("let me check that for you").',
-    whatsapp
-      ? 'Never take card details here: the team confirms bookings made on WhatsApp and sends a link to finish booking online.'
-      : phone
-        ? 'Never take card details over the phone: the team confirms phone bookings and sends a link to finish booking online.'
-        : 'Never ask for card numbers. Bookings are completed on the guest’s screen.',
+    !live
+      ? 'Never take card details. The front desk confirms every booking with the guest.'
+      : whatsapp
+        ? 'Never take card details here: the team confirms bookings made on WhatsApp and sends a link to finish booking online.'
+        : phone
+          ? 'Never take card details over the phone: the team confirms phone bookings and sends a link to finish booking online.'
+          : 'Never ask for card numbers. Bookings are completed on the guest’s screen.',
     person,
     phone ? 'If someone describes an emergency, tell them to call the local emergency number straight away.' : '',
     whatsapp ? 'If asked, say you are the hotel’s virtual assistant.' : phone ? 'If asked, say you are the hotel’s virtual assistant. When the caller is done, say goodbye and end the call.' : '',
   ]
     .filter(Boolean)
     .join('\n');
-  const caller =
-    phone &&
-    (whatsapp
+  const caller = phone
+    ? whatsapp
       ? phone.callerNumber
         ? `the WhatsApp number they are using (${phone.callerNumber}) unless they give another`
         : 'a number or email they give you'
       : phone.callerNumber
         ? `the number they are calling from (${phone.callerNumber}) unless they give another`
-        : 'a number or email they give you — their caller ID is withheld');
+        : 'a number or email they give you — their caller ID is withheld'
+    : // The booking page (and the console's test call) has no caller ID.
+      !live && 'a phone number or email they give you';
   const backendInstructions = [
-    `You handle tasks for the voice front desk of ${p.name}. Today is ${p.today} (${p.timezone}). Resolve relative dates ("this Friday", "next weekend") against today.`,
+    `You handle tasks for the voice front desk of ${p.name}. Today is ${dayWithWeekday(p.today)} (${p.timezone}). Resolve relative dates ("this Friday", "next weekend") against today.`,
     'Rules:',
     '- Facts come only from tools. Never invent prices, availability, amenities or policies.',
-    '- Quote exact prices from check_availability. If nothing fits, say so and suggest other dates or a message to the team.',
-    phone
-      ? '- To book: once the guest picks a room from check_availability, get their full name and an email for the booking link, then call request_booking. Tell them the team will confirm and send a link to finish booking — it isn’t booked until then.'
-      : '- To book: when the guest picks a room, repeat the room, dates, guests and total from check_availability, then call start_booking — the checkout opens on their screen.',
-    phone ? '' : WEB_CHECKOUT_RULES,
-    '- Existing bookings: find_booking needs the confirmation code and last name. Guests can change dates or cancel free until 3 PM the day before arrival on their booking page.',
+    ...(live
+      ? [
+          '- Quote exact prices from check_availability. If nothing fits, say so and suggest other dates or a message to the team.',
+          phone
+            ? '- To book: once the guest picks a room from check_availability, get their full name and an email for the booking link, then call request_booking. Tell them the team will confirm and send a link to finish booking — it isn’t booked until then.'
+            : '- To book: when the guest picks a room, repeat the room, dates, guests and total from check_availability, then call start_booking — the checkout opens on their screen.',
+          phone ? '' : WEB_CHECKOUT_RULES,
+          '- Existing bookings: find_booking needs the confirmation code and last name. Guests can change dates or cancel free until 3 PM the day before arrival on their booking page.',
+        ]
+      : [
+          '- You can’t see which rooms are free: the front desk keeps the bookings. Quote the exact prices from check_availability, then say the front desk will confirm the room is free. Never say a room is available or sold out.',
+          `- To book: once the guest picks a room and dates, get their full name${phone ? '' : ' and a phone number or email'}, read the request back, then call request_booking. Tell them the front desk will check and confirm — it isn’t booked until then.`,
+          '- Existing bookings, changes and cancellations: you can’t look them up. Take a message with leave_message (their name, dates and what they need) so the front desk can help.',
+          '- Check-in and check-out times and the cancellation policy come from get_property_info. If it says they’re not on file, don’t guess — offer to take a message.',
+        ]),
     '- Anything you cannot do (group rates, complaints, special arrangements): leave_message with their name and callback details.',
     phone ? '' : `- You only speak for ${p.name}: never suggest, compare or look up other hotels. Leave property_id empty in every tool — it means ${p.name}.`,
     phone ? '' : PAGE_UPDATE_RULE,
@@ -640,7 +674,7 @@ export function staffPrompts(p: { name: string; userName: string; role: string; 
     'If they say stop, cancel, or no, stop talking and delegate dismissing the plan.',
   ].join('\n');
   const backendInstructions = [
-    `You operate ${p.name}'s systems for staff. Today is ${p.today} (${p.timezone}).`,
+    `You operate ${p.name}'s systems for staff. Today is ${dayWithWeekday(p.today)} (${p.timezone}).`,
     '- Use front_desk for every read or change, passing the staff member’s request in plain words. Split multi-part requests into separate front_desk calls.',
     '- front_desk returns a summary and whether a plan is waiting. Plans never run on their own.',
     '- Call confirm_plan only after the staff member explicitly agrees to the pending plan; call dismiss_plan if they decline.',

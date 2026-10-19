@@ -64,18 +64,22 @@ function shiftMonth(month: string, n: number) {
 
 const isWeekendNight = (d: ISODate) => weekday(d) === 5 || weekday(d) === 6;
 
-function Legend({ min, max }: { min?: number; max?: number }) {
+function Legend({ min, max, occupancy = true }: { min?: number; max?: number; /** Rooms sold (hotels whose bookings live in HotelOne). */ occupancy?: boolean }) {
   return (
     <ul className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground" aria-label="Calendar key">
       <li className="inline-flex items-center gap-1.5">
         <span className="size-2 rounded-full bg-primary" aria-hidden /> Custom price
       </li>
-      <li className="inline-flex items-center gap-1.5">
-        <span className="h-1.5 w-4 rounded-full bg-primary/70" aria-hidden /> Rooms sold
-      </li>
-      <li className="inline-flex items-center gap-1.5">
-        <span className="h-1.5 w-4 rounded-full bg-success" aria-hidden /> 85%+ sold
-      </li>
+      {occupancy && (
+        <>
+          <li className="inline-flex items-center gap-1.5">
+            <span className="h-1.5 w-4 rounded-full bg-primary/70" aria-hidden /> Rooms sold
+          </li>
+          <li className="inline-flex items-center gap-1.5">
+            <span className="h-1.5 w-4 rounded-full bg-success" aria-hidden /> 85%+ sold
+          </li>
+        </>
+      )}
       <li className="inline-flex items-center gap-1.5">
         <span className="h-3 w-4 rounded-sm border border-border-strong/40 bg-muted/70" aria-hidden /> Fri &amp; Sat nights
       </li>
@@ -90,7 +94,9 @@ function Legend({ min, max }: { min?: number; max?: number }) {
 }
 
 export default function RateCalendarPage() {
-  const { ctx, can, refresh } = useConsole();
+  const { ctx, property, can, refresh } = useConsole();
+  // Voice-only hotels keep bookings in their own system: prices only, no rooms sold.
+  const voiceOnly = property?.setupPath === 'VOICE';
   const reduce = useReducedMotion();
   const today = ctx?.today ?? '';
   const typesUrl = usePropertyUrl('/api/admin/room-types');
@@ -301,14 +307,16 @@ export default function RateCalendarPage() {
       title="Rates"
       description={
         data
-          ? `${data.roomType.name} · base ${whole(data.roomType.basePrice)} a night · ${formatNumber(data.roomType.totalRooms)} rooms`
+          ? `${data.roomType.name} · base ${whole(data.roomType.basePrice)} a night${voiceOnly ? '' : ` · ${formatNumber(data.roomType.totalRooms)} rooms`}`
           : 'Nightly prices and demand by room type'
       }
       actions={
         <>
-          <AskAgentButton size="default" command="weekend forecast for the next 3 weekends">
-            Recommend rates
-          </AskAgentButton>
+          {!voiceOnly && (
+            <AskAgentButton size="default" command="weekend forecast for the next 3 weekends">
+              Recommend rates
+            </AskAgentButton>
+          )}
           <Select
             value={roomTypeId}
             onValueChange={(v) => {
@@ -349,7 +357,7 @@ export default function RateCalendarPage() {
                 </Button>
               )}
             </div>
-            <Legend min={minP} max={maxP} />
+            <Legend min={minP} max={maxP} occupancy={!voiceOnly} />
           </div>
 
           <div className="grid grid-cols-7 gap-1 text-center text-2xs font-semibold uppercase tracking-wider text-muted-foreground" aria-hidden>
@@ -402,7 +410,7 @@ export default function RateCalendarPage() {
                     data-rate-day={d}
                     disabled={!canPick}
                     tabIndex={d === tabStop ? 0 : -1}
-                    aria-label={`${fmtDay(d, 'weekday')}${isToday ? ' (today)' : ''}: ${r ? whole(r.price) : 'no rate'}${r?.isCustom ? ', custom price' : ''}, ${r?.sold ?? 0} of ${r?.total ?? 0} rooms sold${past ? ', past' : ''}`}
+                    aria-label={`${fmtDay(d, 'weekday')}${isToday ? ' (today)' : ''}: ${r ? whole(r.price) : 'no rate'}${r?.isCustom ? ', custom price' : ''}${voiceOnly ? '' : `, ${r?.sold ?? 0} of ${r?.total ?? 0} rooms sold`}${past ? ', past' : ''}`}
                     aria-pressed={canPick ? sel : undefined}
                     onPointerDown={(e) => onPointerDown(e, d)}
                     onClick={(e) => onTap(e, d)}
@@ -446,7 +454,7 @@ export default function RateCalendarPage() {
                           <span className="sm:hidden">{formatNumber(Math.round(shownPrice))}</span>
                           <span className="hidden sm:inline">{whole(shownPrice)}</span>
                         </span>
-                        {!outside && (
+                        {!outside && !voiceOnly && (
                           <>
                             <span className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted" aria-hidden>
                               <span
@@ -633,7 +641,7 @@ export default function RateCalendarPage() {
                         {[
                           ['Average nightly rate', whole(monthStats.avg)],
                           ['Nights with a custom price', formatNumber(monthStats.custom)],
-                          ['Rooms sold', `${monthStats.sold}%`],
+                          ...(voiceOnly ? [] : [['Rooms sold', `${monthStats.sold}%`]]),
                         ].map(([k, v]) => (
                           <div key={k} className="flex items-center justify-between gap-3 px-3 py-2">
                             <dt className="text-muted-foreground">{k}</dt>
@@ -643,7 +651,7 @@ export default function RateCalendarPage() {
                       </dl>
                     </section>
                   )}
-                  {can('agent.use') && editable && (
+                  {can('agent.use') && editable && !voiceOnly && (
                     <div className="mt-5 rounded-xl bg-agent-soft p-3 text-agent-soft-foreground">
                       <p className="flex items-center gap-1.5 text-xs font-semibold">
                         <Sparkles className="size-3.5" aria-hidden /> Or just ask the agent

@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { notFound } from '@/server/errors';
 import { handleRoute, json } from '@/server/http';
 import { voiceAvailable } from '@/server/voice/provider';
+import { LISTED_PROPERTY } from '@/server/concierge/facts';
 
 type Params = { params: Promise<{ propertyId: string }> };
 
@@ -13,7 +14,7 @@ type Params = { params: Promise<{ propertyId: string }> };
 export const GET = handleRoute(async (_req: NextRequest, { params }: Params) => {
   const { propertyId } = await params;
   const p = await prisma.property.findFirst({
-    where: { id: propertyId, isActive: true },
+    where: { id: propertyId, ...LISTED_PROPERTY },
     include: {
       photos: { orderBy: [{ isMain: 'desc' }, { createdAt: 'asc' }], select: { id: true, url: true, isMain: true } },
       roomTypes: {
