@@ -24,6 +24,8 @@ type AdvisorEvent =
 type Overview = {
   today: string;
   role: string;
+  /** Null when the properties use different currencies. */
+  currency: string | null;
   properties: { id: string; name: string; city: string; state: string; isActive: boolean; rooms: number }[];
   last30Days: { roomRevenue: number; revenueVsLastYearPct: number | null; occupancyPct: number | null; adr: number | null; revpar: number | null };
   next30Days: { occupancyPct: number | null; roomRevenue: number; revenueVsSameTimeLastYearPct: number | null };
@@ -41,8 +43,9 @@ const SUGGESTIONS = [
 // Older turns are trimmed from what is sent so requests stay small; the full chat stays on screen.
 const MAX_TURNS_SENT = 41;
 
-const money = (n: number | null) =>
-  n === null ? '-' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
+// Portfolio amounts only add up within one currency; with mixed currencies the tiles show a dash.
+const money = (n: number | null, currency: string | null) =>
+  n === null || currency === null ? '-' : new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(n);
 const pct = (n: number | null) => (n === null ? '-' : `${n.toFixed(1)}%`);
 const signedPct = (n: number | null) => (n === null ? null : `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`);
 
@@ -280,9 +283,9 @@ export default function AdvisorPage() {
           {overview && propertyCount > 0 && (
             <div className={cn('flex flex-col gap-4', messages.length > 0 && 'hidden md:flex')}>
               <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                <StatTile label="Revenue, last 30 days" value={money(overview.last30Days.roomRevenue)} hint={signedPct(overview.last30Days.revenueVsLastYearPct) && `${signedPct(overview.last30Days.revenueVsLastYearPct)} vs LY`} />
+                <StatTile label="Revenue, last 30 days" value={money(overview.last30Days.roomRevenue, overview.currency)} hint={overview.currency === null ? 'Hotels use different currencies' : signedPct(overview.last30Days.revenueVsLastYearPct) && `${signedPct(overview.last30Days.revenueVsLastYearPct)} vs LY`} />
                 <StatTile label="Occupancy, last 30 days" value={pct(overview.last30Days.occupancyPct)} />
-                <StatTile label="ADR, last 30 days" value={money(overview.last30Days.adr)} />
+                <StatTile label="ADR, last 30 days" value={money(overview.last30Days.adr, overview.currency)} />
                 <StatTile
                   label="On the books, next 30 days"
                   value={pct(overview.next30Days.occupancyPct)}

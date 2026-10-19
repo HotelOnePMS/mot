@@ -5,15 +5,18 @@
 import { prisma } from '@/lib/prisma';
 import type { ISODate, Occupancy, RoomStatus, RoomSummary } from '@/lib/dto';
 import { ROOM_STATUS } from '@/lib/status';
+import { housekeeperMayChangeRoom } from '@/lib/team-rules';
 import { assertPropertyAccess, requirePermission, type Actor } from '../authz';
-import { atNoonUTC, hotelToday, toISODate } from '../dates';
-import { badRequest, notFound } from '../errors';
+import { atNoonUTC, toISODate } from '../dates';
+import { todayAt } from './hotels';
+import { badRequest, forbidden, notFound } from '../errors';
 import { recordAudit, type OpContext } from './audit';
 import { floorNumber, personName } from './mappers';
 
-export async function roomBoard(actor: Actor, propertyId: string, day: ISODate = hotelToday()): Promise<RoomSummary[]> {
+export async function roomBoard(actor: Actor, propertyId: string, requestedDay?: ISODate): Promise<RoomSummary[]> {
   requirePermission(actor, 'room.view');
   assertPropertyAccess(actor, propertyId);
+  const day = requestedDay ?? (await todayAt(propertyId));
 
   const [rooms, bookings] = await Promise.all([
     prisma.room.findMany({
@@ -122,8 +125,19 @@ export async function setRoomStatus(
   if (ctx.actor.role === 'HOUSEKEEPER' && status === 'INSPECTED') {
     throw badRequest('Inspections are signed off by a supervisor or the front desk.');
   }
+  if (ctx.actor.role === 'HOUSEKEEPER') {
+    // Same rule as updating a cleaning task: only rooms on your list (assigned to you, or unassigned).
+    const open = await prisma.roomHousekeeping.findMany({ where: { roomId: room.id, status: { in: ['PENDING', 'IN_PROGRESS'] } }, select: { assignedTo: true } });
+    if (!housekeeperMayChangeRoom(ctx.actor.role, ctx.actor.userId, open.map((t) => t.assignedTo))) {
+      throw forbidden(open.length ? 'This room is assigned to someone else.' : 'This room is not on your cleaning list.');
+    }
+  }
   const updated = await prisma.$transaction(async (tx) => {
     const r = await tx.room.update({ where: { id: room.id }, data: { status } });
+    if (ctx.actor.role === 'HOUSEKEEPER') {
+      // Working an unassigned room claims it, as in updateTaskStatus.
+      await tx.roomHousekeeping.updateMany({ where: { roomId: room.id, assignedTo: null, status: { in: ['PENDING', 'IN_PROGRESS'] } }, data: { assignedTo: ctx.actor.userId } });
+    }
     if (status === 'CLEAN' || status === 'INSPECTED') {
       await tx.roomHousekeeping.updateMany({
         where: { roomId: room.id, status: { in: ['PENDING', 'IN_PROGRESS'] } },

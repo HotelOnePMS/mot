@@ -3,8 +3,10 @@
  */
 import { isDemoEmail } from '@/config/product';
 import type { Prisma } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
+import { duplicateEmailMessage, editBlockReason, propertiesLeftWithoutOwner, type TeamChange } from '@/lib/team-rules';
 import type { Actor } from '../authz';
-import { forbidden } from '../errors';
+import { badRequest, conflict, forbidden } from '../errors';
 
 export const ROLES = ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER', 'CUSTOMER'] as const;
 export type Role = (typeof ROLES)[number];
@@ -69,3 +71,37 @@ export function assertAssignable(actor: Actor, propertyIds: string[]) {
   if (foreign.length) throw forbidden('You can only assign people to your own properties.');
 }
 
+
+/** Throws unless the actor may edit this person at all (see editBlockReason). */
+export function assertMayEdit(actor: Actor, target: { id: string; role: string }) {
+  const reason = editBlockReason({ userId: actor.userId, role: actor.role }, target);
+  if (reason) throw forbidden(reason);
+}
+
+/**
+ * Keeps at least one active owner on every hotel: blocks a demotion, deactivation, deletion or
+ * unassignment that would leave a property with none. Platform admins can override (e.g. to
+ * wind down an abandoned hotel).
+ */
+export async function assertKeepsAnOwner(
+  actor: Actor,
+  target: { id: string; role: string; isActive: boolean; email: string; propertyIds: string[] },
+  change: TeamChange,
+) {
+  if (actor.role === 'ADMIN' || target.role !== 'OWNER' || !target.isActive || target.propertyIds.length === 0) return;
+  const others = await prisma.userPropertyAssignment.groupBy({
+    by: ['propertyId'],
+    where: { propertyId: { in: target.propertyIds }, userId: { not: target.id }, user: { role: 'OWNER', isActive: true } },
+    _count: { _all: true },
+  });
+  const counts = Object.fromEntries(others.map((o) => [o.propertyId, o._count._all]));
+  const orphaned = propertiesLeftWithoutOwner(target, change, counts);
+  if (orphaned.length) {
+    throw badRequest('Every hotel needs at least one active owner. Add another owner first, or contact a platform admin.');
+  }
+}
+
+/** Duplicate-email error that only tells platform admins an account exists (others could otherwise probe for accounts). */
+export function duplicateEmailError(actor: Actor) {
+  return actor.role === 'ADMIN' ? conflict(duplicateEmailMessage(true)) : conflict(duplicateEmailMessage(false));
+}

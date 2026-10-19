@@ -10,7 +10,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
  * channel carries captions and delegated tool calls, which we execute in
  * our own code and answer with response.item.create + response.create.
  */
-export function useOpenAIVoice({ propertyId, audience, scope, onToolCall, onStateChange }: VoiceOptions): VoiceController {
+export function useOpenAIVoice({ propertyId, audience, scope, onToolCall, onStateChange, onTranscript }: VoiceOptions): VoiceController {
   const [state, setStateRaw] = React.useState<VoiceState>('idle');
   const [error, setError] = React.useState<string | null>(null);
   const [captions, setCaptions] = React.useState<Caption[]>([]);
@@ -33,6 +33,8 @@ export function useOpenAIVoice({ propertyId, audience, scope, onToolCall, onStat
   toolRef.current = onToolCall;
   const stateCb = React.useRef(onStateChange);
   stateCb.current = onStateChange;
+  const transcriptCb = React.useRef(onTranscript);
+  transcriptCb.current = onTranscript;
 
   const setState = React.useCallback((s: VoiceState) => {
     setStateRaw(s);
@@ -126,10 +128,14 @@ export function useOpenAIVoice({ propertyId, audience, scope, onToolCall, onStat
         setError(ev.error?.message ?? 'The voice line reported an error.');
         break;
       case 'session.input_transcript.delta':
-        if (ev.delta) appendCaption('user', ev.delta);
+        if (ev.delta) {
+          transcriptCb.current?.('user');
+          appendCaption('user', ev.delta);
+        }
         break;
       case 'session.output_transcript.delta':
         if (ev.delta) {
+          transcriptCb.current?.('agent');
           appendCaption('agent', ev.delta);
           setAgentSpeaking(true);
           if (speakingTimer.current) clearTimeout(speakingTimer.current);

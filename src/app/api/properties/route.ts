@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { diffDays, isISODate } from '@/server/dates';
 import { handleRoute, json, parseQuery } from '@/server/http';
 import { propertyAvailability } from '@/server/services/inventory';
-import { LISTED_PROPERTY } from '@/server/concierge/facts';
+import { DIRECTORY_PROPERTY } from '@/server/concierge/facts';
 
 const query = z.object({
   q: z.string().trim().max(100).optional(),
@@ -25,7 +25,7 @@ export const GET = handleRoute(async (request: NextRequest) => {
 
   const properties = await prisma.property.findMany({
     where: {
-      ...LISTED_PROPERTY,
+      ...DIRECTORY_PROPERTY,
       ...(text
         ? {
             OR: [
@@ -71,6 +71,7 @@ export const GET = handleRoute(async (request: NextRequest) => {
         roomTypeCount: p.roomTypes.length,
         maxCapacity: p.roomTypes.reduce((m, t) => Math.max(m, t.capacity), 0),
         fromPrice,
+        currency: p.currency,
         available,
         isDemo: p.isDemo,
       };

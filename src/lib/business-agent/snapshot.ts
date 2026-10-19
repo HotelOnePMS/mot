@@ -13,12 +13,21 @@ import { LAST_YEAR_OFFSET_DAYS, dayOfWeek, type Kpis, type PortfolioData } from 
 const MAX_DETAILED_PROPERTIES = 40;
 const MAX_PROPERTIES_WITH_MONTHLY_TREND = 12;
 
-const usd0 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-const usd2 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const int = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 
-export const money = (n: number | null) => (n === null ? '-' : usd0.format(n));
-export const rate = (n: number | null) => (n === null ? '-' : usd2.format(n));
+/** Amount formatters in the portfolio's currency; with mixed currencies, plain numbers in each hotel's own currency. */
+function moneyFormatters(currency: string | null) {
+  const whole = new Intl.NumberFormat('en-US', currency ? { style: 'currency', currency, maximumFractionDigits: 0 } : { maximumFractionDigits: 0 });
+  const cents = new Intl.NumberFormat(
+    'en-US',
+    currency ? { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 },
+  );
+  return {
+    money: (n: number | null) => (n === null ? '-' : whole.format(n)),
+    rate: (n: number | null) => (n === null ? '-' : cents.format(n)),
+  };
+}
+
 export const pct = (n: number | null) => (n === null ? '-' : `${n.toFixed(1)}%`);
 export const count = (n: number | null) => (n === null ? '-' : int.format(n));
 const signedPct = (n: number | null) => (n === null ? '-' : `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`);
@@ -43,9 +52,9 @@ function firstOfMonth(date: string, monthsBack = 0): string {
   return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}-01`;
 }
 
-const kpiCells = (k: Kpis) => [pct(k.occupancyPct), rate(k.adr), rate(k.revpar), money(k.roomRevenue), count(k.roomNightsSold)];
-
 export async function buildPortfolioSnapshot(data: PortfolioData): Promise<string> {
+  const { money, rate } = moneyFormatters(data.currency);
+  const kpiCells = (k: Kpis) => [pct(k.occupancyPct), rate(k.adr), rate(k.revpar), money(k.roomRevenue), count(k.roomNightsSold)];
   const today = data.today;
   const allIds = data.properties.map((p) => p.id);
   const lines: string[] = [];
@@ -64,7 +73,9 @@ export async function buildPortfolioSnapshot(data: PortfolioData): Promise<strin
     '- Occupancy = room nights sold / (active rooms x nights). ADR = room revenue / room nights sold. RevPAR = room revenue / available room nights.',
     `- LY = the same dates ${LAST_YEAR_OFFSET_DAYS} days earlier (weekday-aligned). STLY = what was on the books for those dates at this point last year (cancel dates approximated by last update).`,
     '- Capacity uses the current active room types and room counts for every period.',
-    '- Revenue is room revenue in USD as recorded on bookings. The system has no cost, tax, channel, marketing, review or competitor data.',
+    data.currency
+      ? `- Revenue is room revenue in ${data.currency} as recorded on bookings. The system has no cost, tax, channel, marketing, review or competitor data.`
+      : '- Revenue is room revenue as recorded on bookings, in each property\'s own currency (listed per property). The properties use different currencies, so portfolio totals and averages that add amounts across them are not meaningful; compare amounts only within one currency. The system has no cost, tax, channel, marketing, review or competitor data.',
     '',
   );
 
@@ -94,7 +105,7 @@ export async function buildPortfolioSnapshot(data: PortfolioData): Promise<strin
   // Properties and room types
   lines.push('## Properties and room types', '');
   for (const p of ranked) {
-    lines.push(`### ${p.name} (property id \`${p.id}\`), ${p.city}, ${p.state}${p.isActive ? '' : ' [INACTIVE]'}`);
+    lines.push(`### ${p.name} (property id \`${p.id}\`), ${p.city}, ${p.state}, prices in ${p.currency}${p.isActive ? '' : ' [INACTIVE]'}`);
     if (p.roomTypes.length === 0) {
       lines.push('No room types set up.', '');
       continue;
@@ -323,6 +334,7 @@ export async function buildPortfolioOverview(data: PortfolioData) {
   return {
     today,
     role: data.scope.role,
+    currency: data.currency,
     properties: data.properties.map((p) => ({
       id: p.id,
       name: p.name,

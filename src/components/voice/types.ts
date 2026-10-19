@@ -22,6 +22,12 @@ export interface VoiceOptions {
   onToolCall: (call: VoiceToolCall, ctx: { token: string }) => Promise<unknown>;
   onStateChange?: (s: VoiceState) => void;
   /**
+   * A line of the conversation arrived (a final user transcript or agent reply;
+   * GPT-Live: each transcript delta). Called synchronously, before any tool
+   * call it led to, so callers can tell what was said before a tool ran.
+   */
+  onTranscript?: (role: Caption['role']) => void;
+  /**
    * Fetch the provider's SDK ahead of the first tap (default true). The guest
    * site's dock passes false until someone shows intent (hover, focus, touch),
    * so pages nobody talks on don't download it.

@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { EVENT_MAX_BYTES, EVENT_SIGNATURE_HEADER, EVENT_TIMESTAMP_HEADER, recordPmsEvent, verifyEventSignature } from '@/server/pms';
 import { floodGuard } from '@/server/pms/events';
 import { clientIp } from '@/server/http';
+import { logError } from '@/server/log';
 
 type Params = { params: Promise<{ connectionId: string }> };
 
@@ -84,7 +85,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     if (result.status === 'rate_limited') return reply(429, { error: 'Too many events this minute.', code: 'RATE_LIMITED' }, { 'Retry-After': '60' });
     return reply(200, { ok: true, type: parsed.type, ...(result.status === 'duplicate' ? { duplicate: true } : {}), ...(result.summary ? { logged: result.summary } : {}) });
   } catch (e) {
-    console.error('[pms-events] could not record event:', e);
+    logError('pms-events', 'could not record event:', e);
     return reply(500, { error: 'Could not record the event. Retry later.' });
   }
 }

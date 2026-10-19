@@ -33,7 +33,7 @@ How to help:
 - You cannot change anything in the system. When you recommend a change, say where in the console to make it: Rates (nightly rates), Rooms (base rates, room counts), Properties, Reservations, Housekeeping, or Front desk.
 - Before a round of tool calls, write one short sentence saying what you are checking.
 
-Style: lead with the answer, then the supporting numbers. Use concise markdown with short paragraphs, bullet lists and small tables where they help comparison. Use USD. Refer to properties by name, not id.`;
+Style: lead with the answer, then the supporting numbers. Use concise markdown with short paragraphs, bullet lists and small tables where they help comparison. Quote amounts in the currency the snapshot gives; never add up amounts from properties in different currencies. Refer to properties by name, not id.`;
 
 export interface ChatTurn {
   role: 'user' | 'assistant';

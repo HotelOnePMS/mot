@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma';
 import type { ActivityEntry } from '@/lib/dto';
 import type { Actor } from '../authz';
 import { personName } from './mappers';
+import { logError } from '@/server/log';
 
 export type ActionSource = 'agent' | 'classic' | 'system';
 
@@ -33,7 +34,7 @@ export async function recordAudit(
     });
   } catch (e) {
     // The audit log must never break the action itself.
-    console.error('Audit log write failed:', e);
+    logError('services/audit', 'Audit log write failed:', e);
   }
 }
 

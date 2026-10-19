@@ -32,7 +32,7 @@ const fullName = z
 
 export const conciergeSchemas = {
   searchHotels: z.object({
-    query: z.string().trim().max(100).optional().describe('Free text matched against hotel name, city, state, address, zip and tagline, e.g. "saltwater inn" or "santa cruz ca"'),
+    query: z.string().trim().max(100).optional().describe('A hotel name or what the guest wants, e.g. "saltwater inn", "ocean view", "sauna" or "motel". Ranks hotels by matching words in name, type, description and amenities; small typos are fine'),
     location: z.string().trim().max(100).optional().describe('Where the guest wants to stay: city, state, zip or area, e.g. "Santa Cruz, CA"'),
     checkIn: isoDate.optional().describe('Arrival date (YYYY-MM-DD). With checkOut, results carry live availability and prices'),
     checkOut: isoDate.optional().describe('Departure date (YYYY-MM-DD), after checkIn; at most 30 nights'),

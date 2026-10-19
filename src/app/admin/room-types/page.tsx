@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useCurrency } from '@/components/hotel/currency';
 import Link from 'next/link';
 import useSWR from 'swr';
 import { toast } from 'sonner';
@@ -130,6 +131,7 @@ function AddRooms({ roomType, propertyId, onDone }: { roomType: RoomTypeRow; pro
 }
 
 export default function RoomTypesPage() {
+  const currency = useCurrency();
   const { propertyId, property, can } = useConsole();
   const reduce = useReducedMotion();
   const typesUrl = usePropertyUrl('/api/admin/room-types');
@@ -228,7 +230,7 @@ export default function RoomTypesPage() {
                                     <Users className="size-4" aria-hidden /> Sleeps {t.capacity}
                                   </span>
                                   <span className="flex items-center gap-1.5">
-                                    <Tag className="size-4" aria-hidden /> {formatMoney(t.basePrice, 'USD', { cents: false })} a night
+                                    <Tag className="size-4" aria-hidden /> {formatMoney(t.basePrice, currency, { cents: false })} a night
                                   </span>
                                   {!voiceOnly && (
                                     <span className="flex items-center gap-1.5">

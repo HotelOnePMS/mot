@@ -9,7 +9,7 @@ import { money } from '../status';
 
 const list = (xs: string[], max = 5) => (xs.length > max ? `${xs.slice(0, max).join('; ')}; and ${xs.length - max} more` : xs.join('; '));
 
-export function speakBlocks(blocks: AgentBlock[]): { summary: string; plan_pending: boolean; plan_title?: string } {
+export function speakBlocks(blocks: AgentBlock[], currency = 'USD'): { summary: string; plan_pending: boolean; plan_title?: string } {
   const parts: string[] = [];
   let plan: { title: string } | undefined;
   for (const b of blocks) {
@@ -40,11 +40,11 @@ export function speakBlocks(blocks: AgentBlock[]): { summary: string; plan_pendi
         break;
       case 'availability':
         parts.push(
-          `Availability ${fmtDay(b.checkIn, 'weekday')} to ${fmtDay(b.checkOut, 'weekday')}: ${list(b.items.map((i) => `${i.name} ${i.available} left at ${money(i.averageNightly, { cents: false })} a night`))}`
+          `Availability ${fmtDay(b.checkIn, 'weekday')} to ${fmtDay(b.checkOut, 'weekday')}: ${list(b.items.map((i) => `${i.name} ${i.available} left at ${money(i.averageNightly, { cents: false, currency })} a night`))}`
         );
         break;
       case 'occupancy':
-        parts.push(`${b.title}: ${b.averagePct}% average occupancy, ${money(b.revenue, { cents: false })} revenue, ADR ${money(b.adr, { cents: false })}`);
+        parts.push(`${b.title}: ${b.averagePct}% average occupancy, ${money(b.revenue, { cents: false, currency })} revenue, ADR ${money(b.adr, { cents: false, currency })}`);
         break;
       case 'forecast':
         parts.push(list(b.periods.map((p) => `${p.label}: ${p.occupancyPct}% — ${p.recommendation}`)));

@@ -1,11 +1,13 @@
 /**
  * Hotel facts and visibility rules shared by the guest voice tools, the
  * concierge (global voice + agent API) and the skills generator. Leaf module:
- * it must not import the concierge index or the skills core.
+ * it must not import the concierge index or the skills core (only the
+ * skills' dependency-free text helpers).
  */
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { formatClock } from '@/lib/format';
+import { cleanSkillText, promptSafe } from '../skills/types';
 
 /**
  * Which hotels guests and agents can find and book: the same rule as the
@@ -14,6 +16,15 @@ import { formatClock } from '@/lib/format';
  */
 export const LISTED_PROPERTY = { isActive: true, setupPath: { not: 'VOICE' } } as const satisfies Prisma.PropertyWhereInput;
 
+/**
+ * What the public directory, the property picker and the sitemap show: listed
+ * properties that can actually take a booking (at least one active room type).
+ * Half-finished hotels stay reachable by direct link for their owners, but are
+ * not advertised. This is not a moderation check — see the PR notes on a
+ * `published`/verified flag.
+ */
+export const DIRECTORY_PROPERTY = { ...LISTED_PROPERTY, roomTypes: { some: { isActive: true } } } as const satisfies Prisma.PropertyWhereInput;
+
 /** The house policy every guest-facing answer quotes (voice tools, skills, concierge). */
 export const HOTEL_POLICY = {
   checkIn: 'from 3:00 PM',
@@ -21,7 +32,7 @@ export const HOTEL_POLICY = {
   cancellation: 'Free cancellation and date changes until 3:00 PM (hotel time) the day before arrival.',
 } as const;
 
-/** Prices are quoted in this currency everywhere (see StayQuote.currency). */
+/** The currency of hotels that never chose one; each hotel quotes in its own (Property.currency, StayQuote.currency). */
 export const CURRENCY = 'USD' as const;
 
 /**
@@ -56,18 +67,42 @@ export function cleanFaqs(raw: unknown): { q: string; a: string }[] {
   return Array.isArray(raw) ? (raw as { q?: string; a?: string }[]).filter((f) => f?.q && f?.a).map((f) => ({ q: f.q!, a: f.a! })) : [];
 }
 
+/** Answers made from settings that `propertyFacts` already carries as fields (amenities, policy, room types, contact). */
+const FACT_ANSWER_KEYS = new Set(['amenities', 'policies', 'rooms', 'contact']);
+
+/**
+ * The questions and answers guests may be given: the hotel's ACTIVE guest
+ * answers (its FAQs and the answers it added on the Skills page), so an
+ * answer switched off there isn't said on the phone or WhatsApp either.
+ * Cleaned like any text for a model. A hotel whose answers were never
+ * generated from its settings yet gets its voice FAQs, cleaned.
+ */
+async function guestFaqs(propertyId: string, rawFaqs: unknown): Promise<{ q: string; a: string }[]> {
+  const rows = await prisma.agentSkill.findMany({
+    where: { propertyId, kind: 'ANSWER', audience: { in: ['GUEST', 'ALL'] } },
+    orderBy: [{ uses: 'desc' }, { createdAt: 'asc' }],
+    select: { key: true, title: true, source: true, status: true, body: true },
+  });
+  const clean = (q: string, a: unknown) => ({ q: promptSafe(q, 200), a: cleanSkillText(typeof a === 'string' ? a : '', { multiline: true }).slice(0, 4000) });
+  if (!rows.some((r) => r.source === 'CONFIG')) return cleanFaqs(rawFaqs).map((f) => clean(f.q, f.a)).filter((f) => f.q && f.a);
+  return rows
+    .filter((r) => r.status === 'ACTIVE' && !(r.source === 'CONFIG' && FACT_ANSWER_KEYS.has(r.key)))
+    .map((r) => clean(r.title, (r.body as { answer?: unknown } | null)?.answer))
+    .filter((f) => f.q && f.a);
+}
+
 /**
  * Hotel facts for agents (the guest voice tool `get_property_info`): story,
  * address, contact, amenities, policy, active room types with base prices and
- * the hotel's FAQs. Throws (Prisma not-found) for an unknown id; callers check
- * visibility first.
+ * the hotel's FAQs (its ACTIVE guest answers — see `guestFaqs`). Throws
+ * (Prisma not-found) for an unknown id; callers check visibility first.
  */
 export async function propertyFacts(propertyId: string) {
   const p = await prisma.property.findUniqueOrThrow({
     where: { id: propertyId },
     include: { roomTypes: { where: { isActive: true }, orderBy: { basePrice: 'asc' } }, voiceAgent: true },
   });
-  const faqs = Array.isArray(p.voiceAgent?.faqs) ? (p.voiceAgent!.faqs as { q?: string; a?: string }[]).filter((f) => f?.q && f?.a) : [];
+  const faqs = await guestFaqs(propertyId, p.voiceAgent?.faqs);
   const policy = hotelPolicy(p.setupPath, p.voiceAgent);
   return {
     name: p.name,

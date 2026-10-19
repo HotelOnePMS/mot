@@ -304,20 +304,25 @@ export async function deleteSkill(id: string): Promise<Skill> {
 export type LearnedSkillInput = Omit<UpsertSkillInput, 'source' | 'status'> & { status: 'ACTIVE' | 'SUGGESTED' };
 
 /**
- * Records a skill an agent learned (source LEARNED), upserting by key. A key
- * held by a CONFIG or MANUAL skill gets a numbered variant ("late-checkout-2")
- * instead of overwriting it. Re-learning never revives a skill someone
- * disabled, and never demotes an ACTIVE one to SUGGESTED.
+ * Records a skill an agent learned (source LEARNED), upserting by key. It
+ * only ever updates a LEARNED skill of the same kind (and, when
+ * `createdById` is given, one that person or no one created): a key held by
+ * anything else — a CONFIG or MANUAL skill, another kind, someone else's
+ * shortcut — gets a numbered variant ("late-checkout-2") instead of
+ * overwriting it. Re-learning never revives a skill someone disabled, and
+ * never demotes an ACTIVE one to SUGGESTED.
  */
 export async function recordLearnedSkill(input: LearnedSkillInput): Promise<Skill> {
   const base = input.key?.trim() || skillKey(input.title);
+  const ours = (s: { source: string; kind: string; createdById: string | null }) =>
+    s.source === 'LEARNED' && s.kind === input.kind && (!input.createdById || !s.createdById || s.createdById === input.createdById);
   let key = base;
   let existing = await prisma.agentSkill.findFirst({ where: { propertyId: input.propertyId, key } });
-  for (let i = 2; existing && existing.source !== 'LEARNED' && i < 50; i++) {
+  for (let i = 2; existing && !ours(existing) && i < 50; i++) {
     key = `${base.slice(0, 76)}-${i}`;
     existing = await prisma.agentSkill.findFirst({ where: { propertyId: input.propertyId, key } });
   }
-  if (existing && existing.source !== 'LEARNED') throw new DomainError(409, 'CONFLICT', `Too many skills share the key "${base}".`);
+  if (existing && !ours(existing)) throw new DomainError(409, 'CONFLICT', `Too many skills share the key "${base}".`);
   const status: SkillStatus = existing?.status === 'DISABLED' ? 'DISABLED' : existing?.status === 'ACTIVE' ? 'ACTIVE' : input.status;
   return upsertSkill({ ...input, key, source: 'LEARNED', status });
 }
@@ -357,10 +362,22 @@ export interface SkillPatch {
   status?: SkillStatus;
 }
 
+/** The key of a saved answer to `question` ("answer-is-there-a-late-checkout"). */
+export const answerKey = (question: string) => `answer-${skillKey(cleanSkillText(question), 52)}`;
+
+/** The description of a saved answer, which tells agents the question it answers. */
+export const answerDescription = (question: string) => `Saved answer. Use when someone asks: “${cleanSkillText(question).replace(/["“”]/g, '')}”`.slice(0, 500);
+
+const GENERATED_ANSWER_DESCRIPTION = /^Saved answer\. Use when someone asks: “[\s\S]*”?$/;
+
 /**
- * Edits a skill in place, keeping its key and source (a CONFIG skill turns
- * MANUAL so settings syncs leave it alone). Validates like `upsertSkill`.
- * Turning a recipe back on clears its failure streak. DomainError 404 / 400.
+ * Edits a skill in place, keeping its source (a CONFIG skill turns MANUAL so
+ * settings syncs leave it alone). Validates like `upsertSkill`. Turning a
+ * recipe back on clears its failure streak. Renaming a saved answer (a new
+ * question) also rewrites its generated description and moves it to the new
+ * question's key, so agents stop matching the old question and it can be
+ * added again — DomainError 409 when another answer already has that key.
+ * Other skills keep their key. DomainError 404 / 400.
  */
 export async function updateSkill(id: string, patch: SkillPatch): Promise<Skill> {
   const current = await getSkillById(id);
@@ -384,7 +401,7 @@ export async function updateSkill(id: string, patch: SkillPatch): Promise<Skill>
     if (patch.status && patch.status !== current.status) body = { ...(body as RecipeBody), failStreak: 0, autoDisabledAt: undefined };
   }
   const parameters = patch.parameters !== undefined ? patch.parameters : parametersFor(current.kind, body, current.parameters);
-  return upsertSkill({
+  const input: UpsertSkillInput = {
     propertyId: current.propertyId,
     key: current.key,
     title: patch.title ?? current.title,
@@ -394,5 +411,22 @@ export async function updateSkill(id: string, patch: SkillPatch): Promise<Skill>
     body,
     parameters,
     status: patch.status,
-  });
+  };
+  const renamedAnswer = current.kind === 'ANSWER' && patch.title !== undefined && cleanSkillText(patch.title) !== current.title;
+  if (renamedAnswer && patch.description === undefined && GENERATED_ANSWER_DESCRIPTION.test(current.description)) {
+    input.description = answerDescription(input.title);
+    const key = answerKey(input.title);
+    if (current.key.startsWith('answer-') && key !== current.key) {
+      validated(input); // nothing moves unless the whole edit is valid
+      const taken = await prisma.agentSkill.findFirst({ where: { propertyId: current.propertyId, key }, select: { id: true } });
+      const inUse = () => new DomainError(409, 'CONFLICT', 'There’s already an answer to that question — edit it instead.');
+      if (taken) throw inUse();
+      await prisma.agentSkill.update({ where: { id }, data: { key } }).catch((e) => {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw inUse();
+        throw e;
+      });
+      input.key = key;
+    }
+  }
+  return upsertSkill(input);
 }

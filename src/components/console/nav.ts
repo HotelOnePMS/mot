@@ -10,16 +10,19 @@ import {
   History,
   LayoutDashboard,
   Settings2,
+  ShieldAlert,
   Sparkles,
   BrushCleaning,
   BrainCircuit,
   Users,
   AudioLines,
   Cable,
+  Network,
   type LucideIcon,
 } from 'lucide-react';
 import type { SetupPath } from '@/lib/dto';
 import { canAccessConsolePath } from '@/lib/routes';
+import { TERMS } from '@/config/copy';
 
 export interface NavItem {
   label: string;
@@ -42,13 +45,13 @@ const GROUPS: NavGroup[] = [
   {
     label: 'Operate',
     items: [
-      { label: 'Agent', href: '/admin/agent', icon: Sparkles, agent: true, paths: ['FULL', 'BRIDGE'] },
+      { label: TERMS.agent, href: '/admin/agent', icon: Sparkles, agent: true, paths: ['FULL', 'BRIDGE'] },
       { label: 'Your PMS', href: '/admin/connect', icon: Cable, paths: ['BRIDGE'] },
       { label: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
       { label: 'Front desk', href: '/admin/front-desk', icon: ConciergeBell },
       { label: 'Housekeeping', href: '/admin/housekeeping', icon: BrushCleaning },
       { label: 'Reservations', href: '/admin/bookings', icon: CalendarCheck2 },
-      { label: 'Voice', href: '/admin/voice', icon: AudioLines, paths: ALL },
+      { label: TERMS.voice, href: '/admin/voice', icon: AudioLines, paths: ALL },
     ],
   },
   {
@@ -57,6 +60,7 @@ const GROUPS: NavGroup[] = [
       { label: 'Rates', href: '/admin/rate-calendar', icon: BadgeDollarSign, paths: ['FULL', 'VOICE'] },
       { label: 'Analytics', href: '/admin/analytics', icon: ChartLine },
       { label: 'AI advisor', href: '/admin/advisor', icon: BrainCircuit, paths: ['FULL', 'VOICE'] },
+      { label: 'Disputes', href: '/admin/disputes', icon: ShieldAlert },
     ],
   },
   {
@@ -65,8 +69,9 @@ const GROUPS: NavGroup[] = [
       { label: 'Rooms', href: '/admin/room-types', icon: BedDouble, paths: ALL },
       { label: 'Skills', href: '/admin/skills', icon: Zap, paths: ALL },
       { label: 'Properties', href: '/admin/properties', icon: Building2, paths: ALL },
-      { label: 'AI assistants', href: '/admin/assistants', icon: Bot, paths: ALL },
+      { label: TERMS.assistants, href: '/admin/assistants', icon: Bot, paths: ALL },
       { label: 'Team', href: '/admin/users', icon: Users, paths: ALL },
+      { label: 'Organization', href: '/admin/organization', icon: Network, paths: ALL },
       { label: 'Activity', href: '/admin/activity', icon: History, paths: ALL },
       { label: 'Settings', href: '/admin/settings', icon: Settings2, paths: ALL },
     ],

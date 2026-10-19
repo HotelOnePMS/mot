@@ -36,7 +36,7 @@ const obj = (properties: Record<string, JsonSchema>, required: string[] = Object
 });
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const date = (description: string) => str(description, { format: 'date' });
-const USD = { type: 'string', const: 'USD' } as JsonSchema;
+const CURRENCY = { type: 'string', description: 'The hotel’s ISO 4217 currency, e.g. USD or EUR', pattern: '^[A-Z]{3}$' } as JsonSchema;
 
 const SCHEMAS: Record<string, JsonSchema> = {
   Error: obj(
@@ -57,7 +57,7 @@ const SCHEMAS: Record<string, JsonSchema> = {
       tagline: nullable(str()),
       photo: nullable(str('Main photo URL.', { format: 'uri' })),
       fromPricePerNight: nullable(num('Lowest base nightly price among room types that fit the party.')),
-      currency: USD,
+      currency: CURRENCY,
       maxGuestsPerRoom: int(),
       fitsParty: { type: 'boolean', description: 'A room type sleeps the party in the requested number of rooms.' },
       available: { type: ['boolean', 'null'], description: 'With dates: a fitting room type is free every night. Null without dates.' },
@@ -72,6 +72,8 @@ const SCHEMAS: Record<string, JsonSchema> = {
     hotels: { type: 'array', items: ref('HotelSummary') },
     matched: int('Hotels that matched before the limit.'),
     stay: nullable(obj({ checkIn: date('Arrival'), checkOut: date('Departure'), nights: int(), guests: int(), rooms: int() })),
+    note: str('Only when results are not exact matches (closest places, or the place without the query words): what to tell the person.'),
+    places: { type: 'array', description: 'Only when no hotel is in the place asked for: every town with HotelOne hotels, e.g. "Santa Cruz, CA".', items: str() },
   }),
   HotelDetails: obj(
     {
@@ -91,7 +93,7 @@ const SCHEMAS: Record<string, JsonSchema> = {
         type: 'array',
         items: obj({ id: str(), name: str(), sleeps: int(), from_price_per_night: num(), amenities: { type: 'array', items: str() }, description: nullable(str()) }),
       },
-      currency: USD,
+      currency: CURRENCY,
       photos: { type: 'array', items: str(undefined, { format: 'uri' }) },
       skills: { type: 'array', description: 'The hotel’s own answers (FAQs, amenities, policies, rooms, contact).', items: obj({ key: str(), title: str(), answer: str() }) },
       url: str(undefined, { format: 'uri' }),
@@ -100,6 +102,7 @@ const SCHEMAS: Record<string, JsonSchema> = {
   ),
   Availability: obj({
     stay: str('e.g. "Fri, Oct 23 to Sun, Oct 25, 2 nights, 2 guests"'),
+    currency: CURRENCY,
     options: {
       type: 'array',
       items: obj({
@@ -109,8 +112,8 @@ const SCHEMAS: Record<string, JsonSchema> = {
         fits_party: { type: 'boolean' },
         available: { type: 'boolean' },
         rooms_left: int(),
-        average_per_night: nullable(num('USD per room')),
-        total: nullable(num('USD for the whole stay and all rooms')),
+        average_per_night: nullable(num('Room price per room per night, in `currency`')),
+        total: nullable(num('Whole stay and all rooms, taxes and fees included, in `currency`')),
       }),
     },
   }),
@@ -133,9 +136,9 @@ const SCHEMAS: Record<string, JsonSchema> = {
       nights: int(),
       guests: int(),
       rooms: int(),
-      averageNightly: num('USD per room'),
-      total: num('USD, whole stay, all rooms'),
-      currency: USD,
+      averageNightly: num('Room price per room per night, in `currency`'),
+      total: num('Whole stay, all rooms, taxes and fees included, in `currency`'),
+      currency: CURRENCY,
       roomsLeft: int(),
     }),
     expiresNote: str(),
@@ -143,15 +146,16 @@ const SCHEMAS: Record<string, JsonSchema> = {
   BookingRequest: obj({
     saved: { type: 'boolean', const: true },
     reference: str('Request reference for the guest.'),
-    quoted_total: nullable(num('USD')),
+    quoted_total: nullable(num('Taxes and fees included, in `currency`')),
+    currency: CURRENCY,
     say: str('What to tell the guest.'),
   }),
   Booking: obj({
     bookingId: str(),
     code: str('Confirmation code for the guest.'),
     status: { type: 'string', const: 'CONFIRMED' },
-    total: num('USD, priced by the server'),
-    currency: USD,
+    total: num('Taxes and fees included, priced by the server, in `currency`'),
+    currency: CURRENCY,
     paymentStatus: { type: 'string', const: 'PAY_AT_PROPERTY' },
     hotel: obj({ id: str(), name: str() }),
     roomType: obj({ id: str(), name: str() }),
@@ -176,7 +180,7 @@ const SCHEMAS: Record<string, JsonSchema> = {
     rooms: int(),
     freeChangesUntil: nullable(str('e.g. "3:00 PM on Thu, Oct 22"; null once passed.')),
     manage: str(),
-    bookingUrl: str(undefined, { format: 'uri' }),
+    bookingUrl: nullable(str('The guest’s booking page (they sign in to change or cancel). Null for direct bookings made with an API key: follow manage instead.', { format: 'uri' })),
   }),
 };
 
@@ -213,7 +217,7 @@ export function openApiDocument(origin: string) {
         'Booking flow: searchHotels → checkAvailability → createBookingLink (the guest opens the pre-filled checkout and confirms; the default) — or requestBooking when the guest can’t open a link (the hotel confirms), or createBooking with an API key (confirmed at once, paid at the hotel).',
         'Always confirm the hotel, room, dates, guests and total with the guest before requestBooking or createBooking.',
         '',
-        'Dates are YYYY-MM-DD; prices are USD. Only createBooking needs an API key (`Authorization: Bearer ho_live_…`), which hotel owners create in the console under AI assistants.',
+        'Dates are YYYY-MM-DD; prices are in each hotel’s currency (`currency`, ISO 4217) and include its taxes and fees. Only createBooking needs an API key (`Authorization: Bearer ho_live_…`), which hotel owners create in the console under AI assistants.',
         limitLine(),
       ].join('\n'),
       contact: { name: PRODUCT_NAME, url: `${origin}/assistants`, email: PRODUCT_SUPPORT_EMAIL },
@@ -252,7 +256,7 @@ export function openApiDocument(origin: string) {
           operationId: 'checkAvailability',
           tags: ['Hotels'],
           summary: 'Check availability',
-          description: 'Live availability and exact prices (USD) for every room type at one hotel. Pick an option that is available and fits the party, then create a booking link with its room_type_id.',
+          description: 'Live availability and exact prices (in the hotel’s currency) for every room type at one hotel. Pick an option that is available and fits the party, then create a booking link with its room_type_id.',
           security: [],
           parameters: [propertyIdParam, ...queryParams(s.checkAvailability, ['propertyId'])],
           responses: { ...ok('Room types with availability and prices.', 'Availability'), '404': errorResponse('Unknown or unlisted hotel.'), ...COMMON_ERRORS },

@@ -71,6 +71,8 @@ export interface PropertyInfo {
   name: string;
   city: string;
   state: string;
+  /** ISO 4217 code every price at this hotel is in. */
+  currency: string;
   isActive: boolean;
   roomTypes: RoomTypeInfo[];
 }
@@ -105,6 +107,8 @@ function guestRef(userId: string): string {
 export class PortfolioData {
   readonly propertyById: Map<string, PropertyInfo>;
   readonly roomTypeById: Map<string, RoomTypeInfo>;
+  /** The portfolio's currency when every property uses the same one, else null (amounts must not be added across hotels). */
+  readonly currency: string | null;
   private loaded: { from: string; to: string; rows: BookingRow[] } | null = null;
 
   private constructor(
@@ -114,6 +118,8 @@ export class PortfolioData {
   ) {
     this.propertyById = new Map(properties.map((p) => [p.id, p]));
     this.roomTypeById = new Map(properties.flatMap((p) => p.roomTypes.map((rt) => [rt.id, rt] as const)));
+    const currencies = new Set(properties.map((p) => p.currency));
+    this.currency = currencies.size === 0 ? 'USD' : currencies.size === 1 ? [...currencies][0] : null;
   }
 
   static async load(scope: PortfolioScope, now: Date = new Date()): Promise<PortfolioData> {
@@ -126,6 +132,7 @@ export class PortfolioData {
             city: true,
             state: true,
             isActive: true,
+            currency: true,
             roomTypes: {
               select: { id: true, propertyId: true, name: true, capacity: true, totalRooms: true, basePrice: true, isActive: true },
             },

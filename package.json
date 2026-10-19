@@ -14,7 +14,11 @@
     "postinstall": "prisma generate",
     "setup:production": "node scripts/setup-production.js",
     "clean": "bash enhanced-cleanup.sh",
-    "predeploy": "bash enhanced-cleanup.sh"
+    "predeploy": "bash enhanced-cleanup.sh",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run --project unit",
+    "test:integration": "vitest run --project integration --no-file-parallelism",
+    "test:watch": "vitest --project unit"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
@@ -30,6 +34,7 @@
     "@radix-ui/react-select": "^2.2.6",
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-toast": "^1.2.14",
+    "@sentry/nextjs": "^10.76.2",
     "@types/bcryptjs": "^2.4.6",
     "@types/multer": "^2.0.0",
     "@vercel/blob": "^1.1.1",
@@ -44,11 +49,13 @@
     "lucide-react": "^0.525.0",
     "multer": "^2.0.1",
     "next": "^15.5.27",
-    "next-auth": "^5.0.0-beta.29",
+    "next-auth": "5.0.0-beta.30",
     "next-themes": "^0.4.6",
+    "oauth4webapi": "^3.8.3",
     "openai": "^7.32.0",
     "postcss": "^8.5.6",
     "prisma": "^6.11.1",
+    "qrcode": "^1.5.4",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-markdown": "^10.1.0",
@@ -65,11 +72,13 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@types/node": "^20",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "^15.5.27",
     "puppeteer": "^24.17.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.7"
   }
 }

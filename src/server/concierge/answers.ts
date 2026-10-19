@@ -9,7 +9,7 @@ import { prisma } from '@/lib/prisma';
 import { badRequest } from '../errors';
 // Aliased: useSkill is not a React hook, but the hooks lint rule goes by the name.
 import { ensureConfigSkills, listSkills, useSkill as runSkill, type AnswerBody, type Skill } from '../skills';
-import { findListedHotel } from './hotel';
+import { findListedHotel, safeAnswerTitle } from './hotel';
 import { conciergeSchemas, type AskHotelInput } from './schemas';
 
 /** One saved answer. */
@@ -81,7 +81,7 @@ function score(tokens: string[], s: Skill & { kind: 'ANSWER' }): number {
   return tokens.reduce((sum, t) => sum + (hit(t, title) ? 3 : hit(t, description) ? 2 : hit(t, answer) ? 1 : 0), 0);
 }
 
-const toAnswer = (s: Skill & { kind: 'ANSWER' }): HotelAnswer => ({ key: s.key, title: s.title, answer: (s.body as AnswerBody).answer });
+const toAnswer = (s: Skill & { kind: 'ANSWER' }): HotelAnswer => ({ key: s.key, title: safeAnswerTitle(s.title), answer: (s.body as AnswerBody).answer });
 
 /**
  * Answers a guest's question about a listed hotel from its active guest
@@ -126,7 +126,7 @@ export async function askHotel(input: AskHotelInput): Promise<AskHotelResult> {
   return {
     hotel,
     answers: [],
-    topics: answers.slice(0, 40).map((s) => ({ key: s.key, title: s.title })),
+    topics: answers.slice(0, 40).map((s) => ({ key: s.key, title: safeAnswerTitle(s.title) })),
     note: `${hotel.name} hasn’t saved an answer to that. Say you’re not sure rather than guessing, and offer the hotel’s phone (${hotel.phone})${hotel.email ? ` or email (${hotel.email})` : ''} — or pick one of these topics if it fits.`,
   };
 }

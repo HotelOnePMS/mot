@@ -2,8 +2,9 @@ import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { requireStaff, resolvePropertyId } from '@/server/authz';
-import { addDaysISO, atNoonUTC, hotelToday } from '@/server/dates';
+import { addDaysISO, atNoonUTC } from '@/server/dates';
 import { handleRoute, json, parseQuery } from '@/server/http';
+import { todayAt } from '@/server/services/hotels';
 import { frontDeskSummary, occupancySeries } from '@/server/services/frontdesk';
 import { bookingInclude, toBookingSummary } from '@/server/services/mappers';
 
@@ -15,7 +16,7 @@ export const GET = handleRoute(async (request: NextRequest) => {
   const actor = await requireStaff('analytics.view');
   const q = parseQuery(request, z.object({ propertyId: z.string().optional() }));
   const propertyId = await resolvePropertyId(actor, q.propertyId);
-  const today = hotelToday();
+  const today = await todayAt(propertyId);
   const monthStart = `${today.slice(0, 8)}01`;
 
   const [summary, forecast, property, monthRevenue, upcomingRevenue, recent, counts] = await Promise.all([
@@ -23,11 +24,11 @@ export const GET = handleRoute(async (request: NextRequest) => {
     occupancySeries(propertyId, today, addDaysISO(today, 14)),
     prisma.property.findUnique({
       where: { id: propertyId },
-      select: { id: true, name: true, city: true, state: true, primaryColor: true, interfaceMode: true, isDemo: true, tagline: true },
+      select: { id: true, name: true, city: true, state: true, primaryColor: true, interfaceMode: true, isDemo: true, tagline: true, currency: true },
     }),
     prisma.booking.aggregate({
       where: { propertyId, status: { notIn: ['CANCELLED', 'NO_SHOW'] }, createdAt: { gte: new Date(`${monthStart}T00:00:00Z`) } },
-      _sum: { totalPrice: true },
+      _sum: { subtotalPrice: true },
       _count: { _all: true },
     }),
     prisma.booking.aggregate({
@@ -36,7 +37,7 @@ export const GET = handleRoute(async (request: NextRequest) => {
         status: { in: ['PENDING', 'CONFIRMED', 'CHECKED_IN'] },
         checkIn: { gte: atNoonUTC(today), lt: atNoonUTC(addDaysISO(today, 30)) },
       },
-      _sum: { totalPrice: true },
+      _sum: { subtotalPrice: true },
       _count: { _all: true },
     }),
     prisma.booking.findMany({ where: { propertyId }, include: bookingInclude, orderBy: { createdAt: 'desc' }, take: 6 }),
@@ -64,12 +65,14 @@ export const GET = handleRoute(async (request: NextRequest) => {
 
   return json({
     property,
+    // Room revenue in the hotel's currency, before taxes and fees.
+    currency: property?.currency ?? 'USD',
     today: summary,
     forecast,
     revenue: {
-      monthToDate: Number(monthRevenue._sum.totalPrice ?? 0),
+      monthToDate: Number(monthRevenue._sum.subtotalPrice ?? 0),
       monthBookings: monthRevenue._count._all,
-      next30Days: Number(upcomingRevenue._sum.totalPrice ?? 0),
+      next30Days: Number(upcomingRevenue._sum.subtotalPrice ?? 0),
       next30Bookings: upcomingRevenue._count._all,
     },
     recent: recent.map(toBookingSummary),

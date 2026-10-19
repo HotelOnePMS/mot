@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { requireActor } from '@/server/authz';
 import { badRequest } from '@/server/errors';
+import { hashPassword, passwordProblem } from '@/server/auth/passwords';
 import { handleRoute, json, parseJson } from '@/server/http';
 import { assertDemoLoginUnchanged } from '@/server/services/users';
 
@@ -38,7 +39,7 @@ const schema = z.object({
   zipCode: opt(20),
   country: opt(100),
   currentPassword: z.string().optional(),
-  newPassword: z.string().min(8, 'must be at least 8 characters').max(200).optional(),
+  newPassword: z.string().max(200).optional(),
 });
 
 /** PUT — update your details, and optionally your password (needs the current one). */
@@ -52,9 +53,16 @@ export const PUT = handleRoute(async (request: NextRequest) => {
       throw badRequest('Your current password isn’t right.');
     }
     assertDemoLoginUnchanged(user, { password: newPassword });
-    password = await bcrypt.hash(newPassword, 12);
+    const problem = passwordProblem(newPassword, { email: user.email });
+    if (problem) throw badRequest(`New password: ${problem}`);
+    password = await hashPassword(newPassword);
   }
   const clean = Object.fromEntries(Object.entries(details).map(([k, v]) => [k, typeof v === 'string' && v === '' && k !== 'firstName' && k !== 'lastName' ? null : v]));
-  const updated = await prisma.user.update({ where: { id: actor.userId }, data: { ...clean, ...(password ? { password } : {}) }, select });
-  return json(updated);
+  // A new password signs out every session, this one included.
+  const updated = await prisma.user.update({
+    where: { id: actor.userId },
+    data: { ...clean, ...(password ? { password, passwordChangedAt: new Date(), sessionVersion: { increment: 1 } } : {}) },
+    select,
+  });
+  return json({ ...updated, signedOut: !!password });
 });
