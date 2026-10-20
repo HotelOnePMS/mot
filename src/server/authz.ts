@@ -42,6 +42,9 @@ export const PERMISSIONS = {
   'booking.checkout': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'booking.assignRoom': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'booking.note': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // The hotel's Do Not Rent list: the front desk adds guests with a note, and can take them off again.
+  'dnr.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  'dnr.manage': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'booking.confirm': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'booking.noShow': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'booking.cancel': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],

@@ -6,6 +6,7 @@ import useSWR from 'swr';
 import { useParams } from 'next/navigation';
 import {
   ArrowLeft,
+  Ban,
   BedDouble,
   CalendarClock,
   Check,
@@ -26,7 +27,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import type { ActivityEntry, BookingStatus, BookingSummary } from '@/lib/dto';
-import { fetcher } from '@/lib/fetcher';
+import { api, fetcher } from '@/lib/fetcher';
 import { fmtDay, formatNights, formatPhone, formatPhonesIn, nightsBetween, relativeDay, telHref, timeAgo } from '@/lib/format';
 import { BOOKING_STATUS } from '@/lib/status';
 import { cn } from '@/lib/utils';
@@ -46,9 +47,11 @@ import {
 import { BookingStatusBadge, SourceBadge } from '@/components/hotel/badges';
 import { BookingPayments } from '@/components/payments/BookingPayments';
 import { AssignRoomDialog, CheckInDialog, CheckOutDialog, ConfirmDialog, NoteDialog } from '@/components/frontdesk/dialogs';
+import { AddDoNotRentDialog, DoNotRentBadge, DoNotRentCallout } from '@/components/frontdesk/DoNotRent';
 import { useBookingActions } from '@/components/frontdesk/useBookingActions';
 import { useConsole } from '@/components/console/ConsoleProvider';
 import { useCopy } from '@/components/setup/CopyButton';
+import { toast } from 'sonner';
 
 interface Detail {
   booking: BookingSummary;
@@ -57,7 +60,7 @@ interface Detail {
   actions: BookingStatus[];
 }
 
-type DialogKind = 'checkin' | 'checkout' | 'note' | 'assign' | 'noshow' | 'cancel' | 'reinstate';
+type DialogKind = 'checkin' | 'checkout' | 'note' | 'assign' | 'noshow' | 'cancel' | 'reinstate' | 'dnr' | 'undnr';
 
 const FRAME = 'mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8';
 
@@ -131,11 +134,12 @@ function BackLink() {
 
 export default function BookingDetailPage() {
   const { bookingId } = useParams<{ bookingId: string }>();
-  const { can, askAgent, today } = useConsole();
+  const { can, askAgent, today, refresh } = useConsole();
   const { data, error, isLoading } = useSWR<Detail>(`/api/admin/bookings/${bookingId}`, fetcher);
   const { transition, pending } = useBookingActions();
   const [dialog, setDialog] = React.useState<DialogKind | null>(null);
   const { copy, copied } = useCopy();
+  const [removingDnr, setRemovingDnr] = React.useState(false);
 
   if (error) {
     return (
@@ -222,7 +226,23 @@ export default function BookingDetailPage() {
   const canConfirm = b.status === 'PENDING' && has('CONFIRMED') && can('booking.confirm') && primary?.label !== 'Confirm';
   const canNoShow = has('NO_SHOW') && b.checkIn <= today && can('booking.noShow');
   const canCancel = has('CANCELLED') && can('booking.cancel');
-  const hasMenu = canAssign || canNote || canConfirm || canNoShow || canCancel;
+  const canDnr = can('dnr.manage');
+  const hasMenu = canAssign || canNote || canConfirm || canNoShow || canCancel || canDnr;
+
+  async function removeDnr() {
+    if (!b.doNotRent) return;
+    setRemovingDnr(true);
+    try {
+      await api(`/api/admin/do-not-rent/${b.doNotRent.id}`, { method: 'DELETE' });
+      toast.success(`${b.guest.name} is off the Do Not Rent list`);
+      refresh();
+      setDialog(null);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setRemovingDnr(false);
+    }
+  }
 
   return (
     <div className={cn(FRAME, 'space-y-6')}>
@@ -250,6 +270,7 @@ export default function BookingDetailPage() {
               <BookingStatusBadge status={b.status} />
               {/* Booked together with other room types: searching this code lists every room type in the booking. */}
               {b.reservationCode && <Badge variant="neutral">Group booking {b.reservationCode}</Badge>}
+              <DoNotRentBadge match={b.doNotRent} size="default" />
               {late && <Badge variant="warning">Late arrival</Badge>}
               {overdue && <Badge variant="danger">Past check-out</Badge>}
             </div>
@@ -289,9 +310,23 @@ export default function BookingDetailPage() {
                       )}
                     </DropdownMenuGroup>
                   )}
-                  {(canNoShow || canCancel) && (
+                  {canDnr && (
                     <>
                       {(canAssign || canNote || canConfirm) && <DropdownMenuSeparator />}
+                      {b.doNotRent ? (
+                        <DropdownMenuItem onSelect={() => setDialog('undnr')}>
+                          <Ban aria-hidden /> Remove from Do Not Rent…
+                        </DropdownMenuItem>
+                      ) : (
+                        <DropdownMenuItem destructive onSelect={() => setDialog('dnr')}>
+                          <Ban aria-hidden /> Add to Do Not Rent…
+                        </DropdownMenuItem>
+                      )}
+                    </>
+                  )}
+                  {(canNoShow || canCancel) && (
+                    <>
+                      {(canAssign || canNote || canConfirm || canDnr) && <DropdownMenuSeparator />}
                       <DropdownMenuLabel>Asks you to confirm</DropdownMenuLabel>
                       {canNoShow && (
                         <DropdownMenuItem destructive onSelect={() => setDialog('noshow')}>
@@ -311,6 +346,8 @@ export default function BookingDetailPage() {
           </div>
         )}
       </div>
+
+      <DoNotRentCallout match={b.doNotRent} />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <div className="space-y-6">
@@ -516,6 +553,16 @@ export default function BookingDetailPage() {
       <CheckOutDialog booking={dialog === 'checkout' ? b : null} open={dialog === 'checkout'} onOpenChange={(o) => !o && setDialog(null)} today={today} />
       <NoteDialog booking={dialog === 'note' ? b : null} open={dialog === 'note'} onOpenChange={(o) => !o && setDialog(null)} />
       <AssignRoomDialog booking={dialog === 'assign' ? b : null} open={dialog === 'assign'} onOpenChange={(o) => !o && setDialog(null)} />
+      <AddDoNotRentDialog booking={b} open={dialog === 'dnr'} onOpenChange={(o) => !o && setDialog(null)} />
+      <ConfirmDialog
+        open={dialog === 'undnr'}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title={`Take ${b.guest.name} off the Do Not Rent list?`}
+        description="The front desk stops being warned when they book or check in. The activity log keeps who added and removed them."
+        confirmLabel="Remove from list"
+        loading={removingDnr}
+        onConfirm={removeDnr}
+      />
       <ConfirmDialog
         open={dialog === 'noshow' || dialog === 'cancel' || dialog === 'reinstate'}
         onOpenChange={(o) => !o && setDialog(null)}

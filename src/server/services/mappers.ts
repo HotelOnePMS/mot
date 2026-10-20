@@ -67,6 +67,7 @@ export function toBookingSummary(b: BookingWithRelations): BookingSummary {
         })
       : [],
     notes: b.notes,
+    doNotRent: null,
     createdAt: b.createdAt.toISOString(),
   };
 }

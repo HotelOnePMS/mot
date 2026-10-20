@@ -6,6 +6,7 @@ import { formatDateRange, formatMoney, formatNights, relativeDay } from '@/lib/f
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Avatar } from '@/components/ui/primitives';
+import { DoNotRentBadge } from '@/components/frontdesk/DoNotRent';
 import { BookingStatusBadge, PaymentBadge, RiskFlagList } from './badges';
 
 /** The guest's name; when the row opens something, it stretches over the whole row. */
@@ -72,6 +73,7 @@ export function BookingRow({
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             {name}
             <span className="font-mono text-2xs text-muted-foreground">{b.code}</span>
+            <DoNotRentBadge match={b.doNotRent} />
             {late && (
               <Badge variant="warning" size="sm">
                 Late arrival

@@ -16,6 +16,7 @@ import { Field } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Callout, Skeleton } from '@/components/ui/primitives';
 import { Textarea } from '@/components/ui/textarea';
+import { DoNotRentCallout } from './DoNotRent';
 import { useBookingActions } from './useBookingActions';
 
 type Prefs = { highFloor: boolean; quiet: boolean };
@@ -154,6 +155,7 @@ export function CheckInDialog({ booking, open, onOpenChange }: { booking: Bookin
             {booking.guests === 1 ? '' : 's'}
           </DialogDescription>
         </DialogHeader>
+        <DoNotRentCallout match={booking.doNotRent} />
         {booking.notes && (
           <p className="flex items-start gap-2 rounded-xl bg-muted px-3 py-2 text-sm">
             <MessageSquareText className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />

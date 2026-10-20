@@ -20,6 +20,7 @@ import { recordAudit, type OpContext } from './audit';
 import { assignRoom, confirmPayAtProperty, createBooking, getBookingForStaff, transitionBooking } from './bookings';
 import { todayAt } from './hotels';
 import { propertyAvailability, type RoomTypeAvailability } from './inventory';
+import { attachDoNotRentOne } from './doNotRent';
 import { toBookingSummary } from './mappers';
 
 export interface DeskReservationInput {
@@ -134,5 +135,5 @@ export async function createDeskReservation(ctx: OpContext, input: DeskReservati
       paymentStatus: input.paid ? 'PAID' : 'PAY_AT_PROPERTY',
     });
   }
-  return toBookingSummary(await getBookingForStaff(actor, booking.id));
+  return attachDoNotRentOne(toBookingSummary(await getBookingForStaff(actor, booking.id)));
 }

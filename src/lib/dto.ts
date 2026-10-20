@@ -37,8 +37,25 @@ export interface BookingSummary {
   /** Reasons for the front desk to look twice (staff only; computed on the server). */
   riskFlags: RiskFlag[];
   notes: string | null;
+  /** The guest is on this hotel's Do Not Rent list (staff only; filled by attachDoNotRent on the server, else null). */
+  doNotRent: DoNotRentMatch | null;
   createdAt: string;
 }
+
+/** One guest on a hotel's Do Not Rent list. */
+export interface DoNotRentEntry {
+  id: string;
+  propertyId: string;
+  guestName: string;
+  email: string | null;
+  phone: string | null;
+  reason: string;
+  createdAt: string;
+  createdBy: { id: string; name: string };
+}
+
+/** What the front desk sees on a booking whose guest is on the list. */
+export type DoNotRentMatch = Pick<DoNotRentEntry, 'id' | 'guestName' | 'reason' | 'createdAt' | 'createdBy'>;
 
 export type Occupancy = 'VACANT' | 'OCCUPIED' | 'ARRIVING' | 'DEPARTING' | 'TURNOVER';
 

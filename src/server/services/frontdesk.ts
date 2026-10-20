@@ -46,6 +46,16 @@ export async function frontDeskSummary(actor: Actor, propertyId: string, request
   const unassignedArrivals = arrivalsDue.filter((b) => !b.room).length;
 
   const alerts: FrontDeskAlert[] = [];
+  const barred = [...arrivalsDue, ...staying].filter((b) => b.doNotRent);
+  if (barred.length) {
+    alerts.push({
+      id: 'dnr',
+      tone: 'danger',
+      title: `${barred.length} guest${barred.length > 1 ? 's' : ''} on your Do Not Rent list ${barred.length > 1 ? 'have' : 'has'} a booking`,
+      detail: barred.map((b) => `${b.guest.name} (${b.code}): ${b.doNotRent!.reason}`).join(' · '),
+      command: `show reservation ${barred[0].code}`,
+    });
+  }
   const overdue = departuresDue.filter((b) => b.checkOut < day);
   if (overdue.length) {
     alerts.push({
