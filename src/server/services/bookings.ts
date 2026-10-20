@@ -438,6 +438,15 @@ export interface TransitionResult {
   effects: string[];
 }
 
+export const GUEST_ID_REQUIRED = 'This hotel needs a photo of the guest’s ID before check-in. Add it to the reservation, then check in.';
+
+/** The hotel requires an ID photo at check-in and none is on the reservation. */
+export async function guestIdMissing(booking: { id: string; propertyId: string }): Promise<boolean> {
+  const property = await prisma.property.findUnique({ where: { id: booking.propertyId }, select: { requireGuestId: true } });
+  if (!property?.requireGuestId) return false;
+  return (await prisma.guestIdDocument.count({ where: { bookingId: booking.id } })) === 0;
+}
+
 /**
  * Validates whether a transition is allowed right now, without changing
  * anything. Used by the agent to build an honest confirmation card.
@@ -459,6 +468,7 @@ export async function checkTransition(
   if (to === 'CHECKED_IN') {
     if (today < checkIn) return { ok: false, reason: `This stay starts ${formatDay(checkIn, 'weekday')}. Check-in opens on the arrival day.` };
     if (today >= checkOut) return { ok: false, reason: `This stay ended ${formatDay(checkOut, 'weekday')}.` };
+    if (await guestIdMissing(booking)) return { ok: false, reason: GUEST_ID_REQUIRED };
   }
   if (to === 'NO_SHOW' && today < checkIn) {
     return { ok: false, reason: `The guest isn't due until ${formatDay(checkIn, 'weekday')}.` };

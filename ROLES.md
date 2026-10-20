@@ -19,6 +19,14 @@ The middleware (`src/middleware.ts`) only has the cookie, so it is a coarse gate
 
 Housekeepers may change a room's status only for rooms with an open cleaning task assigned to them or unassigned (same rule as task updates); working an unassigned room claims it.
 
+## Guest ID photos at check-in
+
+The front desk photographs or uploads the guest's ID from the check-in dialog or the reservation page (camera on tablets, phones and webcams, or a file). On a US or Canadian licence, a photo of the back reads the barcode (where the browser supports it) to fill in the name, last four of the number and expiry; the full number and date of birth are never stored.
+
+- Images are encrypted with `HOTELONE_VAULT_KEY` (AES-256-GCM, bound to the reservation) in the database, never in public storage, and are served only by `/api/admin/guest-ids/[docId]` with `no-store` caching.
+- `guestid.capture`, `guestid.view`, `guestid.delete`: front desk, managers, owners, admins, for their own hotels only. Housekeepers have no access. Adding, viewing and deleting are each written to the activity log.
+- `guestid.manage` (owners, managers): Settings → *Guest ID at check-in*: require an ID before check-in (enforced on the server, including walk-ins and the agent) and how many days after check-out photos are kept (default 30, 0–365). A daily cron (`/api/cron/purge-guest-ids`, needs `CRON_SECRET`) deletes expired photos; guests still checked in keep theirs.
+
 ## Team directory
 
 `users.view` (emails and phone numbers, guests) is owner/manager/admin. Front desk and housekeepers use `/api/admin/team` for assignment pickers: names of the housekeeping team only, no emails.

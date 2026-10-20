@@ -64,6 +64,26 @@ export function open<T = unknown>(sealed: string, aad = ''): T {
   return JSON.parse(pt.toString('utf8')) as T;
 }
 
+const BYTES_V1 = 1;
+
+/** Seal binary data (guest ID photos). Output: version byte, 12-byte iv, 16-byte tag, ciphertext. */
+export function sealBytes(data: Buffer, aad = ''): Buffer {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key(), iv);
+  if (aad) cipher.setAAD(Buffer.from(aad));
+  const ct = Buffer.concat([cipher.update(data), cipher.final()]);
+  return Buffer.concat([Buffer.from([BYTES_V1]), iv, cipher.getAuthTag(), ct]);
+}
+
+export function openBytes(sealed: Uint8Array, aad = ''): Buffer {
+  const buf = Buffer.from(sealed);
+  if (buf.length < 29 || buf[0] !== BYTES_V1) throw new Error('Unrecognised sealed data.');
+  const decipher = createDecipheriv('aes-256-gcm', key(), buf.subarray(1, 13));
+  if (aad) decipher.setAAD(Buffer.from(aad));
+  decipher.setAuthTag(buf.subarray(13, 29));
+  return Buffer.concat([decipher.update(buf.subarray(29)), decipher.final()]);
+}
+
 export const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
 export function safeEqual(a: string, b: string): boolean {

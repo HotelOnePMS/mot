@@ -16,6 +16,7 @@ import { Field } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Callout, Skeleton } from '@/components/ui/primitives';
 import { Textarea } from '@/components/ui/textarea';
+import { GuestIdPanel, useGuestIds } from './GuestId';
 import { useBookingActions } from './useBookingActions';
 
 type Prefs = { highFloor: boolean; quiet: boolean };
@@ -131,6 +132,7 @@ export function CheckInDialog({ booking, open, onOpenChange }: { booking: Bookin
   const [roomId, setRoomId] = React.useState<string | null>(null);
   const [option, setOption] = React.useState<RoomOption | null>(null);
   const [showAll, setShowAll] = React.useState(false);
+  const { data: ids } = useGuestIds(booking?.id, open);
   React.useEffect(() => {
     if (open) {
       setRoomId(booking?.room?.id ?? null);
@@ -144,6 +146,7 @@ export function CheckInDialog({ booking, open, onOpenChange }: { booking: Bookin
     setOption(o);
   };
   const dirty = option ? !option.ready : false;
+  const idMissing = !!ids?.required && ids.documents.length === 0;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
@@ -175,6 +178,7 @@ export function CheckInDialog({ booking, open, onOpenChange }: { booking: Bookin
             </p>
           </Callout>
         )}
+        <GuestIdPanel booking={booking} compact />
         <RoomPicker booking={booking} value={roomId} onChange={onChange} readyOnly={!showAll} />
         <label className="flex min-h-10 cursor-pointer items-center gap-2.5 text-sm text-muted-foreground">
           <input
@@ -198,7 +202,8 @@ export function CheckInDialog({ booking, open, onOpenChange }: { booking: Bookin
             Cancel
           </Button>
           <Button
-            disabled={!roomId}
+            disabled={!roomId || idMissing}
+            title={idMissing ? 'Add a photo of the guest’s ID first' : undefined}
             loading={pending === `${booking.id}:CHECKED_IN`}
             loadingText="Checking in…"
             onClick={async () => {

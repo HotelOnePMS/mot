@@ -46,6 +46,7 @@ import {
 import { BookingStatusBadge, SourceBadge } from '@/components/hotel/badges';
 import { BookingPayments } from '@/components/payments/BookingPayments';
 import { AssignRoomDialog, CheckInDialog, CheckOutDialog, ConfirmDialog, NoteDialog } from '@/components/frontdesk/dialogs';
+import { GuestIdCard } from '@/components/frontdesk/GuestId';
 import { useBookingActions } from '@/components/frontdesk/useBookingActions';
 import { useConsole } from '@/components/console/ConsoleProvider';
 import { useCopy } from '@/components/setup/CopyButton';
@@ -471,6 +472,9 @@ export default function BookingDetailPage() {
               </li>
             </ul>
           </Card>
+
+          {/* Guest ID photos */}
+          {can('guestid.view') && <GuestIdCard booking={b} />}
 
           {/* Payment, risk flags and refunds */}
           <BookingPayments booking={b} />

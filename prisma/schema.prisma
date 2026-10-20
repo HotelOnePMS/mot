@@ -94,6 +94,10 @@ model Property {
   paymentPolicy          PaymentPolicy            @default(PAY_AT_PROPERTY)
   /// Nights charged at booking when paymentPolicy is DEPOSIT.
   depositNights          Int                      @default(1)
+  /// Guest ID photos: refuse check-in until one is on the reservation.
+  requireGuestId         Boolean                  @default(false)
+  /// Guest ID photos are deleted this many days after the stay ends (0 = the day after check-out).
+  guestIdRetentionDays   Int                      @default(30)
   /// Default booking page address: "oceanview-resort" serves oceanview-resort.hotelone.site
   subdomain              String?                  @unique
   /// Property's own domain for its booking page, e.g. "book.mymotel.com"
@@ -122,6 +126,7 @@ model Property {
   agentApiKeys           AgentApiKey[]
   charges                PropertyCharge[]
   nightAudits            NightAudit[]
+  guestIdDocuments       GuestIdDocument[]
   // OTA connections (Expedia, Booking.com)
   channelConnections     ChannelConnection[]
 
@@ -248,6 +253,7 @@ model Booking {
   disputes                Dispute[]
   policyAcceptance        BookingPolicyAcceptance?
   checklist               BookingChecklist?
+  guestIdDocuments        GuestIdDocument[]
   statusHistory           BookingStatusHistory[]
   channelReservation      ChannelReservation?
   property                Property                 @relation(fields: [propertyId], references: [id])
@@ -966,6 +972,46 @@ model BookingChecklist {
   booking                Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
   @@map("booking_checklists")
+}
+
+enum GuestIdType {
+  DRIVERS_LICENSE
+  PASSPORT
+  NATIONAL_ID
+  OTHER
+}
+
+enum GuestIdSide {
+  FRONT
+  BACK
+}
+
+/// A photo of a guest's ID taken at check-in. The image is encrypted
+/// with the vault key (AES-256-GCM, src/server/vault.ts) and only ever served through a
+/// staff route that checks the role and property and logs who viewed it.
+/// Deleted automatically guestIdRetentionDays after the stay ends.
+model GuestIdDocument {
+  id           String      @id @default(cuid())
+  bookingId    String
+  propertyId   String
+  type         GuestIdType @default(DRIVERS_LICENSE)
+  side         GuestIdSide @default(FRONT)
+  /// Read from the barcode on the back of a licence, or typed in; never the full number.
+  nameOnId     String?
+  numberLast4  String?
+  expiresOn    String?
+  mimeType     String
+  sizeBytes    Int
+  /// sealBytes(): version byte, iv, auth tag, ciphertext.
+  encrypted    Bytes
+  capturedById String?
+  createdAt    DateTime    @default(now())
+  booking      Booking     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  property     Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([propertyId, createdAt])
+  @@map("guest_id_documents")
 }
 
 /// Stripe webhook events already handled, so redeliveries are ignored (idempotency).

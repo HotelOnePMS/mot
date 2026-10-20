@@ -77,6 +77,10 @@ export async function createDeskReservation(ctx: OpContext, input: DeskReservati
   if (input.checkInNow) {
     requirePermission(actor, 'booking.checkin');
     if (input.checkIn !== (await todayAt(input.propertyId))) throw badRequest('Only guests arriving today can be checked in now.');
+    const property = await prisma.property.findUnique({ where: { id: input.propertyId }, select: { requireGuestId: true } });
+    if (property?.requireGuestId) {
+      throw badRequest('This hotel needs a photo of the guest’s ID before check-in. Create the reservation without checking in, add the ID on its page, then check in.');
+    }
   }
   if (input.roomId) {
     const room = await prisma.room.findFirst({ where: { id: input.roomId, propertyId: input.propertyId, roomTypeId: input.roomTypeId }, select: { id: true } });
