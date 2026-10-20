@@ -117,6 +117,31 @@ export function allocateCents(cents: number, weights: readonly number[]): number
   return out;
 }
 
+/**
+ * One payment for several room types, shared out per room type: what was
+ * charged for each (in proportion to what was due for it) and what was
+ * refunded of it. Refunds count against cancelled room types first, up to what
+ * was charged for them, then against the rest in proportion, so cancelling and
+ * refunding one room type leaves the others fully paid. Whole cents that add up.
+ */
+export function reservationShares(input: {
+  paidCents: number;
+  refundedCents: number;
+  lines: readonly { dueCents: number; cancelled: boolean }[];
+}): { paidCents: number; refundedCents: number }[] {
+  const paid = allocateCents(Math.max(0, input.paidCents), input.lines.map((l) => l.dueCents));
+  const refunded = paid.map(() => 0);
+  let left = Math.min(Math.max(0, input.refundedCents), Math.max(0, input.paidCents));
+  input.lines.forEach((l, i) => {
+    if (!l.cancelled || left <= 0) return;
+    const take = Math.min(left, paid[i]);
+    refunded[i] += take;
+    left -= take;
+  });
+  if (left > 0) allocateCents(left, paid.map((p, i) => p - refunded[i])).forEach((c, i) => (refunded[i] += c));
+  return paid.map((p, i) => ({ paidCents: p, refundedCents: refunded[i] }));
+}
+
 /** Booking payment status once the money moves: PAID, DEPOSIT_PAID, or the refund states. */
 export function bookingPaymentStatus(input: { totalCents: number; paidCents: number; refundedCents: number }): string {
   const { totalCents, paidCents, refundedCents } = input;

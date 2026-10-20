@@ -9,7 +9,7 @@ import { DomainError, badRequest } from '../errors';
 import { policyFor } from '../services/guest';
 import { localeOf } from '../services/hotels';
 import { propertyFacts, runsOnHotelOne } from '../concierge/facts';
-import { availabilityOptions, bookableReservation, linesLabel, lookupBooking, priceOptions, reservationRooms, stayLines, submitBookingRequest } from '../concierge/shared';
+import { availabilityOptions, bookableReservation, bookingStanding, linesLabel, lookupBooking, priceOptions, reservationRooms, stayLines, submitBookingRequest } from '../concierge/shared';
 import { checkoutPath } from '../concierge/urls';
 import { alertTeam } from '../services/guestRequests';
 import { useSkill as runSkill } from '../skills';
@@ -78,14 +78,14 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
       if (!b) return { found: false, say: 'I couldn’t find a booking with that code and last name.' };
       const checkIn = toISODate(b.checkIn);
       const policy = policyFor(checkIn, localeOf(b.property).timezone);
-      const items = await reservationRooms(b);
+      const stands = bookingStanding(b, await reservationRooms(b));
       return {
         found: true,
-        status: b.status,
-        room: items ? items.map((i) => `${i.rooms} × ${i.room}`).join(', ') : b.roomType.name,
+        status: stands.status,
+        room: stands.room,
         check_in: formatDay(checkIn, 'weekday'),
         check_out: formatDay(toISODate(b.checkOut), 'weekday'),
-        guests: items ? items.reduce((s, i) => s + i.guests, 0) : b.guests,
+        guests: stands.guests,
         free_changes_until: policy.passed ? null : policy.deadlineLabel,
         manage: b.guestEmail
           ? integrationManageNote(b.property.phone)

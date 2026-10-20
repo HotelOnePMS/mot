@@ -171,12 +171,29 @@ export const GET = handleRoute(async () => {
     orderBy: { checkIn: 'desc' },
   });
 
+  // Several room types booked together are one trip, under the code the guest was given.
+  const trips = new Map<string, typeof bookings>();
+  for (const b of bookings) trips.set(b.groupCode ?? b.id, [...(trips.get(b.groupCode ?? b.id) ?? []), b]);
+
   return NextResponse.json(
-    bookings.map(({ stripeCheckoutSessionId: _s, stripePaymentIntentId: _p, ...b }) => ({
-      ...b,
-      checkIn: toDateString(b.checkIn),
-      checkOut: toDateString(b.checkOut),
-      totalPrice: Number(b.totalPrice),
-    }))
+    [...trips.values()].map((rows) => {
+      const live = rows.filter((r) => r.status !== 'CANCELLED' && r.status !== 'NO_SHOW');
+      const counted = live.length ? live : rows;
+      const lead = rows.find((r) => r.code === r.groupCode) ?? rows[0];
+      const shown = live.length && !live.includes(lead) ? live[0] : lead;
+      const { stripeCheckoutSessionId: _s, stripePaymentIntentId: _p, ...b } = shown;
+      const several = rows.length > 1;
+      return {
+        ...b,
+        code: lead.groupCode ?? b.code,
+        checkIn: toDateString(b.checkIn),
+        checkOut: toDateString(b.checkOut),
+        guests: several ? counted.reduce((n, r) => n + r.guests, 0) : b.guests,
+        rooms: several ? counted.reduce((n, r) => n + r.rooms, 0) : b.rooms,
+        totalPrice: several ? fromCents(counted.reduce((n, r) => n + toCents(Number(r.totalPrice)), 0)) : Number(b.totalPrice),
+        roomType: several ? { ...b.roomType, name: counted.map((r) => `${r.rooms} × ${r.roomType.name}`).join(', ') } : b.roomType,
+        room: several ? null : b.room,
+      };
+    })
   );
 });

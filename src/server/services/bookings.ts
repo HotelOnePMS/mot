@@ -165,7 +165,8 @@ export async function createBooking(input: CreateBookingInput): Promise<CreatedB
 /**
  * The guest's reservation from moments ago with exactly these lines and party
  * split, lead first; null if there is none. A single line only matches a
- * single booking, several lines only a whole group.
+ * single booking, several lines only a whole group with none of it cancelled
+ * (`recent` holds every row of the guest's recent bookings for the stay).
  */
 function sameReservation(recent: BookingWithRelations[], lines: BookingLine[], party: number[]): BookingWithRelations[] | null {
   const want = lines.map((l, i) => `${l.roomTypeId}:${l.rooms}:${party[i]}`).sort().join(',');
@@ -176,6 +177,7 @@ function sameReservation(recent: BookingWithRelations[], lines: BookingLine[], p
   }
   for (const rows of groups.values()) {
     if (rows.length !== lines.length || (lines.length > 1) !== !!rows[0].groupCode) continue;
+    if (rows.some((b) => b.status === 'CANCELLED')) continue;
     if (rows.map((b) => `${b.roomTypeId}:${b.rooms}:${b.guests}`).sort().join(',') !== want) continue;
     return [...rows].sort((a, b) => Number(b.code === b.groupCode) - Number(a.code === a.groupCode));
   }
@@ -247,15 +249,14 @@ export async function createReservation(input: CreateReservationInput): Promise<
       return await prisma.$transaction(
         async (tx) => {
           // The same guest booking the same stay moments ago (a double tap, or voice and page both booking) gets that booking back.
+          // Every room type of those bookings is fetched, so a reservation only matches as a whole.
           const recent = await tx.booking.findMany({
             where: {
               userId: input.userId,
               propertyId: input.propertyId,
-              roomTypeId: { in: lines.map((l) => l.roomTypeId) },
               checkIn: atNoonUTC(input.checkIn),
               checkOut: atNoonUTC(input.checkOut),
               paymentStatus: input.paymentStatus ?? 'UNPAID',
-              status: { not: 'CANCELLED' },
               createdAt: { gte: new Date(Date.now() - DUPLICATE_WINDOW_MS) },
             },
             include: bookingInclude,
@@ -327,8 +328,8 @@ export async function createReservation(input: CreateReservationInput): Promise<
                     : {}),
                   code: i === 0 ? leadCode : generateBookingCode(),
                   groupCode: lines.length > 1 ? leadCode : null,
-                  // Special requests are for the whole party: kept on the lead line.
-                  notes: i === 0 ? input.notes?.trim() || null : null,
+                  // Special requests are for the whole party: on every room type, so the desk sees them whichever room it handles.
+                  notes: input.notes?.trim() || null,
                   statusHistory: {
                     create: {
                       status: 'PENDING',

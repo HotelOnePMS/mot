@@ -470,7 +470,7 @@ function Checkout() {
       lines.length && checkIn && checkOut
         ? [
             `checkout for ${orderWords}`,
-            unavailable ? soldOutText.replace(/\.$/, '') : '',
+            unavailable ? voiceText(soldOutText, 160).replace(/\.$/, '') : '',
             tooSmall ? `${tooSmallText.replace(/\.$/, '')} — they need to add a room` : '',
             status === 'loading' ? '' : signedIn ? `signed in as ${session?.user?.name ?? session?.user?.email}` : 'not signed in yet',
             method === 'stripe' ? 'card payment required to confirm' : 'paying at the hotel',
@@ -514,7 +514,7 @@ function Checkout() {
         }
         if (quoteError) return { ok: false, error: `The price couldn’t be checked: ${(quoteError as Error).message}` };
         if (!quote) return { ok: false, error: 'The price is still loading — try again in a moment.' };
-        if (unavailable) return { ok: false, error: `${soldOutText} Offer to check other rooms or dates.` };
+        if (unavailable) return { ok: false, error: `${voiceText(soldOutText, 160)} Offer to check other rooms or dates.` };
         if (tooSmall) return { ok: false, error: `${tooSmallText} Offer to add a room.` };
         if (!accepted) {
           setNeedAccept(true);

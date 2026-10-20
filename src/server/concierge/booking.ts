@@ -14,7 +14,7 @@ import { localeOf } from '../services/hotels';
 import { findListedHotel } from './hotel';
 import { consumeRateLimit } from './rateLimit';
 import { conciergeSchemas, type BookingLinkInput, type CreateBookingInput, type FindBookingInput, type RequestBookingInput } from './schemas';
-import { bookableReservation, lookupBooking, reservationRooms, stayLines, submitBookingRequest, type BookableReservation, type BookingRequestSaved } from './shared';
+import { bookableReservation, bookingStanding, lookupBooking, reservationRooms, stayLines, submitBookingRequest, type BookableReservation, type BookingRequestSaved } from './shared';
 import { bookingPageUrl, checkoutPath, siteUrl } from './urls';
 
 // ---------------------------------------------------------------------------
@@ -431,17 +431,18 @@ export async function findBooking(input: FindBookingInput): Promise<FindBookingR
   const checkOut = toISODate(b.checkOut);
   const policy = policyFor(checkIn, localeOf(b.property).timezone);
   const items = await reservationRooms(b);
+  const stands = bookingStanding(b, items);
   return {
     found: true,
     code: b.code ?? a.code,
-    status: b.status,
+    status: stands.status,
     hotel: b.property,
-    room: items ? items.map((i) => `${i.rooms} × ${i.room}`).join(', ') : b.roomType.name,
+    room: stands.room,
     checkIn,
     checkOut,
     nights: diffDays(checkIn, checkOut),
-    guests: items ? items.reduce((s, i) => s + i.guests, 0) : b.guests,
-    rooms: items ? items.reduce((s, i) => s + i.rooms, 0) : b.rooms,
+    guests: stands.guests,
+    rooms: stands.rooms,
     items,
     freeChangesUntil: policy.passed ? null : policy.deadlineLabel,
     manage: b.guestEmail

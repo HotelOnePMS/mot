@@ -14,7 +14,7 @@
 import type Stripe from 'stripe';
 import { prisma } from '@/lib/prisma';
 import { getStripe } from '@/lib/stripe';
-import { bookingPaymentStatus, fromCents, toCents } from '@/lib/payments';
+import { bookingPaymentStatus, fromCents, reservationShares, toCents } from '@/lib/payments';
 import { toDateString } from '@/lib/date-utils';
 import { sendBookingConfirmation } from '../email';
 import { nightlyInventory } from '../services/inventory';
@@ -59,6 +59,23 @@ export async function paymentLines(booking: { id: string; groupCode: string | nu
 }
 
 const sumCents = (rows: { totalPrice: unknown }[]) => rows.reduce((s, r) => s + toCents(Number(r.totalPrice)), 0);
+
+/**
+ * Each line's payment status from its share of the reservation's payments
+ * (refunds count against cancelled room types first, so the room types the
+ * guest kept stay paid). A single booking's status is its own.
+ */
+async function lineStatuses(lines: Awaited<ReturnType<typeof paymentLines>>): Promise<Map<string, string>> {
+  const totals = await totalsFor(lines.map((l) => l.id));
+  if (lines.length < 2) return new Map(lines.map((l) => [l.id, bookingPaymentStatus({ totalCents: sumCents(lines), ...totals })]));
+  // The same order as the per-line amounts shown to staff (mappers.ts), so a cent of rounding lands on the same line.
+  const ordered = [...lines].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const shares = reservationShares({
+    ...totals,
+    lines: ordered.map((l) => ({ dueCents: toCents(Number(l.paymentDue ?? l.totalPrice)), cancelled: l.status === 'CANCELLED' || l.status === 'NO_SHOW' })),
+  });
+  return new Map(ordered.map((l, i) => [l.id, bookingPaymentStatus({ totalCents: toCents(Number(l.totalPrice)), ...shares[i] })]));
+}
 
 function cardDetails(charge: Stripe.Charge | null) {
   const card = charge?.payment_method_details?.card;
@@ -175,7 +192,8 @@ export async function recordPaymentSucceeded(paymentIntentId: string, opts_: { a
   }
 
   // The hold ran out before the webhook arrived: take the reservation back if all its rooms are still free.
-  const expired = lines.filter((l) => l.status === 'CANCELLED' && l.paymentStatus === 'EXPIRED');
+  // Read the lines again: the hold may have been released while this payment was being recorded.
+  const expired = (await paymentLines(booking)).filter((l) => l.status === 'CANCELLED' && l.paymentStatus === 'EXPIRED');
   if (expired.length) {
     let free = true;
     for (const l of expired) {
@@ -240,10 +258,10 @@ export async function applyRefundState(input: { paymentIntentId: string; amountR
   // A dispute in progress keeps its own status until it closes.
   if (booking.paymentStatus === 'DISPUTED') return;
   const lines = await paymentLines(booking);
-  const totals = await totalsFor(lines.map((l) => l.id));
-  const paymentStatus = bookingPaymentStatus({ totalCents: sumCents(lines), paidCents: totals.paidCents, refundedCents: totals.refundedCents });
+  const statuses = await lineStatuses(lines);
   const note = `Refund recorded: ${fromCents(refundedCents).toFixed(2)} of ${fromCents(paidCents).toFixed(2)} ${booking.currency} refunded to the card${lines.length > 1 ? ' (one payment for every room type in this reservation)' : ''}`;
   for (const line of lines) {
+    const paymentStatus = statuses.get(line.id)!;
     if (paymentStatus === line.paymentStatus || line.paymentStatus === 'DISPUTED') continue;
     await prisma.booking.update({ where: { id: line.id }, data: { paymentStatus, statusHistory: { create: { status: line.status, notes: note } } } });
   }
@@ -254,7 +272,10 @@ export async function restorePaymentStatus(bookingId: string, lost: boolean): Pr
   const booking = await prisma.booking.findUnique({ where: { id: bookingId }, select: { id: true, groupCode: true } });
   if (!booking) return;
   const lines = await paymentLines(booking);
-  const totals = await totalsFor(lines.map((l) => l.id));
-  const paymentStatus = lost ? 'DISPUTE_LOST' : bookingPaymentStatus({ totalCents: sumCents(lines), paidCents: totals.paidCents, refundedCents: totals.refundedCents });
-  await prisma.booking.updateMany({ where: { id: { in: lines.map((l) => l.id) } }, data: { paymentStatus } });
+  if (lost) {
+    await prisma.booking.updateMany({ where: { id: { in: lines.map((l) => l.id) } }, data: { paymentStatus: 'DISPUTE_LOST' } });
+    return;
+  }
+  const statuses = await lineStatuses(lines);
+  for (const line of lines) await prisma.booking.update({ where: { id: line.id }, data: { paymentStatus: statuses.get(line.id)! } });
 }

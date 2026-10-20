@@ -302,6 +302,24 @@ export async function reservationRooms(b: { groupCode: string | null; userId: st
   return rows.length > 1 ? rows.map((r) => ({ room: r.roomType.name, rooms: r.rooms, guests: r.guests, status: r.status })) : null;
 }
 
+/**
+ * How a booking found by its code stands: its status, rooms and party, across
+ * every room type of a reservation. Cancelled room types are left out of the
+ * rooms and party while any other is still booked, and the reservation reads
+ * as cancelled only once every room type is.
+ */
+export function bookingStanding(b: { status: string; rooms: number; guests: number; roomType: { name: string } }, items: Awaited<ReturnType<typeof reservationRooms>>) {
+  if (!items) return { status: b.status, room: b.roomType.name, rooms: b.rooms, guests: b.guests };
+  const live = items.filter((i) => i.status !== 'CANCELLED' && i.status !== 'NO_SHOW');
+  const counted = live.length ? live : items;
+  return {
+    status: !live.length || live.some((i) => i.status === b.status) ? b.status : live[0].status,
+    room: counted.map((i) => `${i.rooms} × ${i.room}`).join(', '),
+    rooms: counted.reduce((s, i) => s + i.rooms, 0),
+    guests: counted.reduce((s, i) => s + i.guests, 0),
+  };
+}
+
 /** Normalises a spoken or typed confirmation code ("abc-123" → "ABC123"). */
 export const normalizeBookingCode = (code: string) => code.toUpperCase().replace(/[^A-Z0-9]/g, '');
 

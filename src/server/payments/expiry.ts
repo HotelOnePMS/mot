@@ -16,17 +16,15 @@ const RELEASE_NOTE = 'Online payment not completed — rooms released';
  */
 export async function expireUnpaidBooking(bookingId: string): Promise<boolean> {
   const booking = await prisma.booking.findUnique({ where: { id: bookingId }, select: { groupCode: true } });
-  const ids = booking?.groupCode ? (await prisma.booking.findMany({ where: { groupCode: booking.groupCode }, select: { id: true } })).map((b) => b.id) : [bookingId];
-  let released = false;
-  for (const id of ids) {
-    const { count } = await prisma.booking.updateMany({
-      where: { id, status: 'PENDING', paymentStatus: 'AWAITING_PAYMENT' },
-      data: { status: 'CANCELLED', paymentStatus: 'EXPIRED' },
-    });
-    if (count) await prisma.bookingStatusHistory.create({ data: { bookingId: id, status: 'CANCELLED', notes: RELEASE_NOTE } });
-    released ||= count > 0;
-  }
-  return released;
+  // One statement for the whole reservation, so a payment arriving at the same moment finds it all held or all released.
+  const released = await prisma.booking.updateManyAndReturn({
+    where: { ...(booking?.groupCode ? { groupCode: booking.groupCode } : { id: bookingId }), status: 'PENDING', paymentStatus: 'AWAITING_PAYMENT' },
+    data: { status: 'CANCELLED', paymentStatus: 'EXPIRED' },
+    select: { id: true },
+  });
+  if (!released.length) return false;
+  await prisma.bookingStatusHistory.createMany({ data: released.map((b) => ({ bookingId: b.id, status: 'CANCELLED' as const, notes: RELEASE_NOTE })) });
+  return true;
 }
 
 /** Release every held booking whose time is up (optionally only one room type's). Returns how many. */

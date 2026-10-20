@@ -55,8 +55,8 @@ describe('reservations with several room types', () => {
     expect(other.groupCode).toBe(lead.code);
     expect(rows.map((r) => r.guests)).toEqual([2, 3]);
     expect(rows.map((r) => r.currency)).toEqual(['EUR', 'EUR']);
-    expect(lead.notes).toBe('Late arrival');
-    expect(other.notes).toBeNull();
+    // Special requests are for the whole party, so every room type carries them.
+    expect(rows.map((r) => r.notes)).toEqual(['Late arrival', 'Late arrival']);
     for (const [i, r] of rows.entries()) {
       const quote = await quoteStay(prisma, { roomTypeId: h.lines[i].roomTypeId, checkIn: h.stay.checkIn, checkOut: h.stay.checkOut, rooms: 1, guests: r.guests });
       expect(Number(r.totalPrice)).toBe(quote.total);
@@ -99,6 +99,36 @@ describe('reservations with several room types', () => {
     // Refunding the whole payment moves every line.
     await applyRefundState({ paymentIntentId: pi, amountRefundedCents: due });
     expect((await reservation(lead.code!)).map((r) => r.paymentStatus)).toEqual(['REFUNDED', 'REFUNDED']);
+  });
+
+  it('books a smaller reservation moments later as a new one, not as part of the earlier one', async () => {
+    const h = await twoTypeHotel();
+    const twin = await prisma.roomType.create({ data: { propertyId: h.property.id, name: 'Twin', capacity: 2, basePrice: 90, totalRooms: 1, amenities: [] } });
+    await prisma.room.create({ data: { propertyId: h.property.id, roomTypeId: twin.id, roomNumber: '301', floor: '3', status: 'CLEAN' } });
+    const first = await createReservation({ ...h.stay, guests: 3, lines: [...h.lines, { roomTypeId: twin.id, rooms: 1 }], paymentStatus: 'PAY_AT_PROPERTY' });
+    const second = await createReservation({ ...h.stay, guests: 2, lines: h.lines, paymentStatus: 'PAY_AT_PROPERTY' });
+    expect(second[0].duplicate).toBeUndefined();
+    expect(second[0].groupCode).not.toBe(first[0].groupCode);
+    expect(second.map((r) => r.id).filter((id) => first.some((f) => f.id === id))).toEqual([]);
+  });
+
+  it('refunds a cancelled room type out of its own share, leaving the rooms kept fully paid', async () => {
+    const h = await twoTypeHotel();
+    const rows = await createReservation({ ...h.stay, lines: h.lines, onlinePayment: { policy: 'FULL_PREPAYMENT', depositNights: 1 } });
+    const [queen, suite] = rows;
+    const total = rows.reduce((s, r) => s + toCents(Number(r.totalPrice)), 0);
+    const pi = paidIntent(queen, rows.map((r) => r.id), total);
+    await recordPaymentSucceeded(pi);
+
+    await prisma.booking.update({ where: { id: suite.id }, data: { status: 'CANCELLED' } });
+    await applyRefundState({ paymentIntentId: pi, amountRefundedCents: toCents(Number(suite.totalPrice)) });
+    const after = await prisma.booking.findMany({ where: { id: { in: [queen.id, suite.id] } }, select: { id: true, paymentStatus: true } });
+    expect(after.find((r) => r.id === queen.id)!.paymentStatus).toBe('PAID');
+    expect(after.find((r) => r.id === suite.id)!.paymentStatus).toBe('REFUNDED');
+
+    const actor = await actorFor((await makeUser({ role: 'OWNER', propertyIds: [h.property.id] })).id);
+    const shown = toBookingSummary(await getBookingForStaff(actor, queen.id));
+    expect(shown.amountPaid).toBe(Number(queen.totalPrice));
   });
 
   it('releases the whole reservation when the hold runs out, and takes it back if the money arrives late', async () => {

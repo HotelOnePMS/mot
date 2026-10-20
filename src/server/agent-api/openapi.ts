@@ -143,7 +143,7 @@ const SCHEMAS: Record<string, JsonSchema> = {
       items: {
         type: 'array',
         description: 'Every room type in the booking (one entry unless it mixes room types).',
-        items: obj({ roomType: obj({ id: str(), name: str(), sleeps: int() }), rooms: int(), guests: int(), total: num('USD, whole stay, these rooms'), roomsLeft: int() }),
+        items: obj({ roomType: obj({ id: str(), name: str(), sleeps: int() }), rooms: int(), guests: int(), total: num('Whole stay, these rooms, taxes and fees included, in `currency`'), roomsLeft: int() }),
       },
     }),
     expiresNote: str(),
@@ -172,7 +172,7 @@ const SCHEMAS: Record<string, JsonSchema> = {
     items: {
       type: 'array',
       description: 'Every room type booked, each its own reservation at the hotel under the same confirmation code (one entry unless it mixes room types).',
-      items: obj({ bookingId: str(), roomType: obj({ id: str(), name: str(), sleeps: int() }), rooms: int(), guests: int(), total: num('USD'), roomsLeft: int() }),
+      items: obj({ bookingId: str(), roomType: obj({ id: str(), name: str(), sleeps: int() }), rooms: int(), guests: int(), total: num('Taxes and fees included, in `currency`'), roomsLeft: int() }),
     },
     manage: str('How the guest changes or cancels (through the hotel, with the confirmation code).'),
     confirmationEmailSent: { type: 'boolean' },

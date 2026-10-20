@@ -8,6 +8,7 @@ import {
   paymentAmountDue,
   platformFeeCents,
   refundableCents,
+  reservationShares,
   suggestedRefundCents,
 } from '../../src/lib/payments';
 
@@ -97,4 +98,29 @@ test('one payment for several room types is shared out in whole cents that add u
   assert.deepEqual(allocateCents(101, [0, 0]), [51, 50]);
   assert.deepEqual(allocateCents(0, [5, 7]), [0, 0]);
   assert.deepEqual(allocateCents(500, []), []);
+});
+
+test('refunds come off a cancelled room type first, so the rooms kept stay paid', () => {
+  const lines = [
+    { dueCents: 30000, cancelled: false },
+    { dueCents: 20000, cancelled: true },
+  ];
+  assert.deepEqual(reservationShares({ paidCents: 50000, refundedCents: 0, lines }), [
+    { paidCents: 30000, refundedCents: 0 },
+    { paidCents: 20000, refundedCents: 0 },
+  ]);
+  assert.deepEqual(reservationShares({ paidCents: 50000, refundedCents: 20000, lines }), [
+    { paidCents: 30000, refundedCents: 0 },
+    { paidCents: 20000, refundedCents: 20000 },
+  ]);
+  // A refund beyond the cancelled room type's share spreads over the rest.
+  assert.deepEqual(reservationShares({ paidCents: 50000, refundedCents: 26000, lines }), [
+    { paidCents: 30000, refundedCents: 6000 },
+    { paidCents: 20000, refundedCents: 20000 },
+  ]);
+  // Nothing cancelled: in proportion, never more than was paid.
+  assert.deepEqual(reservationShares({ paidCents: 1000, refundedCents: 5000, lines: [{ dueCents: 1, cancelled: false }, { dueCents: 1, cancelled: false }] }), [
+    { paidCents: 500, refundedCents: 500 },
+    { paidCents: 500, refundedCents: 500 },
+  ]);
 });
