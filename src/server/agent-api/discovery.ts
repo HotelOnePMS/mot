@@ -73,7 +73,7 @@ ${PRODUCT_DESCRIPTION}
 4. No screen? request_booking (POST ${REST_BASE}/booking-requests): the hotel team confirms and sends a link.
 5. With a hotel's API key ("book" scope): create_booking (POST ${REST_BASE}/bookings) makes a confirmed booking, paid at the hotel.
 
-Always read back the hotel, room, dates, guests and total and get a clear yes before request_booking or create_booking. Quote prices only from tool results. Questions about a hotel: ask_hotel. Existing bookings: find_booking (code + last name).
+One booking can mix room types (e.g. 1 King and 2 Doubles): pass items (each roomTypeId and its rooms) instead of roomTypeId. Always read back the hotel, room, dates, guests and total and get a clear yes before request_booking or create_booking. Quote prices only from tool results. Questions about a hotel: ask_hotel. Existing bookings: find_booking (code + last name).
 
 ## Limits
 

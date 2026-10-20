@@ -5,11 +5,16 @@
  * idempotent: Stripe may deliver an event twice or out of order, and several
  * events (checkout.session.completed, payment_intent.succeeded) describe the
  * same payment.
+ *
+ * Several room types booked together (one booking row each, sharing
+ * `groupCode`) are paid with one payment, recorded on the lead row (the one
+ * whose code the guest has). Its totals and status are the reservation's, and
+ * every row is confirmed, held or released with it.
  */
 import type Stripe from 'stripe';
 import { prisma } from '@/lib/prisma';
 import { getStripe } from '@/lib/stripe';
-import { bookingPaymentStatus, fromCents, toCents } from '@/lib/payments';
+import { bookingPaymentStatus, fromCents, reservationShares, toCents } from '@/lib/payments';
 import { toDateString } from '@/lib/date-utils';
 import { sendBookingConfirmation } from '../email';
 import { nightlyInventory } from '../services/inventory';
@@ -19,13 +24,57 @@ const PAID_STATUSES = ['SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'];
 
 const opts = (account?: string | null) => (account ? { stripeAccount: account } : undefined);
 
-/** Totals collected and refunded across a booking's payments, in cents. */
-async function totalsFor(bookingId: string) {
-  const payments = await prisma.payment.findMany({ where: { bookingId, status: { in: PAID_STATUSES } }, select: { amount: true, amountRefunded: true } });
+/** Totals collected and refunded across the payments of these bookings (one reservation), in cents. */
+async function totalsFor(bookingIds: string[]) {
+  const payments = await prisma.payment.findMany({ where: { bookingId: { in: bookingIds }, status: { in: PAID_STATUSES } }, select: { amount: true, amountRefunded: true } });
   return {
     paidCents: payments.reduce((s, p) => s + toCents(Number(p.amount)), 0),
     refundedCents: payments.reduce((s, p) => s + toCents(Number(p.amountRefunded)), 0),
   };
+}
+
+const lineSelect = {
+  id: true,
+  code: true,
+  groupCode: true,
+  status: true,
+  paymentStatus: true,
+  totalPrice: true,
+  paymentDue: true,
+  roomTypeId: true,
+  rooms: true,
+  guests: true,
+  checkIn: true,
+  checkOut: true,
+  roomType: { select: { name: true } },
+} as const;
+
+/**
+ * Every booking row a payment covers: the booking itself, or all room types of
+ * its reservation, lead (the code the guest was given) first.
+ */
+export async function paymentLines(booking: { id: string; groupCode: string | null }) {
+  const rows = await prisma.booking.findMany({ where: booking.groupCode ? { groupCode: booking.groupCode } : { id: booking.id }, select: lineSelect, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+  return rows.sort((a, b) => Number(b.code === b.groupCode) - Number(a.code === a.groupCode));
+}
+
+const sumCents = (rows: { totalPrice: unknown }[]) => rows.reduce((s, r) => s + toCents(Number(r.totalPrice)), 0);
+
+/**
+ * Each line's payment status from its share of the reservation's payments
+ * (refunds count against cancelled room types first, so the room types the
+ * guest kept stay paid). A single booking's status is its own.
+ */
+async function lineStatuses(lines: Awaited<ReturnType<typeof paymentLines>>): Promise<Map<string, string>> {
+  const totals = await totalsFor(lines.map((l) => l.id));
+  if (lines.length < 2) return new Map(lines.map((l) => [l.id, bookingPaymentStatus({ totalCents: sumCents(lines), ...totals })]));
+  // The same order as the per-line amounts shown to staff (mappers.ts), so a cent of rounding lands on the same line.
+  const ordered = [...lines].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const shares = reservationShares({
+    ...totals,
+    lines: ordered.map((l) => ({ dueCents: toCents(Number(l.paymentDue ?? l.totalPrice)), cancelled: l.status === 'CANCELLED' || l.status === 'NO_SHOW' })),
+  });
+  return new Map(ordered.map((l, i) => [l.id, bookingPaymentStatus({ totalCents: toCents(Number(l.totalPrice)), ...shares[i] })]));
 }
 
 function cardDetails(charge: Stripe.Charge | null) {
@@ -81,7 +130,11 @@ export async function recordPaymentSucceeded(paymentIntentId: string, opts_: { a
   const charge = typeof intent.latest_charge === 'object' ? intent.latest_charge : null;
   const amountCents = intent.amount_received || intent.amount;
   const details = cardDetails(charge);
-  const kind = toCents(Number(booking.paymentDue ?? booking.totalPrice)) < toCents(Number(booking.totalPrice)) ? 'DEPOSIT' : 'FULL';
+  const lines = await paymentLines(booking);
+  const ids = lines.map((l) => l.id);
+  const totalCents = sumCents(lines);
+  const dueCents = lines.reduce((s, l) => s + toCents(Number(l.paymentDue ?? l.totalPrice)), 0);
+  const kind = dueCents < totalCents ? 'DEPOSIT' : 'FULL';
   const data = {
     bookingId: booking.id,
     propertyId: booking.propertyId,
@@ -104,28 +157,32 @@ export async function recordPaymentSucceeded(paymentIntentId: string, opts_: { a
     await prisma.payment.upsert({ where: { stripePaymentIntentId: intent.id }, create: { stripePaymentIntentId: intent.id, ...data }, update: data });
   }
 
-  const { paidCents, refundedCents } = await totalsFor(booking.id);
-  const paymentStatus = bookingPaymentStatus({ totalCents: toCents(Number(booking.totalPrice)), paidCents, refundedCents });
+  const { paidCents, refundedCents } = await totalsFor(ids);
+  const paymentStatus = bookingPaymentStatus({ totalCents, paidCents, refundedCents });
   const money = (cents: number) => fromCents(cents).toFixed(2);
   const shown = (cents: number) => `${money(cents)} ${booking.currency}`;
+  const forReservation = lines.length > 1 ? ` for reservation ${booking.code ?? booking.id} (${lines.length} room types)` : '';
 
-  // PENDING → CONFIRMED happens exactly once, whichever event arrives first.
-  const confirmed = await prisma.booking.updateMany({ where: { id: booking.id, status: 'PENDING' }, data: { status: 'CONFIRMED', paymentStatus, stripePaymentIntentId: intent.id, expiresAt: null } });
+  // PENDING → CONFIRMED happens exactly once, whichever event arrives first (for every room type of a reservation at once).
+  const pending = lines.filter((l) => l.status === 'PENDING').map((l) => l.id);
+  const confirmed = pending.length
+    ? await prisma.booking.updateMany({ where: { id: { in: pending }, status: 'PENDING' }, data: { status: 'CONFIRMED', paymentStatus, stripePaymentIntentId: intent.id, expiresAt: null } })
+    : { count: 0 };
   if (confirmed.count) {
-    await prisma.bookingStatusHistory.create({
-      data: { bookingId: booking.id, status: 'CONFIRMED', notes: `Confirmed · ${kind === 'DEPOSIT' ? 'Deposit' : 'Payment'} of ${shown(amountCents)} received by card (3D Secure: ${details.threeDSecure ?? 'n/a'})` },
-    });
+    const note = `Confirmed · ${kind === 'DEPOSIT' ? 'Deposit' : 'Payment'} of ${shown(amountCents)}${forReservation} received by card (3D Secure: ${details.threeDSecure ?? 'n/a'})`;
+    await prisma.bookingStatusHistory.createMany({ data: pending.map((bookingId) => ({ bookingId, status: 'CONFIRMED' as const, notes: note })) });
     const guestName = `${booking.user.firstName} ${booking.user.lastName}`.trim();
     await sendBookingConfirmation({
       to: booking.user.email,
       guestName: guestName || booking.user.email,
       propertyName: booking.property.name,
       roomTypeName: booking.roomType.name,
+      lines: lines.map((l) => ({ roomTypeName: l.roomType.name, rooms: l.rooms })),
       checkIn: toDateString(booking.checkIn),
       checkOut: toDateString(booking.checkOut),
-      guests: booking.guests,
-      rooms: booking.rooms,
-      totalPrice: Number(booking.totalPrice).toFixed(2),
+      guests: lines.reduce((s, l) => s + l.guests, 0),
+      rooms: lines.reduce((s, l) => s + l.rooms, 0),
+      totalPrice: money(totalCents),
       bookingId: booking.code ?? booking.id,
       paymentStatus,
       amountPaid: money(paidCents - refundedCents),
@@ -134,32 +191,35 @@ export async function recordPaymentSucceeded(paymentIntentId: string, opts_: { a
     return;
   }
 
-  // The hold ran out before the webhook arrived: take the booking back if the rooms are still free.
-  if (booking.status === 'CANCELLED' && booking.paymentStatus === 'EXPIRED') {
-    const inv = await nightlyInventory(prisma, booking.roomTypeId, toDateString(booking.checkIn), toDateString(booking.checkOut), { excludeBookingId: booking.id });
-    const free = inv.minAvailable >= booking.rooms;
-    await prisma.booking.update({
-      where: { id: booking.id },
-      data: {
-        paymentStatus,
-        stripePaymentIntentId: intent.id,
-        ...(free ? { status: 'CONFIRMED', expiresAt: null } : {}),
-        statusHistory: {
-          create: {
-            status: free ? 'CONFIRMED' : 'CANCELLED',
-            notes: free
-              ? `Confirmed · ${shown(amountCents)} arrived after the hold expired and the rooms were still free`
-              : `${shown(amountCents)} arrived after the hold expired and the rooms are gone — refund this payment`,
-          },
+  // The hold ran out before the webhook arrived: take the reservation back if all its rooms are still free.
+  // Read the lines again: the hold may have been released while this payment was being recorded.
+  const expired = (await paymentLines(booking)).filter((l) => l.status === 'CANCELLED' && l.paymentStatus === 'EXPIRED');
+  if (expired.length) {
+    let free = true;
+    for (const l of expired) {
+      const inv = await nightlyInventory(prisma, l.roomTypeId, toDateString(l.checkIn), toDateString(l.checkOut), { excludeBookingId: l.id });
+      if (inv.minAvailable < l.rooms) free = false;
+    }
+    const note = free
+      ? `Confirmed · ${shown(amountCents)}${forReservation} arrived after the hold expired and the rooms were still free`
+      : `${shown(amountCents)}${forReservation} arrived after the hold expired and ${expired.length > 1 ? 'not all the rooms are free' : 'the rooms are gone'} — refund this payment`;
+    for (const l of expired) {
+      await prisma.booking.update({
+        where: { id: l.id },
+        data: {
+          paymentStatus,
+          stripePaymentIntentId: intent.id,
+          ...(free ? { status: 'CONFIRMED', expiresAt: null } : {}),
+          statusHistory: { create: { status: free ? 'CONFIRMED' : 'CANCELLED', notes: note } },
         },
-      },
-    });
+      });
+    }
     return;
   }
 
   // Repeat delivery: only fill in what is still unset, never overwrite refund or dispute states.
   await prisma.booking.updateMany({
-    where: { id: booking.id, paymentStatus: { in: ['AWAITING_PAYMENT', 'UNPAID', 'EXPIRED'] } },
+    where: { id: { in: ids }, paymentStatus: { in: ['AWAITING_PAYMENT', 'UNPAID', 'EXPIRED'] } },
     data: { paymentStatus, stripePaymentIntentId: intent.id },
   });
 }
@@ -193,28 +253,29 @@ export async function applyRefundState(input: { paymentIntentId: string; amountR
   if (status === payment.status && refundedCents === toCents(Number(payment.amountRefunded))) return;
   await prisma.payment.update({ where: { id: payment.id }, data: { amountRefunded: fromCents(refundedCents), status } });
 
-  const booking = await prisma.booking.findUnique({ where: { id: payment.bookingId }, select: { id: true, totalPrice: true, currency: true, status: true, paymentStatus: true } });
+  const booking = await prisma.booking.findUnique({ where: { id: payment.bookingId }, select: { id: true, groupCode: true, currency: true, paymentStatus: true } });
   if (!booking) return;
   // A dispute in progress keeps its own status until it closes.
   if (booking.paymentStatus === 'DISPUTED') return;
-  const totals = await totalsFor(booking.id);
-  const paymentStatus = bookingPaymentStatus({ totalCents: toCents(Number(booking.totalPrice)), paidCents: totals.paidCents, refundedCents: totals.refundedCents });
-  if (paymentStatus !== booking.paymentStatus) {
-    await prisma.booking.update({
-      where: { id: booking.id },
-      data: {
-        paymentStatus,
-        statusHistory: { create: { status: booking.status, notes: `Refund recorded: ${fromCents(refundedCents).toFixed(2)} of ${fromCents(paidCents).toFixed(2)} ${booking.currency} refunded to the card` } },
-      },
-    });
+  const lines = await paymentLines(booking);
+  const statuses = await lineStatuses(lines);
+  const note = `Refund recorded: ${fromCents(refundedCents).toFixed(2)} of ${fromCents(paidCents).toFixed(2)} ${booking.currency} refunded to the card${lines.length > 1 ? ' (one payment for every room type in this reservation)' : ''}`;
+  for (const line of lines) {
+    const paymentStatus = statuses.get(line.id)!;
+    if (paymentStatus === line.paymentStatus || line.paymentStatus === 'DISPUTED') continue;
+    await prisma.booking.update({ where: { id: line.id }, data: { paymentStatus, statusHistory: { create: { status: line.status, notes: note } } } });
   }
 }
 
 /** Where a booking's payment status stands once a dispute no longer holds it (won, or no longer open). */
 export async function restorePaymentStatus(bookingId: string, lost: boolean): Promise<void> {
-  const booking = await prisma.booking.findUnique({ where: { id: bookingId }, select: { totalPrice: true } });
+  const booking = await prisma.booking.findUnique({ where: { id: bookingId }, select: { id: true, groupCode: true } });
   if (!booking) return;
-  const totals = await totalsFor(bookingId);
-  const paymentStatus = lost ? 'DISPUTE_LOST' : bookingPaymentStatus({ totalCents: toCents(Number(booking.totalPrice)), paidCents: totals.paidCents, refundedCents: totals.refundedCents });
-  await prisma.booking.update({ where: { id: bookingId }, data: { paymentStatus } });
+  const lines = await paymentLines(booking);
+  if (lost) {
+    await prisma.booking.updateMany({ where: { id: { in: lines.map((l) => l.id) } }, data: { paymentStatus: 'DISPUTE_LOST' } });
+    return;
+  }
+  const statuses = await lineStatuses(lines);
+  for (const line of lines) await prisma.booking.update({ where: { id: line.id }, data: { paymentStatus: statuses.get(line.id)! } });
 }

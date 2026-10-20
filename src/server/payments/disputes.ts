@@ -8,7 +8,7 @@ import type Stripe from 'stripe';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getStripe } from '@/lib/stripe';
-import { fromCents } from '@/lib/payments';
+import { fromCents, toCents } from '@/lib/payments';
 import { assertPropertyAccess, requireStaff, scopeByProperty } from '../authz';
 import { badRequest, notFound } from '../errors';
 import { sendDisputeAlert } from '../email';
@@ -16,7 +16,7 @@ import { publicSiteUrl } from '../public-url';
 import { recordAudit } from '../services/audit';
 import { bookingInclude, toBookingSummary } from '../services/mappers';
 import { buildEvidenceSummary, renderEvidenceText, stripeEvidenceFields, type EvidenceInput, type EvidenceSummary } from './evidence';
-import { restorePaymentStatus } from './record';
+import { paymentLines, restorePaymentStatus } from './record';
 
 const OPEN_STATUSES = ['needs_response', 'warning_needs_response'];
 
@@ -37,6 +37,8 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
   });
   if (!booking) return null;
   const summary = toBookingSummary(booking);
+  // One payment covers every room type of a reservation: the evidence describes them all.
+  const lines = booking.groupCode ? await paymentLines(booking) : null;
   const staffIds = booking.checklist
     ? [booking.checklist.idMatchedById, booking.checklist.cardShownById, booking.checklist.registrationSignedById].filter((id): id is string => !!id)
     : [];
@@ -58,10 +60,10 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
       checkIn: summary.checkIn,
       checkOut: summary.checkOut,
       nights: summary.nights,
-      rooms: booking.rooms,
-      guests: booking.guests,
-      roomType: summary.roomType.name,
-      totalPrice: summary.totalPrice,
+      rooms: lines ? lines.reduce((n, l) => n + l.rooms, 0) : booking.rooms,
+      guests: lines ? lines.reduce((n, l) => n + l.guests, 0) : booking.guests,
+      roomType: lines ? lines.map((l) => `${l.rooms} × ${l.roomType.name}`).join(', ') : summary.roomType.name,
+      totalPrice: lines ? fromCents(lines.reduce((n, l) => n + toCents(Number(l.totalPrice)), 0)) : summary.totalPrice,
       createdAt: booking.createdAt.toISOString(),
       notes: booking.notes,
     },
@@ -153,14 +155,14 @@ export async function recordDispute(dispute: Stripe.Dispute): Promise<void> {
   const record = await prisma.dispute.upsert({ where: { stripeDisputeId: dispute.id }, create: { stripeDisputeId: dispute.id, ...data }, update: data });
 
   if (!before) {
-    // Hold the booking's payment status while the dispute is open.
-    const booking = await prisma.booking.findUnique({ where: { id: payment.bookingId }, select: { status: true } });
-    if (booking) {
+    // Hold the booking's payment status while the dispute is open (every room type of a reservation shares the payment).
+    const booking = await prisma.booking.findUnique({ where: { id: payment.bookingId }, select: { id: true, groupCode: true } });
+    for (const line of booking ? await paymentLines(booking) : []) {
       await prisma.booking.update({
-        where: { id: payment.bookingId },
+        where: { id: line.id },
         data: {
           paymentStatus: 'DISPUTED',
-          statusHistory: { create: { status: booking.status, notes: `Card dispute opened (${dispute.reason ?? 'no reason given'}), ${fromCents(dispute.amount).toFixed(2)} ${dispute.currency.toUpperCase()}` } },
+          statusHistory: { create: { status: line.status, notes: `Card dispute opened (${dispute.reason ?? 'no reason given'}), ${fromCents(dispute.amount).toFixed(2)} ${dispute.currency.toUpperCase()}` } },
         },
       });
     }

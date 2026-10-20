@@ -34,10 +34,12 @@ import {
 } from "./VoiceOrb";
 import {
   VoicePageRegistryContext,
+  orderItemsKey,
   pageFromPath,
   voiceText,
   type VoiceBookingRequest,
   type VoiceOrder,
+  type VoiceOrderItem,
   type VoicePage,
   type VoicePageRegistry,
   type VoiceStay,
@@ -148,6 +150,21 @@ function count(v: unknown, max: number): number | null {
     : null;
 }
 
+/**
+ * Several room types as a tool named them ([{ room_type_id, rooms }]): null
+ * when there are none, undefined when any of them is malformed.
+ */
+function orderItems(v: unknown): VoiceOrderItem[] | null | undefined {
+  if (v === null || v === undefined) return null;
+  if (!Array.isArray(v) || v.length > 4) return undefined;
+  const items = v.map((i: unknown) => {
+    const o = (i && typeof i === "object" ? i : {}) as Record<string, unknown>;
+    return { roomTypeId: text(o.room_type_id), rooms: count(o.rooms, 9) };
+  });
+  if (items.some((i) => !i.roomTypeId || !i.rooms)) return undefined;
+  return items.length ? (items as VoiceOrderItem[]) : null;
+}
+
 /** What confirm_booking was asked to book, or null when it didn't say. */
 function bookingRequest(
   args: Record<string, unknown>,
@@ -157,10 +174,12 @@ function bookingRequest(
   const checkOut = text(args.check_out);
   const guests = count(args.guests, 40);
   const rooms = count(args.rooms, 9);
-  if (!roomTypeId || !checkIn || !checkOut || !guests || !rooms) return null;
+  const items = orderItems(args.items);
+  if (!roomTypeId || !checkIn || !checkOut || !guests || !rooms || items === undefined) return null;
   return {
     propertyId: text(args.property_id),
     roomTypeId,
+    items,
     checkIn,
     checkOut,
     guests,
@@ -179,7 +198,8 @@ function sameOrder(
     want.checkIn === o.checkIn &&
     want.checkOut === o.checkOut &&
     want.guests === o.guests &&
-    want.rooms === o.rooms
+    want.rooms === o.rooms &&
+    orderItemsKey(want.items) === orderItemsKey(o.items)
   );
 }
 
@@ -195,6 +215,14 @@ function orderFacts(o: VoiceOrder | null | undefined) {
     check_out: ISO_DAY.test(o.checkOut) ? o.checkOut : null,
     guests: o.guests,
     rooms: o.rooms,
+    // Several room types booked together: each with its rooms (room_type_id is the first of them).
+    items:
+      o.items && o.items.length > 1
+        ? o.items.map((i) => ({
+            room_type_id: SAFE_ID.test(i.roomTypeId) ? i.roomTypeId : null,
+            rooms: i.rooms,
+          }))
+        : null,
     total: o.total ?? null,
     currency: o.currency ?? null,
   };
@@ -209,10 +237,14 @@ function orderIds(o: VoiceOrder | null | undefined): string {
     !f.check_in ||
     !f.check_out ||
     !count(f.guests, 40) ||
-    !count(f.rooms, 9)
+    !count(f.rooms, 9) ||
+    f.items?.some((i) => !i.room_type_id || !count(i.rooms, 9))
   )
     return "";
-  return ` To book it, confirm_booking takes property_id ${f.property_id}, room_type_id ${f.room_type_id}, check_in ${f.check_in}, check_out ${f.check_out}, guests ${f.guests}, rooms ${f.rooms}.`;
+  const items = f.items
+    ? JSON.stringify(f.items)
+    : "null";
+  return ` To book it, confirm_booking takes property_id ${f.property_id}, room_type_id ${f.room_type_id}, items ${items}, check_in ${f.check_in}, check_out ${f.check_out}, guests ${f.guests}, rooms ${f.rooms}.`;
 }
 
 /**
@@ -222,6 +254,8 @@ function orderIds(o: VoiceOrder | null | undefined): string {
 function orderKey(o: {
   propertyId: unknown;
   roomTypeId: unknown;
+  /** Several room types: VoiceOrderItem[] (a page) or [{ room_type_id, rooms }] (start_booking's result). */
+  items?: unknown;
   checkIn: unknown;
   checkOut: unknown;
   guests: unknown;
@@ -230,9 +264,19 @@ function orderKey(o: {
 }): string | null {
   if (typeof o.total !== "number" || !o.propertyId || !o.roomTypeId)
     return null;
+  const items = Array.isArray(o.items)
+    ? orderItems(
+        o.items.map((i: Record<string, unknown>) =>
+          i && "roomTypeId" in i
+            ? { room_type_id: i.roomTypeId, rooms: i.rooms }
+            : i,
+        ),
+      )
+    : null;
   return JSON.stringify([
     o.propertyId,
     o.roomTypeId,
+    orderItemsKey(items),
     o.checkIn,
     o.checkOut,
     Number(o.guests),
@@ -570,7 +614,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
           return {
             ok: false,
             error:
-              "Nothing was booked: say what you are booking. confirm_booking needs the property_id, room_type_id, check_in, check_out, guests and rooms of the checkout on screen (from start_booking or the latest [Page] update).",
+              "Nothing was booked: say what you are booking. confirm_booking needs the property_id, room_type_id, items (several room types, else null), check_in, check_out, guests and rooms of the checkout on screen (from start_booking or the latest [Page] update).",
             on_screen: orderFacts(here.order),
           };
         noteOrder(pageOrderKey(here));
@@ -662,8 +706,11 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
             note: "The guest went to another page while this was loading, so nothing was opened on their screen. Ask whether they still want it before opening it again.",
           };
         const url = output.url;
+        // Several room types open the checkout link itself; one opens through the hotel page.
         const select =
           call.name === "start_booking" &&
+          typeof args.room_type_id === "string" &&
+          !(Array.isArray(args.items) && args.items.length > 1) &&
           here.kind === "hotel" &&
           here.propertyId === hotelId
             ? here.actions?.selectRoom
@@ -680,6 +727,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
             orderKey({
               propertyId: output.property_id,
               roomTypeId: output.room_type_id,
+              items: output.items,
               checkIn: output.check_in,
               checkOut: output.check_out,
               guests: output.guests,

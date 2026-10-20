@@ -15,6 +15,8 @@ export type InterfaceMode = 'CLASSIC' | 'AGENTIC';
 export interface BookingSummary {
   id: string;
   code: string;
+  /** The guest's confirmation code when this booking is one room type of a larger reservation, else null. */
+  reservationCode: string | null;
   status: BookingStatus;
   propertyId: string;
   propertyName: string;

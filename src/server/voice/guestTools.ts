@@ -9,7 +9,7 @@ import { DomainError, badRequest } from '../errors';
 import { policyFor } from '../services/guest';
 import { localeOf } from '../services/hotels';
 import { propertyFacts, runsOnHotelOne } from '../concierge/facts';
-import { availabilityOptions, lookupBooking, priceOptions, submitBookingRequest } from '../concierge/shared';
+import { availabilityOptions, bookableReservation, bookingStanding, linesLabel, lookupBooking, priceOptions, reservationRooms, stayLines, submitBookingRequest } from '../concierge/shared';
 import { checkoutPath } from '../concierge/urls';
 import { alertTeam } from '../services/guestRequests';
 import { useSkill as runSkill } from '../skills';
@@ -28,6 +28,11 @@ const isoDate = z.string().refine(isISODate, 'must be YYYY-MM-DD');
 export type GuestChannel = { kind: 'WEB' } | { kind: 'PHONE'; callerNumber: string | null; via?: 'PHONE' | 'WHATSAPP' };
 
 const optionalText = (max: number) => z.string().trim().max(max).nullable().optional();
+/** Several room types for one stay (`items` on start_booking and request_booking), in place of room_type_id + rooms. */
+const roomItems = z
+  .array(z.object({ room_type_id: z.string().trim().min(1).max(64), rooms: z.number().int().min(1).max(9) }))
+  .max(4)
+  .nullish();
 
 export async function runGuestTool(propertyId: string, name: string, rawArgs: unknown, channel: GuestChannel = { kind: 'WEB' }): Promise<unknown> {
   const phone = channel.kind === 'PHONE';
@@ -48,11 +53,21 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
     case 'start_booking': {
       if (phone) return { error: 'There’s no screen on a phone call — use request_booking instead.' };
       if (!live) return { error: 'This hotel’s front desk confirms bookings — use request_booking instead.' };
-      const a = z.object({ room_type_id: z.string().min(1), check_in: isoDate, check_out: isoDate, guests: z.number().int().min(1).max(16), rooms: z.number().int().min(1).max(9) }).parse(rawArgs);
-      const rt = await prisma.roomType.findFirst({ where: { id: a.room_type_id, propertyId, isActive: true }, select: { id: true, name: true } });
-      if (!rt) return { error: 'That room type isn’t available here — check availability again.' };
-      const url = checkoutPath(propertyId, { roomTypeId: rt.id, checkIn: a.check_in, checkOut: a.check_out, guests: a.guests, rooms: a.rooms });
-      return { opened: true, room: rt.name, url, say: `I’ve opened the checkout for the ${rt.name} on your screen.` };
+      const a = z
+        .object({ room_type_id: z.string().min(1).nullish(), check_in: isoDate, check_out: isoDate, guests: z.number().int().min(1).max(16), rooms: z.number().int().min(1).max(9), items: roomItems })
+        .parse(rawArgs);
+      const lines = stayLines({ roomTypeId: a.room_type_id, rooms: a.rooms, items: a.items?.map((i) => ({ roomTypeId: i.room_type_id, rooms: i.rooms })) });
+      if ('error' in lines) return lines;
+      if (lines.length === 1) {
+        const rt = await prisma.roomType.findFirst({ where: { id: lines[0].roomTypeId, propertyId, isActive: true }, select: { id: true, name: true } });
+        if (!rt) return { error: 'That room type isn’t available here — check availability again.' };
+        const url = checkoutPath(propertyId, { roomTypeId: rt.id, checkIn: a.check_in, checkOut: a.check_out, guests: a.guests, rooms: lines[0].rooms });
+        return { opened: true, room: rt.name, url, say: `I’ve opened the checkout for the ${rt.name} on your screen.` };
+      }
+      const stay = await bookableReservation(propertyId, { checkIn: a.check_in, checkOut: a.check_out, guests: a.guests, lines }, 'Online stays are limited to 30 nights; offer to take a message for longer stays.');
+      if ('error' in stay) return stay;
+      const url = checkoutPath(propertyId, { roomTypeId: lines[0].roomTypeId, items: lines, checkIn: a.check_in, checkOut: a.check_out, guests: a.guests, rooms: stay.rooms });
+      return { opened: true, room: linesLabel(stay.lines), total: stay.total, url, say: `I’ve opened the checkout for ${linesLabel(stay.lines)} on your screen.` };
     }
 
     case 'find_booking': {
@@ -63,13 +78,14 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
       if (!b) return { found: false, say: 'I couldn’t find a booking with that code and last name.' };
       const checkIn = toISODate(b.checkIn);
       const policy = policyFor(checkIn, localeOf(b.property).timezone);
+      const stands = bookingStanding(b, await reservationRooms(b));
       return {
         found: true,
-        status: b.status,
-        room: b.roomType.name,
+        status: stands.status,
+        room: stands.room,
         check_in: formatDay(checkIn, 'weekday'),
         check_out: formatDay(toISODate(b.checkOut), 'weekday'),
-        guests: b.guests,
+        guests: stands.guests,
         free_changes_until: policy.passed ? null : policy.deadlineLabel,
         manage: b.guestEmail
           ? integrationManageNote(b.property.phone)
@@ -81,7 +97,8 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
       if (!phone && live) return { error: 'Use start_booking to open the checkout on the guest’s screen.' };
       const a = z
         .object({
-          room_type_id: z.string().min(1),
+          room_type_id: z.string().min(1).nullish(),
+          items: roomItems,
           check_in: isoDate,
           check_out: isoDate,
           guests: z.number().int().min(1).max(16),
@@ -96,6 +113,7 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
         propertyId,
         {
           roomTypeId: a.room_type_id,
+          items: a.items?.map((i) => ({ roomTypeId: i.room_type_id, rooms: i.rooms })),
           checkIn: a.check_in,
           checkOut: a.check_out,
           guests: a.guests,

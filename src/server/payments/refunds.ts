@@ -13,7 +13,7 @@ import { recordAudit } from '../services/audit';
 import { getBookingForStaff } from '../services/bookings';
 import { policyFor } from '../services/guest';
 import { hotelLocale } from '../services/hotels';
-import { applyRefundState } from './record';
+import { applyRefundState, paymentLines } from './record';
 
 export interface RefundInfo {
   /** Card payments on this booking that can be refunded, newest first. */
@@ -24,20 +24,27 @@ export interface RefundInfo {
   deadlinePassed: boolean;
   deadlineLabel: string;
   canRefund: boolean;
+  /** Set when the payment covers every room type of a reservation booked together. */
+  reservation: { code: string; roomTypes: number } | null;
 }
 
 export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
   const actor = await requireStaff('payments.refund');
   const booking = await getBookingForStaff(actor, bookingId);
+  // Several room types booked together were paid with one payment, on the lead line.
+  const lines = await paymentLines(booking);
   const payments = await prisma.payment.findMany({
-    where: { bookingId: booking.id, status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED'] } },
+    where: { bookingId: { in: lines.map((l) => l.id) }, status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED'] } },
     orderBy: { createdAt: 'desc' },
   });
-  // A cancelled booking is judged at the moment it was cancelled; any other, today.
-  const cancelledAt =
-    booking.status === 'CANCELLED'
-      ? (await prisma.bookingStatusHistory.findFirst({ where: { bookingId: booking.id, status: 'CANCELLED' }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }))?.createdAt
-      : undefined;
+  // Only some room types of a reservation cancelled: the policy is about what was charged for those.
+  const cancelledLines = lines.filter((l) => l.status === 'CANCELLED');
+  const partial = lines.length > 1 && cancelledLines.length > 0 && cancelledLines.length < lines.length;
+  // A cancellation is judged at the moment it happened; anything else, today.
+  const judged = booking.status === 'CANCELLED' ? [booking.id] : partial ? cancelledLines.map((l) => l.id) : [];
+  const cancelledAt = judged.length
+    ? (await prisma.bookingStatusHistory.findFirst({ where: { bookingId: { in: judged }, status: 'CANCELLED' }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }))?.createdAt
+    : undefined;
   const { timezone } = await hotelLocale(booking.propertyId);
   const policy = policyFor(toISODate(booking.checkIn), timezone, cancelledAt ?? new Date());
   const rows = payments.map((p) => ({
@@ -50,11 +57,10 @@ export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
     paidAt: p.paidAt?.toISOString() ?? null,
   }));
   const totalRefundable = rows.reduce((s, r) => s + toCents(r.refundable), 0);
-  const suggested = suggestedRefundCents({
-    paidCents: rows.reduce((s, r) => s + toCents(r.amount), 0),
-    refundedCents: rows.reduce((s, r) => s + toCents(r.refunded), 0),
-    deadlinePassed: policy.passed,
-  });
+  const refundedCents = rows.reduce((s, r) => s + toCents(r.refunded), 0);
+  let suggested = suggestedRefundCents({ paidCents: rows.reduce((s, r) => s + toCents(r.amount), 0), refundedCents, deadlinePassed: policy.passed });
+  // Refunds so far count against the cancelled room types first.
+  if (partial) suggested = Math.min(suggested, Math.max(0, cancelledLines.reduce((s, l) => s + toCents(Number(l.paymentDue ?? 0)), 0) - refundedCents));
   return {
     payments: rows,
     totalRefundable: fromCents(totalRefundable),
@@ -62,6 +68,7 @@ export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
     deadlinePassed: policy.passed,
     deadlineLabel: policy.deadlineLabel,
     canRefund: totalRefundable > 0 && isStripeConfigured(),
+    reservation: lines.length > 1 ? { code: lines[0].code ?? booking.code ?? booking.id, roomTypes: lines.length } : null,
   };
 }
 
@@ -70,9 +77,10 @@ export async function refundPayment(bookingId: string, input: { paymentId: strin
   const actor = await requireStaff('payments.refund');
   const booking = await getBookingForStaff(actor, bookingId);
   if (!isStripeConfigured()) throw badRequest('Online payments aren’t enabled on this deployment.');
-  // The payment must belong to this booking, which getBookingForStaff already scoped to the actor's property.
+  // The payment must belong to this booking (or its reservation), which getBookingForStaff already scoped to the actor's property.
+  const lines = await paymentLines(booking);
   const payment = await prisma.payment.findFirst({
-    where: { id: input.paymentId, bookingId: booking.id, status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED'] } },
+    where: { id: input.paymentId, bookingId: { in: lines.map((l) => l.id) }, status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED'] } },
     include: { property: { select: { stripeAccountId: true } } },
   });
   if (!payment) throw badRequest('That payment can’t be refunded.');

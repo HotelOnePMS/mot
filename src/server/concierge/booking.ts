@@ -8,13 +8,13 @@ import { prisma } from '@/lib/prisma';
 import { diffDays, toISODate } from '../dates';
 import { DomainError, badRequest } from '../errors';
 import { isEmailConfigured, sendBookingConfirmation } from '../email';
-import { confirmPayAtProperty, createBooking as createSiteBooking } from '../services/bookings';
+import { confirmReservationPayAtProperty, createReservation } from '../services/bookings';
 import { policyFor } from '../services/guest';
 import { localeOf } from '../services/hotels';
 import { findListedHotel } from './hotel';
 import { consumeRateLimit } from './rateLimit';
 import { conciergeSchemas, type BookingLinkInput, type CreateBookingInput, type FindBookingInput, type RequestBookingInput } from './schemas';
-import { bookableStay, lookupBooking, submitBookingRequest, type BookingRequestSaved } from './shared';
+import { bookableReservation, bookingStanding, lookupBooking, reservationRooms, stayLines, submitBookingRequest, type BookableReservation, type BookingRequestSaved } from './shared';
 import { bookingPageUrl, checkoutPath, siteUrl } from './urls';
 
 // ---------------------------------------------------------------------------
@@ -32,49 +32,93 @@ export interface BookingLinkResult {
     checkOut: string;
     nights: number;
     guests: number;
+    /** All rooms, across every room type. */
     rooms: number;
-    /** Room price per room per night, in `currency`. */
+    /** Room price per room per night, in `currency` (averaged across room types when there are several). */
     averageNightly: number;
     /** Whole stay, all rooms, taxes and fees included, in `currency`. */
     total: number;
     /** The hotel's ISO 4217 currency. */
     currency: string;
-    /** Rooms of this type still free for every night. */
+    /** Rooms of this type still free for every night (the scarcest type when there are several). */
     roomsLeft: number;
+    /** Every room type in the booking, in order (`roomType` is the first). */
+    items: ReservationItem[];
   };
   expiresNote: string;
+}
+
+/** One room type of a booking, as the concierge reports it. */
+export interface ReservationItem {
+  roomType: { id: string; name: string; sleeps: number };
+  rooms: number;
+  /** Guests this room type is for (the party shared across the room types). */
+  guests: number;
+  /** This room type's share of the total, taxes and fees included, in the booking's currency. */
+  total: number;
+  roomsLeft: number;
+}
+
+function reservationItems(r: BookableReservation): ReservationItem[] {
+  return r.lines.map((l) => ({
+    roomType: { id: l.roomType.id, name: l.roomType.name, sleeps: l.roomType.capacity },
+    rooms: l.rooms,
+    guests: l.guests,
+    total: l.quote.total,
+    roomsLeft: l.quote.available,
+  }));
 }
 
 /**
  * A link to the hotel's own checkout with the room, dates and party (and
  * optionally the guest's name, email and phone) pre-filled — the same page
- * the guest voice tool `start_booking` opens. Checks the room type belongs to
- * the listed hotel and the stay is bookable right now; DomainError 400 (rules,
- * e.g. sold out or too many guests) or 404 (hotel) otherwise.
+ * the guest voice tool `start_booking` opens. One room type (`roomTypeId`,
+ * `rooms`) or several booked together (`items`). Checks each room type
+ * belongs to the listed hotel and the stay is bookable right now; DomainError
+ * 400 (rules, e.g. sold out or too many guests) or 404 (hotel) otherwise.
  */
 export async function bookingLink(input: BookingLinkInput): Promise<BookingLinkResult> {
   const a = conciergeSchemas.bookingLink.parse(input);
   const hotel = await findListedHotel(a.propertyId);
-  const stay = await bookableStay(hotel.id, a, 'Stays are limited to 30 nights online.');
-  if ('error' in stay) throw badRequest(stay.error);
-  const path = checkoutPath(hotel.id, { roomTypeId: stay.roomType.id, checkIn: a.checkIn, checkOut: a.checkOut, guests: a.guests, rooms: a.rooms }, a.guest);
+  const stay = await reservationOrThrow(hotel.id, a);
+  const [first] = stay.lines;
+  const path = checkoutPath(
+    hotel.id,
+    { roomTypeId: first.roomType.id, items: stay.lines.map((l) => ({ roomTypeId: l.roomType.id, rooms: l.rooms })), checkIn: a.checkIn, checkOut: a.checkOut, guests: a.guests, rooms: stay.rooms },
+    a.guest
+  );
   return {
     url: siteUrl(path),
     summary: {
       hotel,
-      roomType: { id: stay.roomType.id, name: stay.roomType.name, sleeps: stay.roomType.capacity },
+      roomType: { id: first.roomType.id, name: first.roomType.name, sleeps: first.roomType.capacity },
       checkIn: a.checkIn,
       checkOut: a.checkOut,
       nights: stay.nights,
       guests: a.guests,
-      rooms: a.rooms,
-      averageNightly: stay.quote.averageNightly,
-      total: stay.quote.total,
-      currency: stay.quote.currency,
-      roomsLeft: stay.quote.available,
+      rooms: stay.rooms,
+      // Room charges only (taxes and fees aside), per room per night.
+      averageNightly:
+        stay.lines.length === 1 ? first.quote.averageNightly : Math.round((stay.lines.reduce((s, l) => s + l.quote.subtotal, 0) / (stay.nights * stay.rooms)) * 100) / 100,
+      total: stay.total,
+      currency: stay.currency,
+      roomsLeft: Math.min(...stay.lines.map((l) => l.quote.available)),
+      items: reservationItems(stay),
     },
     expiresNote: 'The link doesn’t hold the room: availability and the price are confirmed when the guest completes checkout.',
   };
+}
+
+/** The stay's room types (`items`, else `roomTypeId` + `rooms`), checked bookable right now; DomainError 400 otherwise. */
+async function reservationOrThrow(
+  propertyId: string,
+  a: { roomTypeId?: string; rooms: number; items?: { roomTypeId: string; rooms: number }[]; checkIn: string; checkOut: string; guests: number }
+): Promise<BookableReservation> {
+  const lines = stayLines(a);
+  if ('error' in lines) throw badRequest('Give roomTypeId (from checkAvailability), or items to book several room types.');
+  const stay = await bookableReservation(propertyId, { ...a, lines }, 'Stays are limited to 30 nights online.');
+  if ('error' in stay) throw badRequest(stay.error);
+  return stay;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,12 +203,16 @@ export interface CreateBookingResult {
   currency: string;
   paymentStatus: 'PAY_AT_PROPERTY';
   hotel: { id: string; name: string };
+  /** The first room type (see `items` for every one). */
   roomType: { id: string; name: string };
   checkIn: string;
   checkOut: string;
   nights: number;
   guests: number;
+  /** All rooms, across every room type. */
   rooms: number;
+  /** Every room type booked, in order: each is its own booking at the hotel, all under `code`. */
+  items: (ReservationItem & { bookingId: string })[];
   /** How the guest changes or cancels (they have no account here; through the hotel). */
   manage: string;
   /** A confirmation email was handed to the mailer (false when email isn't configured or a daily cap was hit). */
@@ -261,19 +309,17 @@ export async function createBooking(input: CreateBookingInput, opts: { keyId?: s
   const a = conciergeSchemas.createBooking.parse(input);
   const hotel = await findListedHotel(a.propertyId);
   // Check the stay before making the guest record; the booking service re-checks inside its transaction.
-  const stay = await bookableStay(hotel.id, a, 'Stays are limited to 30 nights online.');
-  if ('error' in stay) throw badRequest(stay.error);
+  const stay = await reservationOrThrow(hotel.id, a);
   const guest = await integrationGuest(a.guest);
-  let booking: Awaited<ReturnType<typeof createSiteBooking>>;
+  let bookings: Awaited<ReturnType<typeof createReservation>>;
   try {
-    booking = await createSiteBooking({
+    bookings = await createReservation({
       userId: guest.id,
       propertyId: hotel.id,
-      roomTypeId: a.roomTypeId,
+      lines: stay.lines.map((l) => ({ roomTypeId: l.roomType.id, rooms: l.rooms })),
       checkIn: a.checkIn,
       checkOut: a.checkOut,
       guests: a.guests,
-      rooms: a.rooms,
       notes: a.notes,
       paymentStatus: 'PAY_AT_PROPERTY',
       createdVia: `Booked by ${a.source} — pay at property`,
@@ -284,43 +330,56 @@ export async function createBooking(input: CreateBookingInput, opts: { keyId?: s
     await prisma.user.delete({ where: { id: guest.id } }).catch(() => undefined);
     throw e;
   }
+  const [lead] = bookings;
+  const ids = bookings.map((b) => b.id);
   const guestEmail = a.guest.email.trim().toLowerCase();
-  await prisma.booking.update({ where: { id: booking.id }, data: { guestEmail } });
-  await confirmPayAtProperty(booking.id);
+  await prisma.booking.updateMany({ where: { id: { in: ids } }, data: { guestEmail } });
+  await confirmReservationPayAtProperty(ids);
 
-  const total = Number(booking.totalPrice);
+  const total = bookings.reduce((s, b) => s + Math.round(Number(b.totalPrice) * 100), 0) / 100;
+  const rooms = bookings.reduce((s, b) => s + b.rooms, 0);
+  // One reservation is one confirmation email (one send against the caps), however many room types it holds.
   const sendEmail = isEmailConfigured() && (await confirmationAllowed(guestEmail, hotel.id, opts.keyId ?? null));
   if (sendEmail) {
     await sendBookingConfirmation({
       to: guestEmail,
       guestName: a.guest.name.trim(),
-      propertyName: booking.property.name,
-      roomTypeName: booking.roomType.name,
+      propertyName: lead.property.name,
+      roomTypeName: lead.roomType.name,
+      lines: bookings.map((b) => ({ roomTypeName: b.roomType.name, rooms: b.rooms })),
       checkIn: a.checkIn,
       checkOut: a.checkOut,
       guests: a.guests,
-      rooms: a.rooms,
+      rooms,
       totalPrice: total.toFixed(2),
-      currency: booking.currency,
-      bookingId: booking.code ?? booking.id,
+      currency: lead.currency,
+      bookingId: lead.code ?? lead.id,
       paymentStatus: 'PAY_AT_PROPERTY',
     });
   }
 
   return {
-    bookingId: booking.id,
-    code: booking.code ?? booking.id,
+    bookingId: lead.id,
+    code: lead.code ?? lead.id,
     status: 'CONFIRMED',
     total,
-    currency: booking.currency,
+    currency: lead.currency,
     paymentStatus: 'PAY_AT_PROPERTY',
-    hotel: { id: hotel.id, name: booking.property.name },
-    roomType: { id: booking.roomTypeId, name: booking.roomType.name },
+    hotel: { id: hotel.id, name: lead.property.name },
+    roomType: { id: lead.roomTypeId, name: lead.roomType.name },
     checkIn: a.checkIn,
     checkOut: a.checkOut,
     nights: diffDays(a.checkIn, a.checkOut),
     guests: a.guests,
-    rooms: a.rooms,
+    rooms,
+    items: bookings.map((b, i) => ({
+      bookingId: b.id,
+      roomType: { id: b.roomTypeId, name: b.roomType.name, sleeps: stay.lines[i].roomType.capacity },
+      rooms: b.rooms,
+      guests: b.guests,
+      total: Number(b.totalPrice),
+      roomsLeft: Math.max(0, stay.lines[i].quote.available - b.rooms),
+    })),
     manage: integrationManageNote((await prisma.property.findUnique({ where: { id: hotel.id }, select: { phone: true } }))?.phone),
     confirmationEmailSent: sendEmail,
   };
@@ -349,6 +408,8 @@ export type FindBookingResult =
       nights: number;
       guests: number;
       rooms: number;
+      /** Several room types booked under this code: each with its rooms, guests and status (null for one room type). */
+      items: { room: string; rooms: number; guests: number; status: string }[] | null;
       /** "3:00 PM on Thu, Oct 22" while free changes are still possible, else null. */
       freeChangesUntil: string | null;
       manage: string;
@@ -369,17 +430,20 @@ export async function findBooking(input: FindBookingInput): Promise<FindBookingR
   const checkIn = toISODate(b.checkIn);
   const checkOut = toISODate(b.checkOut);
   const policy = policyFor(checkIn, localeOf(b.property).timezone);
+  const items = await reservationRooms(b);
+  const stands = bookingStanding(b, items);
   return {
     found: true,
     code: b.code ?? a.code,
-    status: b.status,
+    status: stands.status,
     hotel: b.property,
-    room: b.roomType.name,
+    room: stands.room,
     checkIn,
     checkOut,
     nights: diffDays(checkIn, checkOut),
-    guests: b.guests,
-    rooms: b.rooms,
+    guests: stands.guests,
+    rooms: stands.rooms,
+    items,
     freeChangesUntil: policy.passed ? null : policy.deadlineLabel,
     manage: b.guestEmail
       ? integrationManageNote(b.property.phone)

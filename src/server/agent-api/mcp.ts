@@ -82,7 +82,7 @@ async function instructions(hotel: ScopedHotel | null, key: AgentKeyContext | nu
     hotel
       ? '1. check_availability for the dates and party, and suggest an available room type that fits the party (fits_party).'
       : '1. search_hotels with the place and, when known, checkIn, checkOut, guests and rooms. Then check_availability for the hotel the person picks, and suggest an available room type that fits the party (fits_party).',
-    '2. get_booking_link with that room_type_id (add the guest’s name, email and phone if you have them). Give the person the link with the room, dates and total: they check it and confirm on the hotel’s checkout page. This is the default way to book.',
+    '2. get_booking_link with that room_type_id, or items for a mix of room types in one booking (add the guest’s name, email and phone if you have them). Give the person the link with the room, dates and total: they check it and confirm on the hotel’s checkout page. This is the default way to book.',
     '3. If the person can’t open a link (for example on a voice call), use request_booking: the hotel team confirms and sends a link. Read back the hotel, room, dates, guests and the quoted total first, and only call it after a clear yes.',
     ...(canBook ? ['4. create_booking makes a confirmed booking paid at the hotel on arrival (this API key allows it). Read everything back, including the guest’s name and email, and only call it after a clear yes. Give the guest the confirmation code.'] : []),
     '',

@@ -31,10 +31,31 @@ export interface VoiceRoomOption {
 /** What a page action reports back to the agent. `message` is written for the model to act on. */
 export type VoiceActionResult = { ok: true; message: string; [k: string]: unknown } | { ok: false; error: string; [k: string]: unknown };
 
+/** One room type of a checkout that books several together. */
+export interface VoiceOrderItem {
+  roomTypeId: string;
+  rooms: number;
+}
+
+/**
+ * Several room types as one comparable string ("" for one room type), so an
+ * order's room types can be compared whatever order they were listed in.
+ */
+export function orderItemsKey(items: readonly VoiceOrderItem[] | null | undefined): string {
+  if (!items || items.length < 2) return '';
+  return items
+    .map((i) => `${i.roomTypeId}:${i.rooms}`)
+    .sort()
+    .join(',');
+}
+
 /** The order on a checkout page, exactly as confirming it would book it. */
 export interface VoiceOrder {
   propertyId: string;
+  /** With several room types, the first of them (`items` lists them all, and `rooms` counts every room). */
   roomTypeId: string;
+  /** Several room types booked together; null for one. */
+  items?: VoiceOrderItem[] | null;
   checkIn: string;
   checkOut: string;
   guests: number;
@@ -51,6 +72,8 @@ export interface VoiceBookingRequest {
   /** Null on a hotel's own line (it means that hotel). */
   propertyId: string | null;
   roomTypeId: string;
+  /** Several room types booked together, as start_booking returned them; null for one. */
+  items?: VoiceOrderItem[] | null;
   checkIn: string;
   checkOut: string;
   guests: number;

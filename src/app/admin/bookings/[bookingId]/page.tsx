@@ -248,6 +248,8 @@ export default function BookingDetailPage() {
                 {copied ? 'Code copied' : ''}
               </span>
               <BookingStatusBadge status={b.status} />
+              {/* Booked together with other room types: searching this code lists every room type in the booking. */}
+              {b.reservationCode && <Badge variant="neutral">Group booking {b.reservationCode}</Badge>}
               {late && <Badge variant="warning">Late arrival</Badge>}
               {overdue && <Badge variant="danger">Past check-out</Badge>}
             </div>

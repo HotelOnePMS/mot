@@ -70,6 +70,14 @@ interface GuestBooking {
   canCancel: boolean;
   canModifyCheckIn: boolean;
   canModifyCheckOut: boolean;
+  /** Several room types booked together: the code the guest was given and every room type in it. */
+  reservation: {
+    code: string;
+    totalPrice: number;
+    rooms: number;
+    guests: number;
+    lines: { id: string; code: string | null; status: BookingStatus; rooms: number; guests: number; totalPrice: number; roomTypeName: string; current: boolean }[];
+  } | null;
 }
 
 function icsFor(b: GuestBooking) {
@@ -348,7 +356,9 @@ function BookingPage() {
     propertyName: b?.property.name ?? null,
     brand: b?.property.primaryColor ?? null,
     summary: b
-      ? `their booking page at ${voiceText(b.property.name, 80)}: confirmation ${b.code}, ${BOOKING_STATUS[b.status]?.label.toLowerCase() ?? b.status.toLowerCase()}, ${voiceText(b.roomType.name, 80)}, ${fmtDay(b.checkIn, 'weekday')} to ${fmtDay(b.checkOut, 'weekday')}, ${plural(b.guests, 'guest')}, ${price(b.totalPrice, b.currency)} (${paymentLabel(b.paymentStatus).label.toLowerCase()})${
+      ? `their booking page at ${voiceText(b.property.name, 80)}: confirmation ${b.reservation?.code ?? b.code}, ${BOOKING_STATUS[b.status]?.label.toLowerCase() ?? b.status.toLowerCase()}, ${voiceText(b.roomType.name, 80)}${
+          b.reservation ? ` (one of ${b.reservation.lines.length} room types in this booking, ${price(b.reservation.totalPrice, b.currency)} in all)` : ''
+        }, ${fmtDay(b.checkIn, 'weekday')} to ${fmtDay(b.checkOut, 'weekday')}, ${plural(b.guests, 'guest')}, ${price(b.totalPrice, b.currency)} (${paymentLabel(b.paymentStatus).label.toLowerCase()})${
           b.policy.passed ? '' : `; free changes until ${b.policy.deadlineLabel}`
         }${isNew ? ' — they have just booked it' : ''}`
       : null,
@@ -401,10 +411,13 @@ function BookingPage() {
               ? 'See you tomorrow'
               : `${daysToGo} days to go`;
   const requests = b.notes ? b.notes.split('\n').filter((l) => !l.startsWith('[')).join('\n') || b.notes : null;
+  // The code the guest was given: a multi-room-type reservation's, else this booking's.
+  const code = b.reservation?.code ?? b.code;
+  const others = b.reservation?.lines.filter((l) => !l.current) ?? [];
 
   const copyCode = async () => {
     try {
-      await navigator.clipboard.writeText(b.code);
+      await navigator.clipboard.writeText(code);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -496,18 +509,18 @@ function BookingPage() {
                     {countdown && <span className="text-base font-semibold">{countdown}</span>}
                   </div>
                   <p className="mt-1.5 text-sm text-muted-foreground">
-                    {cancelled ? `This booking was ${b.status === 'NO_SHOW' ? 'marked as a no-show' : 'cancelled'}.` : `${b.user.firstName} ${b.user.lastName} · ${plural(b.guests, 'guest')}`}
+                    {cancelled ? `This booking was ${b.status === 'NO_SHOW' ? 'marked as a no-show' : 'cancelled'}.` : `${b.user.firstName} ${b.user.lastName} · ${plural(b.reservation?.guests || b.guests, 'guest')}`}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={copyCode}
                   className="group flex min-h-12 items-center gap-3 self-start rounded-xl border border-dashed border-border-strong/60 px-4 py-2 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:self-auto"
-                  aria-label={`Confirmation code ${b.code.split('').join(' ')}. Copy`}
+                  aria-label={`Confirmation code ${code.split('').join(' ')}. Copy`}
                 >
                   <span>
                     <span className="block text-xs text-muted-foreground">Confirmation code</span>
-                    <span className="font-mono text-lg font-semibold tracking-[0.2em]">{b.code}</span>
+                    <span className="font-mono text-lg font-semibold tracking-[0.2em]">{code}</span>
                   </span>
                   {copied ? <Check className="h-4 w-4 text-success" aria-hidden /> : <Copy className="h-4 w-4 text-muted-foreground group-hover:text-foreground" aria-hidden />}
                 </button>
@@ -552,6 +565,31 @@ function BookingPage() {
                     </span>
                   </li>
                 </ul>
+                {b.reservation && others.length > 0 && (
+                  <div className="mt-5 rounded-xl border px-4 py-3 text-sm">
+                    <p className="font-medium">
+                      Also in this booking
+                      <span className="font-normal text-muted-foreground">
+                        {' '}
+                        · {plural(b.reservation.rooms, 'room')} in all · {price(b.reservation.totalPrice, b.currency)} total
+                      </span>
+                    </p>
+                    <ul className="mt-2 space-y-1.5">
+                      {others.map((l) => (
+                        <li key={l.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5">
+                          <Link href={`/bookings/${l.id}`} className="rounded-sm font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            {l.roomTypeName}
+                            {l.rooms > 1 ? ` × ${l.rooms}` : ''}
+                          </Link>
+                          <span className="text-muted-foreground tabular">
+                            {l.status === 'CANCELLED' || l.status === 'NO_SHOW' ? (BOOKING_STATUS[l.status]?.label ?? l.status) : `${plural(l.guests, 'guest')} · ${price(l.totalPrice, b.currency)}`}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-xs text-muted-foreground">Each room type can be changed or cancelled on its own page.</p>
+                  </div>
+                )}
                 {requests && (
                   <div className="mt-5 rounded-xl bg-muted px-4 py-3 text-sm">
                     <p className="text-xs font-medium text-muted-foreground">Your requests</p>
@@ -606,7 +644,7 @@ function BookingPage() {
                     )}
                     {b.canCancel && (
                       <Button variant="ghost" className="text-destructive hover:bg-destructive-soft hover:text-destructive-soft-foreground" onClick={() => setCancelOpen(true)}>
-                        Cancel booking
+                        {others.length ? `Cancel the ${b.roomType.name}` : 'Cancel booking'}
                       </Button>
                     )}
                   </div>

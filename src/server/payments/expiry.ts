@@ -10,19 +10,24 @@ import { scheduleInventorySync } from '@/server/channels/sync';
 
 const RELEASE_NOTE = 'Online payment not completed — rooms released';
 
-/** Cancel one still-unpaid held booking. Returns true if it was released. */
+/**
+ * Cancel a still-unpaid held booking. Several room types booked together are
+ * paid with one card payment, so the whole reservation is released together.
+ * Returns true if anything was released.
+ */
 export async function expireUnpaidBooking(bookingId: string): Promise<boolean> {
-  const { count } = await prisma.booking.updateMany({
-    where: { id: bookingId, status: 'PENDING', paymentStatus: 'AWAITING_PAYMENT' },
+  const booking = await prisma.booking.findUnique({ where: { id: bookingId }, select: { groupCode: true } });
+  // One statement for the whole reservation, so a payment arriving at the same moment finds it all held or all released.
+  const released = await prisma.booking.updateManyAndReturn({
+    where: { ...(booking?.groupCode ? { groupCode: booking.groupCode } : { id: bookingId }), status: 'PENDING', paymentStatus: 'AWAITING_PAYMENT' },
     data: { status: 'CANCELLED', paymentStatus: 'EXPIRED' },
+    select: { id: true, roomTypeId: true, checkIn: true, checkOut: true },
   });
-  if (count) {
-    await prisma.bookingStatusHistory.create({ data: { bookingId, status: 'CANCELLED', notes: RELEASE_NOTE } });
-    // The released rooms go back on sale at the OTAs too.
-    const released = await prisma.booking.findUnique({ where: { id: bookingId }, select: { roomTypeId: true, checkIn: true, checkOut: true } });
-    if (released) scheduleInventorySync(released.roomTypeId, released.checkIn, released.checkOut);
-  }
-  return count > 0;
+  if (!released.length) return false;
+  await prisma.bookingStatusHistory.createMany({ data: released.map((b) => ({ bookingId: b.id, status: 'CANCELLED' as const, notes: RELEASE_NOTE })) });
+  // The released rooms go back on sale at the OTAs too.
+  for (const b of released) scheduleInventorySync(b.roomTypeId, b.checkIn, b.checkOut);
+  return true;
 }
 
 /** Release every held booking whose time is up (optionally only one room type's). Returns how many. */

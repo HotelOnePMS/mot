@@ -88,6 +88,8 @@ const at = (hotel: ScopedHotel | null, fallback = 'at one hotel') => (hotel ? `a
 const property = (args: Args, ctx: ToolContext) => (ctx.hotel ? ctx.hotel.id : args.propertyId);
 
 const READ_BACK = 'Before calling, read back the hotel, room, dates, number of guests and the total, and only call it after the person clearly says yes.';
+/** Mixing room types in one booking ("a king and two doubles"). */
+const MIXED = 'For different room types in one booking (e.g. 1 King and 2 Doubles), pass items (each roomTypeId and its rooms) instead of roomTypeId; guests is the whole party.';
 
 const TOOLS: ToolDef[] = [
   {
@@ -115,7 +117,7 @@ const TOOLS: ToolDef[] = [
     op: 'checkAvailability',
     annotations: READ,
     describe: ({ hotel }) =>
-      `Live availability and exact prices (in the hotel’s currency, taxes and fees included) for every room type ${at(hotel)} for given dates and party. Suggest an option that is available and fits the party (fits_party), then use its room_type_id with get_booking_link.`,
+      `Live availability and exact prices (in the hotel’s currency, taxes and fees included) for every room type ${at(hotel)} for given dates and party. Suggest an option that is available and fits the party (fits_party), then use its room_type_id with get_booking_link. A party that wants different room types together (say a King and a Twin) can book them as one booking with items.`,
     run: async (args, ctx) => ({ ...(await checkAvailability({ ...args, propertyId: property(args, ctx) } as Parameters<typeof checkAvailability>[0])) }),
   },
   {
@@ -124,7 +126,7 @@ const TOOLS: ToolDef[] = [
     op: 'bookingLink',
     annotations: READ,
     describe: ({ hotel }) =>
-      `The fastest way to book ${at(hotel, 'a room')}: returns a checkout link with the hotel, room, dates and party filled in (and the guest’s name, email and phone if you pass them), plus a summary with the total. Give the person the link and the summary — they open it, check the details and confirm in one tap. The link doesn’t hold the room or charge anything by itself. Use this by default.`,
+      `The fastest way to book ${at(hotel, 'a room')}: returns a checkout link with the hotel, room, dates and party filled in (and the guest’s name, email and phone if you pass them), plus a summary with the total. Give the person the link and the summary — they open it, check the details and confirm in one tap. The link doesn’t hold the room or charge anything by itself. Use this by default. ${MIXED}`,
     run: async (args, ctx) => ({ ...(await bookingLink({ ...args, propertyId: property(args, ctx) } as Parameters<typeof bookingLink>[0])) }),
   },
   {
@@ -133,7 +135,7 @@ const TOOLS: ToolDef[] = [
     op: 'requestBooking',
     annotations: WRITE,
     describe: ({ hotel }) =>
-      `For people who can’t open a link (for example on a voice call): sends a booking request to ${hotel ? hotel.name : 'the hotel'}’s team, who confirm with the guest and send a link to finish booking. Nothing is booked until then. Needs the guest’s full name and an email or phone number. ${READ_BACK}`,
+      `For people who can’t open a link (for example on a voice call): sends a booking request to ${hotel ? hotel.name : 'the hotel'}’s team, who confirm with the guest and send a link to finish booking. Nothing is booked until then. Needs the guest’s full name and an email or phone number. ${MIXED} ${READ_BACK}`,
     run: async (args, ctx) => {
       await ctx.limit('request');
       // Keyed partners get their own per-hotel allowance, apart from anonymous callers'.
@@ -148,7 +150,7 @@ const TOOLS: ToolDef[] = [
     annotations: WRITE,
     needsBookKey: true,
     describe: ({ hotel, key }) =>
-      `Makes a confirmed booking ${hotel ? `at ${hotel.name}` : key?.propertyId ? `at the hotel this API key belongs to (propertyId ${key.propertyId})` : 'at any HotelOne hotel'}, paid at the hotel on arrival, and emails the guest a confirmation. Needs the guest’s first and last name and their own email. ${READ_BACK} Returns a confirmation code to give the guest.`,
+      `Makes a confirmed booking ${hotel ? `at ${hotel.name}` : key?.propertyId ? `at the hotel this API key belongs to (propertyId ${key.propertyId})` : 'at any HotelOne hotel'}, paid at the hotel on arrival, and emails the guest a confirmation. Needs the guest’s first and last name and their own email. ${MIXED} ${READ_BACK} Returns a confirmation code to give the guest (one code for the whole booking, even with several room types).`,
     run: async (args, ctx) => {
       const propertyId = property(args, ctx);
       if (!ctx.key) throw new DomainError(401, 'API_KEY_REQUIRED', 'create_booking needs a HotelOne API key with booking access. Use get_booking_link (the guest confirms in one tap) or request_booking (the hotel confirms) instead.');

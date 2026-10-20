@@ -1,18 +1,22 @@
 import type { Prisma } from '@prisma/client';
 import type { BookingStatus, BookingSummary } from '@/lib/dto';
 import { computeRiskFlags } from '@/lib/risk';
-import { fromCents, toCents } from '@/lib/payments';
+import { fromCents, reservationShares, toCents } from '@/lib/payments';
 import { highAmountThreshold } from '../payments/config';
 import { diffDays, toISODate } from '../dates';
 
+// Money actually collected online (refunded payments included, so the history shows), for the balance and the risk flags.
+const collected = {
+  where: { status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'] } },
+  select: { amount: true, amountRefunded: true, cardholderName: true, cardCountry: true, billingCountry: true, threeDSecure: true, riskLevel: true },
+  orderBy: { createdAt: 'asc' },
+} satisfies Prisma.Booking$paymentsArgs;
+
 export const bookingInclude = {
   user: { select: { id: true, firstName: true, lastName: true, email: true, phone: true, country: true } },
-  // Money actually collected online (refunded payments included, so the history shows), for the balance and the risk flags.
-  payments: {
-    where: { status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'] } },
-    select: { amount: true, amountRefunded: true, cardholderName: true, cardCountry: true, billingCountry: true, threeDSecure: true, riskLevel: true },
-    orderBy: { createdAt: 'asc' },
-  },
+  payments: collected,
+  // Several room types booked together share one payment, recorded on the lead line.
+  reservationLead: { select: { payments: collected, reservationLines: { select: { id: true, status: true, paymentDue: true, totalPrice: true }, orderBy: { id: 'asc' } } } },
   roomType: { select: { id: true, name: true } },
   room: { select: { id: true, roomNumber: true, floor: true } },
   property: { select: { id: true, name: true } },
@@ -24,12 +28,13 @@ export function toBookingSummary(b: BookingWithRelations): BookingSummary {
   const checkIn = toISODate(b.checkIn);
   const checkOut = toISODate(b.checkOut);
   const guestName = `${b.user.firstName} ${b.user.lastName}`.trim();
-  const held = b.payments.reduce((sum, p) => sum + toCents(Number(p.amount)) - toCents(Number(p.amountRefunded)), 0);
+  const pay = reservationPayment(b);
   // The first successful payment carries the card details; later ones (rare) add nothing new to flag.
-  const first = b.payments[0];
+  const first = pay.payments[0];
   return {
     id: b.id,
     code: b.code ?? b.id.slice(-8).toUpperCase(),
+    reservationCode: b.groupCode,
     status: b.status as BookingStatus,
     propertyId: b.property.id,
     propertyName: b.property.name,
@@ -50,19 +55,46 @@ export function toBookingSummary(b: BookingWithRelations): BookingSummary {
     totalPrice: Number(b.totalPrice),
     currency: b.currency,
     paymentStatus: b.paymentStatus ?? 'UNPAID',
-    amountPaid: fromCents(Math.max(0, held)),
+    amountPaid: fromCents(pay.heldCents),
     // Flags describe online payments; pay-at-property bookings have nothing to flag.
     riskFlags: first
       ? computeRiskFlags({
           guestName,
           payment: { cardholderName: first.cardholderName, cardCountry: first.cardCountry, billingCountry: first.billingCountry, threeDSecure: first.threeDSecure, riskLevel: first.riskLevel },
           guestCountry: b.user.country,
-          totalAmount: Number(b.totalPrice),
+          totalAmount: fromCents(pay.totalCents),
           highAmountThreshold: highAmountThreshold(),
         })
       : [],
     notes: b.notes,
     createdAt: b.createdAt.toISOString(),
+  };
+}
+
+/**
+ * What was paid online for this booking. A line of a multi-room-type
+ * reservation gets its share of the reservation's one payment
+ * (`reservationShares`: refunds come off cancelled room types first), so each
+ * line's balance at the desk is right and the lines add up to the payment.
+ */
+const ENDED: string[] = ['CANCELLED', 'NO_SHOW'];
+
+function reservationPayment(b: BookingWithRelations) {
+  const lead = b.reservationLead;
+  if (!lead || lead.reservationLines.length < 2) {
+    const held = b.payments.reduce((sum, p) => sum + toCents(Number(p.amount)) - toCents(Number(p.amountRefunded)), 0);
+    return { payments: b.payments, heldCents: Math.max(0, held), totalCents: toCents(Number(b.totalPrice)) };
+  }
+  const shares = reservationShares({
+    paidCents: lead.payments.reduce((sum, p) => sum + toCents(Number(p.amount)), 0),
+    refundedCents: lead.payments.reduce((sum, p) => sum + toCents(Number(p.amountRefunded)), 0),
+    lines: lead.reservationLines.map((l) => ({ dueCents: toCents(Number(l.paymentDue ?? l.totalPrice)), cancelled: ENDED.includes(l.status) })),
+  });
+  const share = shares[lead.reservationLines.findIndex((l) => l.id === b.id)];
+  return {
+    payments: lead.payments,
+    heldCents: share ? share.paidCents - share.refundedCents : 0,
+    totalCents: lead.reservationLines.reduce((sum, l) => sum + toCents(Number(l.totalPrice)), 0),
   };
 }
 

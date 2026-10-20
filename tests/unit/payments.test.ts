@@ -1,12 +1,14 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
+  allocateCents,
   bookingPaymentStatus,
   cancellationPolicyText,
   effectivePolicy,
   paymentAmountDue,
   platformFeeCents,
   refundableCents,
+  reservationShares,
   suggestedRefundCents,
 } from '../../src/lib/payments';
 
@@ -88,4 +90,37 @@ test('policy text depends on the policy and never promises a dispute-free bookin
   assert.match(texts[1], /deposit of 2 nights/);
   assert.match(cancellationPolicyText({ policy: 'DEPOSIT', depositNights: 1 }), /deposit of 1 night /);
   for (const t of texts) assert.doesNotMatch(t, /no disputes|chargeback.free|guaranteed/i);
+});
+
+test('one payment for several room types is shared out in whole cents that add up', () => {
+  assert.deepEqual(allocateCents(30000, [100, 200]), [10000, 20000]);
+  assert.deepEqual(allocateCents(10000, [1, 1, 1]), [3334, 3333, 3333]);
+  assert.deepEqual(allocateCents(101, [0, 0]), [51, 50]);
+  assert.deepEqual(allocateCents(0, [5, 7]), [0, 0]);
+  assert.deepEqual(allocateCents(500, []), []);
+});
+
+test('refunds come off a cancelled room type first, so the rooms kept stay paid', () => {
+  const lines = [
+    { dueCents: 30000, cancelled: false },
+    { dueCents: 20000, cancelled: true },
+  ];
+  assert.deepEqual(reservationShares({ paidCents: 50000, refundedCents: 0, lines }), [
+    { paidCents: 30000, refundedCents: 0 },
+    { paidCents: 20000, refundedCents: 0 },
+  ]);
+  assert.deepEqual(reservationShares({ paidCents: 50000, refundedCents: 20000, lines }), [
+    { paidCents: 30000, refundedCents: 0 },
+    { paidCents: 20000, refundedCents: 20000 },
+  ]);
+  // A refund beyond the cancelled room type's share spreads over the rest.
+  assert.deepEqual(reservationShares({ paidCents: 50000, refundedCents: 26000, lines }), [
+    { paidCents: 30000, refundedCents: 6000 },
+    { paidCents: 20000, refundedCents: 20000 },
+  ]);
+  // Nothing cancelled: in proportion, never more than was paid.
+  assert.deepEqual(reservationShares({ paidCents: 1000, refundedCents: 5000, lines: [{ dueCents: 1, cancelled: false }, { dueCents: 1, cancelled: false }] }), [
+    { paidCents: 500, refundedCents: 500 },
+    { paidCents: 500, refundedCents: 500 },
+  ]);
 });

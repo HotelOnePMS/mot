@@ -42,6 +42,8 @@ interface PaymentInfo {
   paymentStatus: string;
   payments: PaymentRecord[];
   disputes: { id: string; status: string; reason: string | null; amount: number; evidenceDueBy: string | null; evidenceSubmittedAt: string | null }[];
+  /** Set when one payment covers every room type of a reservation booked together. */
+  reservation: { code: string; roomTypes: number } | null;
 }
 
 interface RefundInfo {
@@ -51,6 +53,7 @@ interface RefundInfo {
   deadlinePassed: boolean;
   deadlineLabel: string;
   canRefund: boolean;
+  reservation: { code: string; roomTypes: number } | null;
 }
 
 interface ChecklistState {
@@ -132,6 +135,11 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
                 ? `Free cancellation ended at ${info.deadlineLabel}. The policy doesn’t require a refund now; you can still refund any amount.`
                 : `Cancelled or cancelling before the free-cancellation deadline (${info.deadlineLabel}): the policy suggests refunding ${formatMoney(info.suggested, booking.currency, { cents: true })}.`}
             </Callout>
+            {info.reservation && (
+              <p className="text-sm text-muted-foreground">
+                This payment covers all {info.reservation.roomTypes} room types in reservation {info.reservation.code}. When only some of them are cancelled, the suggestion is what was charged for those.
+              </p>
+            )}
             {info.payments.length > 1 && (
               <Field label="Payment" htmlFor="refund-payment">
                 <select id="refund-payment" value={paymentId} onChange={(e) => setPaymentId(e.target.value)} className="h-10 w-full rounded-lg border border-input bg-surface px-3 text-sm">
@@ -256,6 +264,12 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
               <dd className="font-medium tabular">{formatMoney(balance, b.currency, { cents: true })}</dd>
             </div>
           </dl>
+        )}
+
+        {data?.reservation && paid.length > 0 && (
+          <p className="mt-3 text-xs text-muted-foreground">
+            One card payment for all {data.reservation.roomTypes} room types in reservation {data.reservation.code}. Paid online above is this room type’s share.
+          </p>
         )}
 
         {paid.map((p) => (

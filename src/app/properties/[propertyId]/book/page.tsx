@@ -8,9 +8,10 @@ import { getSession, signIn, signOut, useSession } from 'next-auth/react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArrowLeft, Building2, CalendarDays, Check, CreditCard, Lock, ShieldCheck, UserRound, Users } from 'lucide-react';
 import type { StayQuote } from '@/lib/dto';
+import { linesFromParams, setLineParams, splitParty, totalRooms } from '@/lib/booking-lines';
 import { api, fetcher } from '@/lib/fetcher';
 import { fmtDay, fmtRange } from '@/lib/format';
-import { fromCents, paymentAmountDue, toCents, type PaymentPolicy } from '@/lib/payments';
+import { fromCents, paymentAmountDue, toCents, type AmountDue, type PaymentPolicy } from '@/lib/payments';
 import { isStaffRole } from '@/lib/routes';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -21,7 +22,7 @@ import { Callout, EmptyState, Skeleton } from '@/components/ui/primitives';
 import { SegmentedControl } from '@/components/ui/segmented';
 import { SmartImage } from '@/components/ui/smart-image';
 import { PublicDemoNote } from '@/components/guest/PublicDemoNote';
-import { useVoicePage, voiceText, type VoiceActionResult, type VoiceBookingRequest } from '@/components/voice/page-context';
+import { orderItemsKey, useVoicePage, voiceText, type VoiceActionResult, type VoiceBookingRequest } from '@/components/voice/page-context';
 import { GuestShell } from '../../_components/guest-shell';
 import { usePropertyShell } from '../../_components/property-shell';
 import { isDay, plural, price, shiftDay } from '../../_components/format';
@@ -102,6 +103,20 @@ function currencyName(code: string): string {
 function splitName(full: string): { firstName: string; lastName: string } {
   const [firstName = '', ...rest] = full.trim().split(/\s+/);
   return { firstName, lastName: rest.join(' ') };
+}
+
+/** The taxes and fees of several quotes, added up per charge (same name, kind and rate), in first-seen order. */
+function sumCharges(quotes: StayQuote[]) {
+  const out = new Map<string, { key: string; name: string; kind: string; rate: number; cents: number }>();
+  for (const q of quotes) {
+    for (const c of q.charges ?? []) {
+      const key = `${c.name}|${c.kind}|${c.rate}`;
+      const row = out.get(key) ?? { key, name: c.name, kind: c.kind, rate: c.rate, cents: 0 };
+      row.cents += toCents(c.amount);
+      out.set(key, row);
+    }
+  }
+  return [...out.values()].map((c) => ({ ...c, amount: fromCents(c.cents) }));
 }
 
 const STEPS = ['Room and dates', 'Your details', 'Review and book'] as const;
@@ -284,18 +299,31 @@ function Checkout() {
   const router = useRouter();
   const shell = usePropertyShell();
   const { data: session, status } = useSession();
-  const roomTypeId = params.get('roomTypeId') ?? '';
+  // One room type (roomTypeId + rooms) or several booked together (items=…).
+  const lines = React.useMemo(() => linesFromParams(params), [params]);
+  const multi = lines.length > 1;
+  const roomTypeId = lines[0]?.roomTypeId ?? '';
   // Calendar days only: anything else in a (possibly crafted) link counts as no dates chosen.
   const checkIn = isDay(params.get('checkIn')) ? params.get('checkIn')! : '';
   const checkOut = isDay(params.get('checkOut')) ? params.get('checkOut')! : '';
   const guests = Number(params.get('guests')) || 2;
-  const rooms = Number(params.get('rooms')) || 1;
+  const rooms = lines.length ? totalRooms(lines) : Number(params.get('rooms')) || 1;
 
   const { data: p } = useSWR<PublicProperty>(`/api/properties/${propertyId}`, fetcher);
-  const { data: quote, error: quoteError } = useSWR<StayQuote>(
-    roomTypeId && checkIn && checkOut ? `/api/quote?roomTypeId=${roomTypeId}&checkIn=${checkIn}&checkOut=${checkOut}&guests=${guests}&rooms=${rooms}` : null,
-    fetcher
+  // Several room types share the party out as the server does (per-guest fees follow it).
+  const party = React.useMemo(
+    () => (multi && p ? splitParty(guests, lines.map((l) => ({ rooms: l.rooms, capacity: p.roomTypes.find((r) => r.id === l.roomTypeId)?.capacity ?? 0 }))) : null),
+    [multi, p, guests, lines]
   );
+  // A quote per room type; the booking endpoint charges exactly their sum.
+  const quoteUrls = lines.map(
+    (l, i) => `/api/quote?roomTypeId=${encodeURIComponent(l.roomTypeId)}&checkIn=${checkIn}&checkOut=${checkOut}&guests=${multi ? (party?.[i] ?? 1) : guests}&rooms=${l.rooms}`
+  );
+  const { data: quotes, error: quoteError } = useSWR<StayQuote[]>(lines.length && checkIn && checkOut && (!multi || p) ? ['quotes', ...quoteUrls] : null, () =>
+    Promise.all(quoteUrls.map((u) => fetcher<StayQuote>(u)))
+  );
+  const quote = quotes?.[0];
+  const total = quotes ? fromCents(quotes.reduce((s, q) => s + toCents(q.total), 0)) : null;
   const { data: config } = useSWR<{ emailEnabled?: boolean }>('/api/config', fetcher);
   const { data: terms } = useSWR<PaymentTerms>(`/api/properties/${propertyId}/payment-terms`, fetcher);
   const [accepted, setAccepted] = React.useState(false);
@@ -319,13 +347,30 @@ function Checkout() {
 
   const rt = p?.roomTypes.find((r) => r.id === roomTypeId);
   const signedIn = status === 'authenticated';
-  const back = `/properties/${propertyId}?checkIn=${checkIn}&checkOut=${checkOut}&guests=${guests}&rooms=${rooms}`;
-  const unavailable = !!quote && quote.available < rooms;
+  const back = `/properties/${propertyId}?${new URLSearchParams({ checkIn, checkOut, guests: String(guests), rooms: String(multi ? 1 : rooms), ...(multi ? { items: setLineParams(new URLSearchParams(), lines).get('items')! } : {}) })}`;
+  // The room type (if any) that no longer has enough rooms free.
+  const shortLine = quotes ? lines.findIndex((l, i) => quotes[i] && quotes[i].available < l.rooms) : -1;
+  const unavailable = shortLine >= 0;
+  const shortName = shortLine >= 0 ? (p?.roomTypes.find((r) => r.id === lines[shortLine].roomTypeId)?.name ?? quotes?.[shortLine]?.roomTypeName) : null;
+  const lineName = (i: number) => p?.roomTypes.find((r) => r.id === lines[i].roomTypeId)?.name ?? quotes?.[i]?.roomTypeName ?? 'Room';
+  const roomsLabel = multi ? lines.map((l, i) => `${l.rooms} × ${lineName(i)}`).join(', ') : null;
+  const shortLeft = shortLine >= 0 ? (quotes?.[shortLine]?.available ?? 0) : 0;
+  const soldOutText = multi && shortLine >= 0 ? (shortLeft ? `Only ${shortLeft} ${shortName ?? 'room'} left for these dates.` : `The ${shortName ?? 'room'} just sold out for these dates.`) : 'This room just sold out for these dates.';
+  // Several room types: the party must fit them, with at least one guest per type (the server refuses otherwise).
+  const sleeps = p ? lines.reduce((s, l) => s + l.rooms * (p.roomTypes.find((r) => r.id === l.roomTypeId)?.capacity ?? 0), 0) : null;
+  const tooSmall = multi && sleeps !== null && (sleeps < guests || guests < lines.length);
+  const tooSmallText = guests < lines.length ? 'Each room type needs at least one guest.' : `These rooms don’t sleep ${plural(guests, 'guest')}.`;
   // What is charged now (a deposit or the whole stay) follows the hotel's payment policy, never the guest's choice.
-  const due =
-    terms && quote
-      ? paymentAmountDue({ policy: terms.policy, depositNights: terms.depositNights, nightlyCents: quote.nights.map((n) => toCents(n.price)), rooms, totalCents: toCents(quote.total) })
-      : null;
+  // Worked out per room type, as the server does, and paid together.
+  const due = React.useMemo<AmountDue | null>(() => {
+    if (!terms || !quotes || quotes.length !== lines.length) return null;
+    const parts = quotes.map((q, i) =>
+      paymentAmountDue({ policy: terms.policy, depositNights: terms.depositNights, nightlyCents: q.nights.map((n) => toCents(n.price)), rooms: lines[i].rooms, totalCents: toCents(q.total) })
+    );
+    const dueNowCents = parts.reduce((s, x) => s + x.dueNowCents, 0);
+    const balanceCents = parts.reduce((s, x) => s + x.balanceCents, 0);
+    return { dueNowCents, balanceCents, kind: dueNowCents === 0 ? 'NONE' : balanceCents > 0 ? 'DEPOSIT' : 'FULL' };
+  }, [terms, quotes, lines]);
   const payNow = !!terms?.onlinePayment && !!due && due.dueNowCents > 0;
   const method = payNow ? 'stripe' : 'pay_at_property';
   const name = p?.name ?? shell?.name;
@@ -351,7 +396,7 @@ function Checkout() {
    */
   async function submit(): Promise<{ ok: true; id: string; code: string | null; total: number | null } | { ok: false; error: string; busy?: true; duplicate?: { id: string; code: string | null } }> {
     if (booking.current) return { ok: false, error: 'It’s already booking — wait a moment.', busy: true };
-    const stayKey = JSON.stringify([session?.user?.id ?? session?.user?.email ?? '', propertyId, roomTypeId, checkIn, checkOut, guests, rooms]);
+    const stayKey = JSON.stringify([session?.user?.id ?? session?.user?.email ?? '', propertyId, lines, checkIn, checkOut, guests, rooms]);
     const dup = recentBooking(stayKey);
     if (dup) {
       const message = `This stay was booked a moment ago${dup.code ? ` (confirmation code ${dup.code})` : ''}, so it wasn’t booked again.`;
@@ -371,7 +416,7 @@ function Checkout() {
     try {
       const r = await api<{ requiresPayment: boolean; checkoutUrl?: string; booking: { id: string; code?: string | null; totalPrice?: number } }>('/api/bookings', {
         method: 'POST',
-        json: { propertyId, roomTypeId, checkIn, checkOut, guests, rooms, notes: notes.trim() || null, acceptPolicy: true, policyHash: terms.policyHash },
+        json: { propertyId, lines, checkIn, checkOut, guests, notes: notes.trim() || null, acceptPolicy: true, policyHash: terms.policyHash },
       });
       if (r.requiresPayment && r.checkoutUrl) {
         window.location.href = r.checkoutUrl;
@@ -395,11 +440,13 @@ function Checkout() {
   }
 
   // The voice agent (the site's voice dock) sees this order and can fill in details and book on a spoken yes.
-  const roomName = rt?.name ?? quote?.roomTypeName;
-  const total = quote ? price(quote.total, quote.currency ?? 'USD') : null;
+  const roomName = roomsLabel ?? rt?.name ?? quote?.roomTypeName;
+  const totalText = total !== null ? price(total, quote?.currency ?? 'USD') : null;
   const stayWords = checkIn && checkOut ? `${fmtRange(checkIn, checkOut)}, ${plural(guests, 'guest')}${rooms > 1 ? `, ${plural(rooms, 'room')}` : ''}` : '';
   /** "the Ocean King at The Saltwater Inn, Feb 4 – 5, 2 guests, total $289" (hotel text made safe for the agent). */
-  const orderWords = `${roomName ? `the ${voiceText(roomName, 80)}` : 'a room'}${name ? ` at ${voiceText(name, 80)}` : ''}, ${stayWords}${total ? `, total ${total}` : ''}`;
+  const orderWords = `${roomName ? (multi ? `${voiceText(roomName, 160)} booked together` : `the ${voiceText(roomName, 80)}`) : 'a room'}${name ? ` at ${voiceText(name, 80)}` : ''}, ${stayWords}${totalText ? `, total ${totalText}` : ''}`;
+  /** Several room types as the voice agent names them: room_type_id and rooms each (null for one). */
+  const items = multi ? lines.map((l) => ({ roomTypeId: l.roomTypeId, rooms: l.rooms })) : null;
   /** The voice agent must name the order it books; anything but what's on screen is refused. */
   const differsFromScreen = (want: VoiceBookingRequest) =>
     (!!want.propertyId && want.propertyId !== propertyId) ||
@@ -407,7 +454,8 @@ function Checkout() {
     want.checkIn !== checkIn ||
     want.checkOut !== checkOut ||
     want.guests !== guests ||
-    want.rooms !== rooms;
+    want.rooms !== rooms ||
+    orderItemsKey(want.items) !== orderItemsKey(items);
   useVoicePage({
     kind: 'checkout',
     propertyId,
@@ -416,13 +464,14 @@ function Checkout() {
     stay: checkIn && checkOut ? { checkIn, checkOut, guests, rooms } : null,
     order:
       roomTypeId && checkIn && checkOut
-        ? { propertyId, roomTypeId, checkIn, checkOut, guests, rooms, hotel: name ?? null, room: roomName ?? null, total: quote?.total ?? null, currency: quote?.currency ?? 'USD' }
+        ? { propertyId, roomTypeId, items, checkIn, checkOut, guests, rooms, hotel: name ?? null, room: roomName ?? null, total, currency: quote?.currency ?? 'USD' }
         : null,
     summary:
-      roomTypeId && checkIn && checkOut
+      lines.length && checkIn && checkOut
         ? [
             `checkout for ${orderWords}`,
-            unavailable ? 'this room just sold out for these dates' : '',
+            unavailable ? voiceText(soldOutText, 160).replace(/\.$/, '') : '',
+            tooSmall ? `${tooSmallText.replace(/\.$/, '')} — they need to add a room` : '',
             status === 'loading' ? '' : signedIn ? `signed in as ${session?.user?.name ?? session?.user?.email}` : 'not signed in yet',
             method === 'stripe' ? 'card payment required to confirm' : 'paying at the hotel',
           ]
@@ -465,7 +514,8 @@ function Checkout() {
         }
         if (quoteError) return { ok: false, error: `The price couldn’t be checked: ${(quoteError as Error).message}` };
         if (!quote) return { ok: false, error: 'The price is still loading — try again in a moment.' };
-        if (unavailable) return { ok: false, error: 'This room just sold out for these dates — offer to check other rooms or dates.' };
+        if (unavailable) return { ok: false, error: `${voiceText(soldOutText, 160)} Offer to check other rooms or dates.` };
+        if (tooSmall) return { ok: false, error: `${tooSmallText} Offer to add a room.` };
         if (!accepted) {
           setNeedAccept(true);
           return { ok: false, error: 'The guest needs to tick the box accepting the cancellation policy on screen first. Never accept it on their behalf.' };
@@ -481,14 +531,14 @@ function Checkout() {
         if (!want.guestConfirmed) return { ok: false, error: 'Ask the guest to confirm the room, dates and total first.', needs: 'guest confirmation' };
         const r = await submit();
         if (!r.ok) return { ok: false, error: r.error, ...(r.duplicate ? { already_booked: true, code: r.duplicate.code } : {}) };
-        const paid = r.total ?? quote.total;
+        const paid = r.total ?? total ?? quote.total;
         const cur = quote.currency ?? 'USD';
         const hotel = voiceText(name, 80) || null;
-        const room = voiceText(roomName, 80) || null;
+        const room = voiceText(roomName, multi ? 160 : 80) || null;
         // What was actually booked, for the agent to read back.
         return {
           ok: true,
-          message: `Booked ${room ? `the ${room}` : 'the room'}${hotel ? ` at ${hotel}` : ''}, ${stayWords}, total ${price(paid, cur)} — pay at the hotel. Confirmation code ${r.code ?? 'on screen'}. Read back the hotel, room, dates and total. Their booking page is opening now${config?.emailEnabled ? ' and a confirmation email is on its way' : ''}.`,
+          message: `Booked ${room ? (multi ? `${room}, one booking` : `the ${room}`) : 'the room'}${hotel ? ` at ${hotel}` : ''}, ${stayWords}, total ${price(paid, cur)} — pay at the hotel. Confirmation code ${r.code ?? 'on screen'}. Read back the hotel, room, dates and total. Their booking page is opening now${config?.emailEnabled ? ' and a confirmation email is on its way' : ''}.`,
           code: r.code,
           hotel,
           room,
@@ -503,7 +553,7 @@ function Checkout() {
     },
   });
 
-  if (!roomTypeId || !checkIn || !checkOut) {
+  if (!lines.length || !checkIn || !checkOut) {
     return (
       <GuestShell brandColor={brandColor} brand={name ? { name, href: `/properties/${propertyId}` } : undefined} hotel={hotel} demo={isDemo}>
         <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
@@ -527,7 +577,9 @@ function Checkout() {
 
   const deadline = fmtDay(shiftDay(checkIn, -1), 'weekday');
   const cur = quote?.currency ?? 'USD';
-  const totalLabel = quote ? price(quote.total, cur) : '';
+  const totalLabel = total !== null ? price(total, cur) : '';
+  // Several room types: each one's room charges, then the hotel's taxes and fees added up across them.
+  const multiCharges = multi && quotes ? sumCharges(quotes) : [];
   const nightsCount = quote?.nights.length ?? 0;
 
   return (
@@ -666,7 +718,12 @@ function Checkout() {
               )}
               {unavailable && (
                 <Callout tone="danger" className="mt-4" role="alert" action={<Button asChild variant="outline" size="sm"><Link href={back}>Choose another room</Link></Button>}>
-                  This room just sold out for these dates.
+                  {soldOutText}
+                </Callout>
+              )}
+              {tooSmall && (
+                <Callout tone="danger" className="mt-4" role="alert" action={<Button asChild variant="outline" size="sm"><Link href={back}>Add a room</Link></Button>}>
+                  {tooSmallText}
                 </Callout>
               )}
               <Button
@@ -679,8 +736,8 @@ function Checkout() {
                 className="mt-5 h-auto min-h-12 w-full flex-wrap gap-x-2 gap-y-0.5 whitespace-normal py-3"
                 onClick={confirm}
                 loading={busy}
-                loadingText={method === 'stripe' ? 'Opening secure payment…' : 'Booking your room…'}
-                disabled={!quote || !terms || unavailable}
+                loadingText={method === 'stripe' ? 'Opening secure payment…' : rooms > 1 ? 'Booking your rooms…' : 'Booking your room…'}
+                disabled={!quote || !terms || unavailable || tooSmall}
               >
                 <Lock aria-hidden />
                 {method === 'stripe' ? 'Continue to payment' : 'Confirm booking'}
@@ -703,8 +760,9 @@ function Checkout() {
                   <div className="min-w-0">
                     <p className="truncate text-sm text-muted-foreground">{name ? `${name} · ${p?.city ?? shell?.city ?? ''}` : ' '}</p>
                     <h2 id="summary-title" className="text-lg font-semibold tracking-tight">
-                      {rt?.name ?? quote?.roomTypeName ?? <span className="skeleton mt-1 inline-block h-6 w-40 align-middle" aria-hidden />}
+                      {multi ? plural(rooms, 'room') : (rt?.name ?? quote?.roomTypeName ?? <span className="skeleton mt-1 inline-block h-6 w-40 align-middle" aria-hidden />)}
                     </h2>
+                    {multi && <p className="text-sm text-muted-foreground">{roomsLabel}</p>}
                   </div>
                 </div>
                 <dl className="mt-4 grid grid-cols-2 gap-2 text-sm">
@@ -732,12 +790,43 @@ function Checkout() {
                     <Callout tone="warning" className="mt-3" role="alert">
                       {(quoteError as Error).message}
                     </Callout>
-                  ) : !quote ? (
+                  ) : !quote || !quotes ? (
                     <div className="mt-3 space-y-2" aria-hidden>
                       <Skeleton className="h-4 w-full" />
                       <Skeleton className="h-4 w-full" />
                       <Skeleton className="mt-3 h-6 w-full" />
                     </div>
+                  ) : multi ? (
+                    <dl className="mt-3 space-y-1.5 text-sm">
+                      {quotes.map((q, i) => (
+                        <div key={q.roomTypeId} className="flex justify-between gap-3 text-muted-foreground">
+                          <dt>
+                            {lineName(i)} × {q.rooms}
+                            <span className="block text-xs">
+                              {plural(nightsCount, 'night')} × {price(q.averageNightly, cur)} average
+                            </span>
+                          </dt>
+                          <dd className="tabular">{price(q.subtotal, cur)}</dd>
+                        </div>
+                      ))}
+                      {multiCharges.map((c) => (
+                        <div key={c.key} className="flex justify-between gap-3 text-muted-foreground">
+                          <dt>
+                            {c.name}
+                            {c.kind === 'PERCENT' ? ` (${Number(c.rate.toFixed(3))}%)` : ''}
+                          </dt>
+                          <dd className="tabular">{price(c.amount, cur)}</dd>
+                        </div>
+                      ))}
+                      <div className="flex justify-between gap-3 text-muted-foreground">
+                        <dt>Booking fee</dt>
+                        <dd>None</dd>
+                      </div>
+                      <div className="flex items-baseline justify-between gap-3 border-t pt-3">
+                        <dt className="text-base font-semibold">Total</dt>
+                        <dd className="text-lg font-semibold tabular">{totalLabel}</dd>
+                      </div>
+                    </dl>
                   ) : (
                     <dl className="mt-3 space-y-1.5 text-sm">
                       {nightsCount <= 7 ? (
@@ -791,7 +880,7 @@ function Checkout() {
                   {quote && (
                     <p className="mt-2 text-xs text-muted-foreground">
                       Prices in {currencyName(cur)}.{' '}
-                      {quote.charges?.length ? 'The total includes the hotel’s taxes and fees.' : 'Any local taxes are paid at the hotel.'}
+                      {(quotes ?? [quote]).some((q) => q.charges?.length) ? 'The total includes the hotel’s taxes and fees.' : 'Any local taxes are paid at the hotel.'}
                     </p>
                   )}
                 </div>

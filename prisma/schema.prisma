@@ -215,6 +215,14 @@ model Booking {
   status                  BookingStatus            @default(PENDING)
   // Short human-friendly confirmation code staff and guests can say out loud.
   code                    String?                  @unique
+  /// Several room types booked together: every line of the reservation carries the lead line's
+  /// confirmation code here (the code the guest is given). Null for a single-room-type booking.
+  /// The reservation's one card payment is recorded on the lead line.
+  groupCode               String?
+  /// The lead line of a multi-room-type reservation (the row whose code is groupCode; itself for the lead).
+  reservationLead         Booking?                 @relation("ReservationLines", fields: [groupCode], references: [code], onDelete: SetNull)
+  /// Every line of the reservation this row leads (empty unless it is a lead).
+  reservationLines        Booking[]                @relation("ReservationLines")
   notes                   String?
   // Physical room assigned at (or before) check-in.
   roomId                  String?
@@ -251,6 +259,7 @@ model Booking {
   @@index([propertyId, checkOut])
   @@index([roomTypeId, checkIn, checkOut])
   @@index([roomId])
+  @@index([groupCode])
   @@index([status, paymentStatus, expiresAt])
   @@map("bookings")
 }
