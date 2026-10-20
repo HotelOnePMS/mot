@@ -28,7 +28,8 @@ describe('SSO', () => {
     const state = { o: 'org1', s: 'state', n: 'nonce', v: 'verifier', c: '/admin', e: Date.now() + 60_000 };
     const sealed = sealState(state);
     expect(openState(sealed)).toEqual(state);
-    expect(openState(sealed.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')))).toBeNull();
+    // Tamper with the signed body: the signature's last character carries 2 unused bits, so changing it can leave the bytes alone.
+    expect(openState(sealed.replace(/^./, (c) => (c === 'e' ? 'f' : 'e')))).toBeNull();
     expect(openState(sealState({ ...state, e: Date.now() - 1 }))).toBeNull();
     expect(openState(undefined)).toBeNull();
   });

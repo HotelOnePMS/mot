@@ -9,13 +9,13 @@ export const metadata: Metadata = {
 };
 
 const SUBPROCESSORS = [
-  { name: 'Vercel', purpose: 'Application hosting and delivery', location: '[REGION]' },
-  { name: '[Database provider]', purpose: 'Primary database (PostgreSQL)', location: '[REGION]' },
-  { name: 'Resend', purpose: 'Transactional email (confirmations, account emails)', location: '[REGION]' },
-  { name: 'ElevenLabs / OpenAI', purpose: 'Voice and AI agents (speech, language models)', location: '[REGION]' },
-  { name: 'Twilio (if a hotel connects a number)', purpose: 'Phone and messaging', location: '[REGION]' },
-  { name: 'Stripe (if enabled)', purpose: 'Card payments', location: '[REGION]' },
-  { name: 'Cloudinary / Vercel Blob', purpose: 'Hotel photo storage', location: '[REGION]' },
+  { name: 'Vercel', purpose: 'Application hosting and delivery', location: 'United States' },
+  { name: 'Managed PostgreSQL provider (through Vercel)', purpose: 'Primary database', location: 'United States' },
+  { name: 'Resend', purpose: 'Transactional email (confirmations, account emails)', location: 'United States' },
+  { name: 'ElevenLabs / OpenAI', purpose: 'Voice and AI agents (speech, language models)', location: 'United States' },
+  { name: 'Twilio (if a hotel connects a number)', purpose: 'Phone and messaging', location: 'United States' },
+  { name: 'Stripe (if enabled)', purpose: 'Card payments', location: 'United States' },
+  { name: 'Cloudinary / Vercel Blob', purpose: 'Hotel photo storage', location: 'United States' },
 ];
 
 const SECTIONS: LegalSection[] = [
@@ -59,6 +59,39 @@ const SECTIONS: LegalSection[] = [
     ),
   },
   {
+    id: 'assistants',
+    title: 'AI assistants (ChatGPT, Claude and others)',
+    body: (
+      <>
+        <p>
+          Guests can add {PRODUCT_NAME} to an AI assistant through our MCP server or API. The assistant decides what to send us; we only receive what a tool needs to do its job, which is:
+        </p>
+        <ul>
+          <li>
+            <strong>Searches and questions:</strong> the place, dates, number of guests and rooms, and the question asked about a hotel. These carry no personal data unless the guest includes some.
+          </li>
+          <li>
+            <strong>Booking links:</strong> the stay, and the guest’s name, email and phone if the assistant passes them, so the checkout page can be filled in. We put them in the link and do not store them;
+            nothing is saved until the guest completes checkout.
+          </li>
+          <li>
+            <strong>Booking requests and bookings:</strong> the guest’s name, email or phone, the stay and any note. These go to the hotel the guest chose and are kept as booking data (see below).
+          </li>
+          <li>
+            <strong>Finding a booking:</strong> the confirmation code and last name, used only to look the booking up.
+          </li>
+          <li>
+            <strong>Technical data:</strong> the caller’s IP address, or the API key a partner uses, to apply rate limits and stop abuse.
+          </li>
+        </ul>
+        <p>
+          We do not receive or ask for the guest’s conversation with the assistant, its chat history or memory, or files, and we never ask assistants for card numbers, passwords or government ID numbers.
+          Card payments, where a hotel takes them, happen on the hotel’s checkout page. How the assistant itself handles your conversation is covered by that assistant’s own privacy policy.
+        </p>
+      </>
+    ),
+  },
+  {
     id: 'use',
     title: 'How we use it',
     body: (
@@ -86,7 +119,7 @@ const SECTIONS: LegalSection[] = [
     title: 'Who we share data with',
     body: (
       <>
-        <p>With the hotel you booked with, and with service providers who help us run the Service under written terms (“subprocessors”). Current list (draft — to be completed before launch):</p>
+        <p>With the hotel you booked with, and with service providers who help us run the Service under written terms (“subprocessors”). Current list:</p>
         <div className="overflow-x-auto rounded-xl border">
           <table className="w-full text-left text-sm">
             <thead className="bg-surface-sunken text-xs uppercase tracking-wider text-muted-foreground">
@@ -121,11 +154,11 @@ const SECTIONS: LegalSection[] = [
     title: 'How long we keep data',
     body: (
       <ul>
-        <li>Account data: while the account is open, then deleted or anonymised within [90] days of closure.</li>
+        <li>Account data: while the account is open, then deleted or anonymised within 90 days of closure.</li>
         <li>Booking and guest data: for as long as the hotel keeps it in the Service, and as the hotel instructs. Records we must keep for tax or accounting are kept for the legally required period.</li>
-        <li>Voice transcripts and messages: [30–90] days unless the hotel sets a different period.</li>
-        <li>Security and access logs: up to [12] months.</li>
-        <li>Backups roll off within [35] days.</li>
+        <li>Voice transcripts and messages: 90 days unless the hotel sets a different period.</li>
+        <li>Security and access logs: up to 12 months. Rate limits for AI assistants and the API store only a one-way hash of the IP address or key, and those entries are routinely deleted once their window (at most a day) has passed.</li>
+        <li>Backups roll off within 35 days.</li>
       </ul>
     ),
   },

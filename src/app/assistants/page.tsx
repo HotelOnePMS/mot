@@ -67,6 +67,28 @@ const ASSISTANTS: { name: string; steps: React.ReactNode[] }[] = [
     ],
   },
   {
+    name: 'Perplexity',
+    steps: [
+      <>
+        Open <b>Settings → Connectors</b> and choose <b>Custom connector → Remote</b>.
+      </>,
+      <>
+        Name it {PRODUCT_NAME}, paste the link, pick <b>None</b> for authentication and <b>Streamable HTTP</b>.
+      </>,
+      <>Turn it on, then ask for a room.</>,
+    ],
+  },
+  {
+    name: 'Gemini',
+    steps: [
+      <>
+        Open <b>Settings → Connected apps</b> and choose <b>Add a custom app</b>.
+      </>,
+      <>Paste the link. No sign-in needed.</>,
+      <>Then ask Gemini to find or book a room.</>,
+    ],
+  },
+  {
     name: 'Any other assistant',
     steps: [
       <>
