@@ -176,7 +176,9 @@ export const GET = handleRoute(async () => {
   for (const b of bookings) trips.set(b.groupCode ?? b.id, [...(trips.get(b.groupCode ?? b.id) ?? []), b]);
 
   return NextResponse.json(
-    [...trips.values()].map((rows) => {
+    [...trips.values()].map((group) => {
+      // Lead first, then in booking order, as the guest was shown them.
+      const rows = [...group].sort((a, b) => Number(b.code === b.groupCode) - Number(a.code === a.groupCode) || a.createdAt.getTime() - b.createdAt.getTime());
       const live = rows.filter((r) => r.status !== 'CANCELLED' && r.status !== 'NO_SHOW');
       const counted = live.length ? live : rows;
       const lead = rows.find((r) => r.code === r.groupCode) ?? rows[0];
