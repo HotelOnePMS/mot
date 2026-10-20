@@ -1,5 +1,7 @@
 /**
- * Stripe Checkout (hosted) for a held booking. A direct charge on the hotel's
+ * Stripe Checkout for a held booking: embedded in the booking site when the
+ * browser can load Stripe.js (so the page, and a voice call on it, stays put
+ * while the guest pays), else Stripe's hosted page. A direct charge on the hotel's
  * connected account, so the guest pays the hotel and HotelOne never holds the
  * money; an optional platform fee (STRIPE_PLATFORM_FEE_PERCENT) is taken as an
  * application fee. 3D Secure is requested on every card payment. Several room
@@ -35,8 +37,15 @@ export interface CheckoutBooking {
  * The first booking is the lead: its id is the session's and the payment's
  * `bookingId`, and every booking's id is in `bookingIds`.
  */
-export async function createCheckoutSession(input: { bookings: CheckoutBooking[]; stripeAccountId: string; guestEmail: string; siteUrl: string }): Promise<{ url: string; sessionId: string }> {
-  const { bookings, stripeAccountId, guestEmail, siteUrl } = input;
+export async function createCheckoutSession(input: {
+  bookings: CheckoutBooking[];
+  stripeAccountId: string;
+  guestEmail: string;
+  siteUrl: string;
+  /** Embedded Checkout (a client secret for Stripe.js) instead of a hosted page URL. */
+  embedded?: boolean;
+}): Promise<{ url: string | null; clientSecret: string | null; sessionId: string }> {
+  const { bookings, stripeAccountId, guestEmail, siteUrl, embedded = false } = input;
   const [lead] = bookings;
   if (!lead) throw new Error('createCheckoutSession needs at least one booking');
   const amount = bookings.reduce((s, b) => s + toCents(b.paymentDue), 0);
@@ -77,14 +86,24 @@ export async function createCheckoutSession(input: { bookings: CheckoutBooking[]
         },
         metadata,
         expires_at: Math.floor(Date.now() / 1000) + CHECKOUT_SESSION_SECONDS,
-        success_url: `${siteUrl}/bookings/${lead.id}?payment=success`,
-        cancel_url: `${siteUrl}/bookings/${lead.id}?payment=cancelled`,
+        ...(embedded
+          ? {
+              // Cards (3D Secure included) finish in the form, and the page moves on without a reload;
+              // only a payment method that has to leave the site comes back here.
+              ui_mode: 'embedded' as const,
+              redirect_on_completion: 'if_required' as const,
+              return_url: `${siteUrl}/bookings/${lead.id}?payment=success`,
+            }
+          : {
+              success_url: `${siteUrl}/bookings/${lead.id}?payment=success`,
+              cancel_url: `${siteUrl}/bookings/${lead.id}?payment=cancelled`,
+            }),
       },
-      { stripeAccount: stripeAccountId, idempotencyKey: `checkout-${lead.id}` }
+      { stripeAccount: stripeAccountId, idempotencyKey: `checkout-${embedded ? 'embedded-' : ''}${lead.id}` }
     );
-    if (!session.url) throw new Error('Stripe returned no checkout URL');
+    if (embedded ? !session.client_secret : !session.url) throw new Error('Stripe returned no checkout page');
     await prisma.booking.updateMany({ where: { id: { in: bookings.map((b) => b.id) } }, data: { stripeCheckoutSessionId: session.id } });
-    return { url: session.url, sessionId: session.id };
+    return { url: session.url ?? null, clientSecret: session.client_secret ?? null, sessionId: session.id };
   } catch (error) {
     // No payment page means no way to pay: give the rooms back instead of holding them.
     console.error('[payments] Could not create the Checkout session:', error);

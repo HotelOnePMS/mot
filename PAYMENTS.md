@@ -6,7 +6,7 @@ Hotels can take card payments through their own Stripe account. Everything is op
 
 - **Connect Express, direct charges.** Each hotel connects its own Stripe account from *Admin → Settings → Online payments*. Charges are created **on the hotel's account** (`stripeAccount` option), so funds go straight to the hotel, the hotel is the merchant of record, and any dispute lands on its account. HotelOne can keep an optional platform fee (`STRIPE_PLATFORM_FEE_PERCENT`, sent as `application_fee_amount`).
 - **Payment policy per hotel:** pay at property (default), a deposit of N nights (default 1, max 14), or full prepayment. The guest accepts the cancellation/refund policy at booking (checkbox); we store the policy version, a SHA-256 of the exact text shown, the timestamp, IP and user agent (`BookingPolicyAcceptance`). The server rejects the booking (409) if the hash doesn't match the current policy text.
-- **Hosted Stripe Checkout** with `billing_address_collection: required` and `payment_method_options.card.request_three_d_secure: 'any'` (3D Secure is requested on every card payment; the issuer/Stripe Radar decide whether a challenge is shown, and a payment can still be disputed).
+- **Stripe Checkout**, embedded in the booking page when `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` is set (the guest stays on the site, so a voice call keeps going while they pay), otherwise Stripe's hosted page. Either way with `billing_address_collection: required` and `payment_method_options.card.request_three_d_secure: 'any'` (3D Secure is requested on every card payment; the issuer/Stripe Radar decide whether a challenge is shown, and a payment can still be disputed).
 - **Booking is confirmed only after the webhook reports success.** A booking waiting for payment is `PENDING` / `AWAITING_PAYMENT` and holds its rooms for 35 minutes (`expiresAt`). Holds are released by the `checkout.session.expired` event, by a sweep on every new booking, and optionally by `/api/cron/expire-bookings`. If a payment arrives after expiry, the booking is reinstated when the rooms are still free; otherwise a note is added to its history saying a refund is needed.
 - **Payment record** (`Payment`): cardholder name, billing email, billing country, card brand/last4/country, 3DS result, Stripe risk level and score, amount, currency, PaymentIntent id and status. It is kept separate from the guest's name.
 - **Risk flags** are computed on the server whenever a booking is read (never stored, never sent to guest endpoints): cardholder differs from guest · card country differs from guest/billing country · high amount · Stripe risk elevated / highest · 3DS not completed or unavailable. Badges show on *Reservations* and the booking page. Flagged bookings get a check-in checklist (ID matches guest, card shown if required, registration signed). Staff tick it; we store who and when.
@@ -27,6 +27,7 @@ Hotels can take card payments through their own Stripe account. Everything is op
    | `STRIPE_CONNECT_DEFAULT_COUNTRY` | Optional default country for new Express accounts. |
    | `PAYMENTS_HIGH_AMOUNT_THRESHOLD` | Optional, default `1000`. |
    | `CRON_SECRET` | Optional, enables the hold-release cron route. |
+   | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Platform publishable key. Shows Checkout embedded in the booking page; without it guests are sent to Stripe's hosted page (and a voice call ends there). |
    | `NEXT_PUBLIC_SITE_URL` | Used for Checkout and onboarding return URLs. |
    | `RESEND_API_KEY`, `EMAIL_FROM` | Dispute alerts and booking emails. |
 
@@ -42,7 +43,7 @@ Hotels can take card payments through their own Stripe account. Everything is op
 
 ## PCI
 
-Card details are entered only on Stripe-hosted Checkout, so HotelOne qualifies for **SAQ A**. We never receive, transmit or store card numbers, CVC or expiry. The `Payment` record keeps only what Stripe reports about the payment (brand, last four, card country, 3DS result, risk level).
+Card details are entered only in Stripe Checkout (Stripe's own iframe when embedded, or its hosted page), so HotelOne qualifies for **SAQ A**. We never receive, transmit or store card numbers, CVC or expiry. The `Payment` record keeps only what Stripe reports about the payment (brand, last four, card country, 3DS result, risk level).
 
 ## Notes
 

@@ -35,6 +35,8 @@
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-toast": "^1.2.14",
     "@sentry/nextjs": "^10.76.2",
+    "@stripe/react-stripe-js": "^7.0.0",
+    "@stripe/stripe-js": "^10.0.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/multer": "^2.0.0",
     "@vercel/blob": "^1.1.1",
