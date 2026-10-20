@@ -47,6 +47,11 @@ export const PERMISSIONS = {
   'booking.cancel': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'booking.reinstate': ['ADMIN', 'OWNER', 'MANAGER'],
   'booking.payment.view': ['ADMIN', 'OWNER', 'MANAGER'],
+  // Guest ID photos at check-in: the desk takes, views and retakes them; owners and managers set the rules.
+  'guestid.capture': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  'guestid.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  'guestid.delete': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  'guestid.manage': ['ADMIN', 'OWNER', 'MANAGER'],
   // Online payments (Stripe Connect): who sees and changes them, refunds and disputes.
   'payments.view': ['ADMIN', 'OWNER', 'MANAGER'],
   'payments.manage': ['ADMIN', 'OWNER'],

@@ -135,7 +135,7 @@ Open http://localhost:3000 and use the one-click demo logins on `/demo`, the *Li
 | `TRUSTED_PROXY_HOPS` | | Off Vercel: which X-Forwarded-For entry (counting from the right) is the client for rate limits (default 1). On Vercel its own headers are used |
 | `PMS_MCP_MODEL` | | Model that plans PMS MCP tool calls when the vendor doesn't follow the HotelOne contract (default `OPENAI_VOICE_BACKEND_MODEL`) |
 | `PMS_MCP_ALLOWED_HOSTS` | | Hosts a PMS MCP server may use despite the private-address guard (e.g. a vendor's on-premise gateway) |
-| `CRON_SECRET` | channels | Bearer token for `/api/channels/cron` (OTA reservation import + daily reconciliation; Vercel Cron sends it) |
+| `CRON_SECRET` | channels, guest IDs | Bearer token for `/api/channels/cron` (OTA reservation import + daily reconciliation) and `/api/cron/purge-guest-ids` (deletes guest ID photos past each hotel’s retention); Vercel Cron sends it |
 | `CHANNEL_AGENT_MODEL` | | Channel Agent model (default `OPENAI_VOICE_BACKEND_MODEL`); the agent needs `OPENAI_API_KEY` |
 | `EXPEDIA_EQC_BASE_URL`, `EXPEDIA_API_BASE_URL`, `BOOKING_COM_SUPPLY_URL`, `BOOKING_COM_SECURE_URL` | | Point live OTA connections at a certification environment (see CHANNEL_MANAGER.md) |
 | `PMS_EVENTS_SECRET` | | Base secret for PMS event signatures (default: derived from `NEXTAUTH_SECRET`, so rotating that rotates every PMS event secret) |

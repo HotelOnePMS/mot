@@ -16,6 +16,7 @@ import { PageHeader } from '@/components/ui/primitives';
 import { useConsole } from '@/components/console/ConsoleProvider';
 import { PaymentSettings } from '@/components/payments/PaymentSettings';
 import { PricingSettings } from '@/components/setup/PricingSettings';
+import { GuestIdSettings } from '@/components/frontdesk/GuestIdSettings';
 
 const FRAME = 'mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8';
 
@@ -243,6 +244,12 @@ export default function SettingsPage() {
           {can('charges.manage') && property && (
             <Section title="Prices and time" description={`${property.name}’s clock, currency, and the taxes and fees on every stay.`}>
               <PricingSettings key={property.id} propertyId={property.id} onSaved={() => void mutate('/api/admin/context')} />
+            </Section>
+          )}
+
+          {can('guestid.manage') && property && (
+            <Section title="Guest ID at check-in" description="Photos of guests’ IDs the front desk takes at check-in: whether they’re required and how long they’re kept.">
+              <GuestIdSettings key={property.id} propertyId={property.id} />
             </Section>
           )}
 

@@ -17,7 +17,7 @@ The repo deploys as-is: `vercel.json` runs `scripts/vercel-build.mjs`, which
    | --- | --- |
    | `NEXTAUTH_SECRET` | `openssl rand -base64 32` (sensitive) |
    | `AGENT_PLAN_SECRET` | `openssl rand -base64 32` (sensitive) |
-   | `HOTELONE_VAULT_KEY` | `openssl rand -base64 32` (sensitive) — seals stored PMS logins; never rotate without re-entering them. A project that already has `STAYOS_VAULT_KEY` can keep it (still accepted); to switch names, give `HOTELONE_VAULT_KEY` the **exact same value** |
+   | `HOTELONE_VAULT_KEY` | `openssl rand -base64 32` (sensitive) — seals stored PMS logins and guest ID photos; never rotate without re-entering them. A project that already has `STAYOS_VAULT_KEY` can keep it (still accepted); to switch names, give `HOTELONE_VAULT_KEY` the **exact same value** |
    | `NEXT_PUBLIC_DEMO_MODE` | `true` for a public demo (one-click logins on `/demo`, the *Live demo* page) |
    | `SEED_DEMO` | `true` to create the demo hotels on the first build with a database |
    | `HOTEL_TIMEZONE` | e.g. `America/Los_Angeles` |

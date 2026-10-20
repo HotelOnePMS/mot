@@ -37,6 +37,11 @@ const nextConfig: NextConfig = {
           { key: "Permissions-Policy", value: "camera=(), geolocation=(), microphone=(self)" },
         ],
       },
+      {
+        // The staff console photographs guest IDs at check-in (the later match wins for the same header).
+        source: "/admin/:path*",
+        headers: [{ key: "Permissions-Policy", value: "camera=(self), geolocation=(), microphone=(self)" }],
+      },
     ];
   },
 };

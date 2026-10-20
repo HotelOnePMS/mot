@@ -4,5 +4,8 @@
   "installCommand": "npm install",
   "buildCommand": "node scripts/vercel-build.mjs",
   "regions": ["iad1"],
-  "crons": [{ "path": "/api/channels/cron?full=1", "schedule": "0 10 * * *" }]
+  "crons": [
+    { "path": "/api/channels/cron?full=1", "schedule": "0 10 * * *" },
+    { "path": "/api/cron/purge-guest-ids", "schedule": "30 9 * * *" }
+  ]
 }
