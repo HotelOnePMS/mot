@@ -45,6 +45,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { BookingStatusBadge, SourceBadge } from '@/components/hotel/badges';
 import { BookingPayments } from '@/components/payments/BookingPayments';
+import { DeskPayments } from '@/components/payments/DeskPayments';
 import { AssignRoomDialog, CheckInDialog, CheckOutDialog, ConfirmDialog, NoteDialog } from '@/components/frontdesk/dialogs';
 import { useBookingActions } from '@/components/frontdesk/useBookingActions';
 import { useConsole } from '@/components/console/ConsoleProvider';
@@ -474,6 +475,9 @@ export default function BookingDetailPage() {
 
           {/* Payment, risk flags and refunds */}
           <BookingPayments booking={b} />
+
+          {/* Money taken at the desk: card reader, typed-in or OTA virtual card, cash, security deposit */}
+          <DeskPayments booking={b} />
 
           {/* Agent (AI feature) */}
           {can('agent.use') && !closed && (

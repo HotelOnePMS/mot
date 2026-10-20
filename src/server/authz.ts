@@ -51,6 +51,8 @@ export const PERMISSIONS = {
   'payments.view': ['ADMIN', 'OWNER', 'MANAGER'],
   'payments.manage': ['ADMIN', 'OWNER'],
   'payments.refund': ['ADMIN', 'OWNER', 'MANAGER'],
+  // Taking money at the desk: card reader, typed-in or OTA virtual card, cash, and the security deposit.
+  'payments.collect': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'disputes.view': ['ADMIN', 'OWNER', 'MANAGER'],
   'disputes.manage': ['ADMIN', 'OWNER'],
   'room.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],

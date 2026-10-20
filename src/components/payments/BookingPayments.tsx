@@ -21,6 +21,7 @@ import { useConsole } from '@/components/console/ConsoleProvider';
 
 interface PaymentRecord {
   id: string;
+  method: string;
   kind: string;
   status: string;
   amount: number;
@@ -237,8 +238,10 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
   const closed = b.status === 'CANCELLED' || b.status === 'NO_SHOW';
   const balance = Math.max(0, b.totalPrice - b.amountPaid);
   const nightly = b.nights ? b.totalPrice / b.nights / Math.max(1, b.rooms) : b.totalPrice;
-  const paid = (data?.payments ?? []).filter((p) => p.status !== 'FAILED' && p.status !== 'PENDING');
-  const canRefund = can('payments.refund') && paid.some((p) => p.status !== 'REFUNDED');
+  // Online payments are listed here; money taken at the desk is in the desk card (DeskPayments).
+  const paid = (data?.payments ?? []).filter((p) => p.method === 'ONLINE' && p.status !== 'FAILED' && p.status !== 'PENDING');
+  const refundable = (data?.payments ?? []).filter((p) => p.method !== 'CASH' && p.kind !== 'SECURITY_DEPOSIT' && (p.status === 'SUCCEEDED' || p.status === 'PARTIALLY_REFUNDED'));
+  const canRefund = can('payments.refund') && refundable.length > 0;
 
   return (
     <>
@@ -256,11 +259,11 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
         {b.amountPaid > 0 && (
           <dl className="mt-4 grid grid-cols-2 gap-2 text-sm">
             <div className="rounded-xl bg-muted px-3 py-2">
-              <dt className="text-xs text-muted-foreground">Paid online</dt>
+              <dt className="text-xs text-muted-foreground">Paid so far</dt>
               <dd className="font-medium tabular">{formatMoney(b.amountPaid, b.currency, { cents: true })}</dd>
             </div>
             <div className="rounded-xl bg-muted px-3 py-2">
-              <dt className="text-xs text-muted-foreground">Balance at the property</dt>
+              <dt className="text-xs text-muted-foreground">Balance due</dt>
               <dd className="font-medium tabular">{formatMoney(balance, b.currency, { cents: true })}</dd>
             </div>
           </dl>
@@ -268,7 +271,7 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
 
         {data?.reservation && paid.length > 0 && (
           <p className="mt-3 text-xs text-muted-foreground">
-            One card payment for all {data.reservation.roomTypes} room types in reservation {data.reservation.code}. Paid online above is this room type’s share.
+            One card payment for all {data.reservation.roomTypes} room types in reservation {data.reservation.code}. Paid so far is this room type’s share.
           </p>
         )}
 
@@ -314,7 +317,7 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
 
         {canRefund && (
           <Button variant="outline" size="sm" className="mt-4" onClick={() => setRefundOpen(true)}>
-            <RotateCcw aria-hidden /> Refund…
+            <RotateCcw aria-hidden /> Refund a card…
           </Button>
         )}
 

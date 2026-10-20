@@ -21,12 +21,14 @@ import { nightlyInventory } from '../services/inventory';
 import { PAYMENT_CURRENCY } from './config';
 
 const PAID_STATUSES = ['SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'];
+/** Paid toward the stay: everything collected except security deposits, which are held against incidentals. */
+const TOWARD_STAY = { status: { in: PAID_STATUSES }, kind: { not: 'SECURITY_DEPOSIT' } };
 
 const opts = (account?: string | null) => (account ? { stripeAccount: account } : undefined);
 
 /** Totals collected and refunded across the payments of these bookings (one reservation), in cents. */
 async function totalsFor(bookingIds: string[]) {
-  const payments = await prisma.payment.findMany({ where: { bookingId: { in: bookingIds }, status: { in: PAID_STATUSES } }, select: { amount: true, amountRefunded: true } });
+  const payments = await prisma.payment.findMany({ where: { bookingId: { in: bookingIds }, ...TOWARD_STAY }, select: { amount: true, amountRefunded: true } });
   return {
     paidCents: payments.reduce((s, p) => s + toCents(Number(p.amount)), 0),
     refundedCents: payments.reduce((s, p) => s + toCents(Number(p.amountRefunded)), 0),
@@ -278,4 +280,21 @@ export async function restorePaymentStatus(bookingId: string, lost: boolean): Pr
   }
   const statuses = await lineStatuses(lines);
   for (const line of lines) await prisma.booking.update({ where: { id: line.id }, data: { paymentStatus: statuses.get(line.id)! } });
+}
+
+/**
+ * Recompute every line's payment status after money moved at the desk (a
+ * payment on the card reader, a card typed in, cash). Nothing changes while
+ * nothing has been paid toward the stay, or while a dispute holds the status.
+ */
+export async function refreshPaymentStatus(booking: { id: string; groupCode: string | null }, note?: string): Promise<void> {
+  const lines = await paymentLines(booking);
+  const { paidCents } = await totalsFor(lines.map((l) => l.id));
+  if (paidCents <= 0) return;
+  const statuses = await lineStatuses(lines);
+  for (const line of lines) {
+    const paymentStatus = statuses.get(line.id)!;
+    if (paymentStatus === line.paymentStatus || line.paymentStatus === 'DISPUTED') continue;
+    await prisma.booking.update({ where: { id: line.id }, data: { paymentStatus, ...(note ? { statusHistory: { create: { status: line.status, notes: note } } } : {}) } });
+  }
 }

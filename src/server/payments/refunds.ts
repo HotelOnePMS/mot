@@ -15,6 +15,13 @@ import { policyFor } from '../services/guest';
 import { hotelLocale } from '../services/hotels';
 import { applyRefundState, paymentLines } from './record';
 
+/**
+ * Card payments refunded here, back to the card. Cash is handed back at the
+ * desk, and security deposits are returned with the desk's deposit actions
+ * (desk.ts), so neither is listed.
+ */
+const REFUNDABLE = { status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED'] }, stripePaymentIntentId: { not: null }, kind: { not: 'SECURITY_DEPOSIT' } };
+
 export interface RefundInfo {
   /** Card payments on this booking that can be refunded, newest first. */
   payments: { id: string; amount: number; refunded: number; refundable: number; cardLast4: string | null; cardBrand: string | null; paidAt: string | null }[];
@@ -34,7 +41,7 @@ export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
   // Several room types booked together were paid with one payment, on the lead line.
   const lines = await paymentLines(booking);
   const payments = await prisma.payment.findMany({
-    where: { bookingId: { in: lines.map((l) => l.id) }, status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED'] } },
+    where: { bookingId: { in: lines.map((l) => l.id) }, ...REFUNDABLE },
     orderBy: { createdAt: 'desc' },
   });
   // Only some room types of a reservation cancelled: the policy is about what was charged for those.
@@ -80,10 +87,11 @@ export async function refundPayment(bookingId: string, input: { paymentId: strin
   // The payment must belong to this booking (or its reservation), which getBookingForStaff already scoped to the actor's property.
   const lines = await paymentLines(booking);
   const payment = await prisma.payment.findFirst({
-    where: { id: input.paymentId, bookingId: { in: lines.map((l) => l.id) }, status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED'] } },
+    where: { id: input.paymentId, bookingId: { in: lines.map((l) => l.id) }, ...REFUNDABLE },
     include: { property: { select: { stripeAccountId: true } } },
   });
-  if (!payment) throw badRequest('That payment can’t be refunded.');
+  if (!payment?.stripePaymentIntentId) throw badRequest('That payment can’t be refunded.');
+  const intentId = payment.stripePaymentIntentId;
   const paid = toCents(Number(payment.amount));
   const already = toCents(Number(payment.amountRefunded));
   const left = refundableCents(paid, already);
@@ -95,7 +103,7 @@ export async function refundPayment(bookingId: string, input: { paymentId: strin
   const account = payment.property.stripeAccountId ? { stripeAccount: payment.property.stripeAccountId } : undefined;
   await stripe.refunds.create(
     {
-      payment_intent: payment.stripePaymentIntentId,
+      payment_intent: intentId,
       amount: cents,
       reason: 'requested_by_customer',
       // Hand back the platform's cut of what is refunded too.
@@ -106,10 +114,10 @@ export async function refundPayment(bookingId: string, input: { paymentId: strin
     { ...account, idempotencyKey: `refund-${payment.id}-${already}-${cents}` }
   );
   // Read the total back so the page is right immediately; the charge.refunded webhook sets the same value.
-  const intent = await stripe.paymentIntents.retrieve(payment.stripePaymentIntentId, { expand: ['latest_charge'] }, account);
+  const intent = await stripe.paymentIntents.retrieve(intentId, { expand: ['latest_charge'] }, account);
   const charge = typeof intent.latest_charge === 'object' ? intent.latest_charge : null;
   const total = charge ? charge.amount_refunded : already + cents;
-  await applyRefundState({ paymentIntentId: payment.stripePaymentIntentId, amountRefundedCents: total });
+  await applyRefundState({ paymentIntentId: intentId, amountRefundedCents: total });
   await recordAudit({ actor, source: 'classic' }, booking.propertyId, 'PAYMENT_REFUND', `Refunded ${fromCents(cents).toFixed(2)} ${payment.currency.toUpperCase()} on ${booking.code ?? 'booking'}${input.reason ? ` (${input.reason.slice(0, 80)})` : ''}`, {
     bookingId: booking.id,
     paymentId: payment.id,

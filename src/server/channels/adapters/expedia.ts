@@ -10,6 +10,7 @@
  * Access to all of these requires Expedia connectivity-partner certification;
  * endpoints are configurable so the certification simulator can be targeted.
  */
+import { extractPaymentCard } from '../cards';
 import {
   AriPushResult,
   AriUpdate,
@@ -200,7 +201,8 @@ export class ExpediaAdapter implements ChannelAdapter {
           phone: phoneNumber,
         },
         specialRequests: specialRequests || null,
-        paymentModel: roomStay.PaymentCard ? 'Hotel Collect' : 'Expedia Collect',
+        // Expedia Collect bookings can carry Expedia's virtual card; any other card is the guest's (Hotel Collect).
+        paymentModel: !roomStay.PaymentCard ? 'Expedia Collect' : extractPaymentCard(roomStay, { channel: 'EXPEDIA' })?.type === 'VIRTUAL' ? 'Expedia Collect (virtual card)' : 'Hotel Collect',
         raw: booking,
       };
     });

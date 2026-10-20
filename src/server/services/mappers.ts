@@ -5,10 +5,11 @@ import { fromCents, reservationShares, toCents } from '@/lib/payments';
 import { highAmountThreshold } from '../payments/config';
 import { diffDays, toISODate } from '../dates';
 
-// Money actually collected online (refunded payments included, so the history shows), for the balance and the risk flags.
+// Money actually collected, online or at the desk (refunded payments included, so the history shows), for the balance
+// and the risk flags. Security deposits are held against incidentals, not paid toward the stay, so they don't count.
 const collected = {
-  where: { status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'] } },
-  select: { amount: true, amountRefunded: true, cardholderName: true, cardCountry: true, billingCountry: true, threeDSecure: true, riskLevel: true },
+  where: { status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'] }, kind: { not: 'SECURITY_DEPOSIT' } },
+  select: { method: true, amount: true, amountRefunded: true, cardholderName: true, cardCountry: true, billingCountry: true, threeDSecure: true, riskLevel: true },
   orderBy: { createdAt: 'asc' },
 } satisfies Prisma.Booking$paymentsArgs;
 
@@ -29,8 +30,8 @@ export function toBookingSummary(b: BookingWithRelations): BookingSummary {
   const checkOut = toISODate(b.checkOut);
   const guestName = `${b.user.firstName} ${b.user.lastName}`.trim();
   const pay = reservationPayment(b);
-  // The first successful payment carries the card details; later ones (rare) add nothing new to flag.
-  const first = pay.payments[0];
+  // The first online payment carries the card details the flags are about; desk payments are taken in person.
+  const first = pay.payments.find((p) => p.method === 'ONLINE');
   return {
     id: b.id,
     code: b.code ?? b.id.slice(-8).toUpperCase(),
