@@ -13,9 +13,11 @@ import {
   ShieldAlert,
   Sparkles,
   BrushCleaning,
+  BrainCircuit,
   Users,
   AudioLines,
   Cable,
+  Globe,
   Network,
   type LucideIcon,
 } from 'lucide-react';
@@ -57,7 +59,9 @@ const GROUPS: NavGroup[] = [
     label: 'Revenue',
     items: [
       { label: 'Rates', href: '/admin/rate-calendar', icon: BadgeDollarSign, paths: ['FULL', 'VOICE'] },
+      { label: 'Channels', href: '/admin/channels', icon: Globe },
       { label: 'Analytics', href: '/admin/analytics', icon: ChartLine },
+      { label: 'AI advisor', href: '/admin/advisor', icon: BrainCircuit, paths: ['FULL', 'VOICE'] },
       { label: 'Disputes', href: '/admin/disputes', icon: ShieldAlert },
     ],
   },

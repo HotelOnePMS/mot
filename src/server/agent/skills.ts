@@ -717,7 +717,7 @@ async function guestOptions(propertyId: string, shortcutName: string) {
 
 /** The `okShape` to log for a command that worked (or null when it isn't worth tracking). */
 export function trackableShape(message: string, intents: Intent[], today: ISODate): { shape: string; template: string } | null {
-  if (!intents.length || intents.some((i) => i.kind === 'unknown' || i.kind === 'help')) return null;
+  if (!intents.length || intents.some((i) => i.kind === 'unknown' || i.kind === 'help' || i.kind === 'howTo' || i.kind === 'atDesk')) return null;
   const s = commandShape(message, today);
   if (!s || !worthAShortcut(s.shape, intents)) return null;
   return s;

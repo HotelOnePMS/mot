@@ -14,6 +14,7 @@ import { releaseExpiredHolds } from '../payments/expiry';
 import { assertPropertyAccess, can, requirePermission, scopeByProperty, type Actor, type Permission } from '../authz';
 import { addDaysISO, atNoonUTC, dayBounds, diffDays, eachNight, formatDay, hotelToday, isISODate, toISODate } from '../dates';
 import { badRequest, conflict, DomainError, notFound } from '../errors';
+import { scheduleInventorySync } from '../channels/sync';
 import { recordAudit, type OpContext } from './audit';
 import { localeOf, todayAt } from './hotels';
 import { nightlyInventory, quoteStay } from './inventory';
@@ -246,7 +247,7 @@ export async function createReservation(input: CreateReservationInput): Promise<
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, Math.random() * 40 * attempt));
     try {
-      return await prisma.$transaction(
+      const booked: CreatedBooking[] = await prisma.$transaction(
         async (tx) => {
           // The same guest booking the same stay moments ago (a double tap, or voice and page both booking) gets that booking back.
           // Every room type of those bookings is fetched, so a reservation only matches as a whole.
@@ -350,6 +351,9 @@ export async function createReservation(input: CreateReservationInput): Promise<
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
       );
+      // OTAs see fewer rooms on these nights (nothing changed if this was a repeat of a booking just made).
+      if (!booked[0]?.duplicate) for (const b of booked) scheduleInventorySync(b.roomTypeId, b.checkIn, b.checkOut);
+      return booked;
     } catch (e) {
       const retryable =
         e instanceof Prisma.PrismaClientKnownRequestError &&
@@ -532,6 +536,12 @@ export async function transitionBooking(
     }
     return b;
   });
+
+  // Cancellations, no-shows, reinstatements and early departures change what OTAs can sell.
+  const occupying = (s: BookingStatus) => !['CANCELLED', 'NO_SHOW'].includes(s);
+  if (occupying(from) !== occupying(to) || data.checkOut) {
+    scheduleInventorySync(booking.roomTypeId, booking.checkIn, booking.checkOut);
+  }
 
   if (to === 'CHECKED_OUT' && updated.room) effects.push(`Room ${updated.room.roomNumber} marked dirty and queued for housekeeping`);
 

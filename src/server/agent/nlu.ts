@@ -10,6 +10,7 @@
  */
 import type { ISODate } from '@/lib/dto';
 import { addDaysISO, dayOfWeek, hotelToday } from '../dates';
+import { howToTopic, understand, type HowToTopic } from './understand';
 
 export interface RoomPrefs {
   highFloor?: boolean;
@@ -45,6 +46,8 @@ export type Intent =
   | { kind: 'activity' }
   | { kind: 'property' }
   | { kind: 'help' }
+  | { kind: 'howTo'; topic: HowToTopic }
+  | { kind: 'atDesk'; ref: GuestRef }
   | { kind: 'suggestRooms'; ref: GuestRef; prefs: RoomPrefs }
   | { kind: 'checkIn'; ref: GuestRef; prefs: RoomPrefs; roomNumber?: string }
   | { kind: 'checkOut'; ref: GuestRef }
@@ -281,7 +284,8 @@ const PRONOUN_RE = /\b(them|they|their|him|her|he|she|this guest|that guest|this
 const NAME_STOPWORDS = new Set(
   `the a an for from of to in into on at with and or please now today tonight tomorrow yesterday reservation booking confirmation guest guests party family room rooms mr mrs ms miss dr sir madam them they their him her he she it its this that these those who is are was were be check checkin checkout out arrival arrivals departure departures early late quiet high higher floor top upper low ground accessible view corner give put move assign note add make sure confirm cancel mark as no show noshow booked stay staying celebrating anniversary birthday honeymoon wedding find look lookup search show me pull up open details info about can you could would i we our my is
   will by up just already currently booking's please. reservation's if available possible possibly ideally preferably first want wants would like
-  nice good best another different new`.split(/\s+/)
+  nice good best another different new
+  so ok okay hey hi hello um uh well just then but also there here hotel desk front reception lobby counter bags luggage keys key bill stay`.split(/\s+/)
 );
 
 /** Extract a probable guest name from the leftover words of a clause. */
@@ -422,7 +426,7 @@ function classify(clause: string, today: ISODate): Intent | null {
     if (/\bcheck[\s-]?out\b|\bcheckout\b/.test(t) && !/\bwho\b|\bdepartures?\b/.test(t)) {
       return { kind: 'checkOut', ref: guestRef(clause) };
     }
-    if (/\b(give|put|move|assign|upgrade|switch|place)\b/.test(t) && /\b(room|floor|quiet|view|corner|accessible)\b/.test(t)) {
+    if (/\b(give|put|move|assign|upgrade|switch|place)\b/.test(t) && (/\b(room|floor|quiet|view|corner|accessible)\b/.test(t) || (/\b(move|put|switch)\b.*\bto\s+\d{3,4}[a-z]?\b/.test(t) && bareNumbers(clause).length > 0))) {
       const room = roomNumbersIn(clause)[0] ?? bareNumbers(clause)[0];
       // "assign room 304 to the Smiths" / "move Smith to 304" / "give them a quiet room"
       const refText = clause.replace(/\brooms?\s*#?\s*\d+[a-z]?\b/gi, ' ').replace(/\b\d{3,4}\b/g, ' ');
@@ -447,7 +451,7 @@ function classify(clause: string, today: ISODate): Intent | null {
     const range = dates.range ?? (dates.day ? { from: dates.day, to: addDaysISO(dates.day, 1), label: dates.dayLabel ?? dates.day } : { from: today, to: addDaysISO(today, 7), label: 'the next 7 days' });
     return { kind: 'occupancy', range };
   }
-  if (/\bavailab|\bvacan|\bfree rooms?\b|\bany rooms?\b|\brooms? (left|open)\b|\bsell\b|\bquote\b|\bhow much\b|\bprice for\b|\bdo we have (a |any )?(room|space)\b/.test(t)) {
+  if (/\bavailab|\bvacan|\bfree rooms?\b|\bany rooms?\b|\brooms? (left|open)\b|\brooms? (are |is )?(free|available|empty)\b|\bsell\b|\bquote\b|\bhow much\b|\bprice for\b|\bdo we have (a |any )?(room|space)\b/.test(t)) {
     const party = parseParty(t);
     const from = dates.range?.from ?? dates.day ?? today;
     const to = dates.range?.to ?? addDaysISO(from, dates.nights ?? 1);
@@ -499,7 +503,19 @@ function classify(clause: string, today: ISODate): Intent | null {
  * guest are merged so "check in X and give them a quiet room" becomes one
  * check-in with preferences.
  */
-export function parseMessage(message: string, today: ISODate = hotelToday()): Intent[] {
+export function parseMessage(raw: string, today: ISODate = hotelToday()): Intent[] {
+  // Plain language, typos and "how do I…" questions become canonical commands first (understand.ts).
+  const understood = understand(raw);
+  if (understood.atDesk !== undefined) return [{ kind: 'atDesk', ref: understood.atDesk ? guestRef(understood.atDesk) : {} }];
+  const intents = parseCanonical(understood.text, today);
+  if (understood.howTo) {
+    const topic = intents.map((i) => howToTopic(i.kind)).find(Boolean);
+    if (topic) intents.unshift({ kind: 'howTo', topic });
+  }
+  return intents;
+}
+
+function parseCanonical(message: string, today: ISODate): Intent[] {
   const { clauses, noteText, noteRefText } = splitClauses(message);
   const intents: Intent[] = [];
   for (const clause of clauses) {

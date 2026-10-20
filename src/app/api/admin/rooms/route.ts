@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { assertPropertyAccess, requireStaff, scopeByProperty } from '@/server/authz';
 import { badRequest, conflict, notFound } from '@/server/errors';
 import { handleRoute, json, parseJson, parseQuery } from '@/server/http';
+import { schedulePropertySync } from '@/server/channels/sync';
 import { recordAudit } from '@/server/services/audit';
 
 const query = z.object({
@@ -113,5 +114,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
     created.length === 1 ? `Added room ${created[0].roomNumber} (${roomType.name})` : `Added ${created.length} ${roomType.name} rooms: ${numbers.join(', ')}`.slice(0, 300),
     { roomIds: created.map((r) => r.id) }
   );
+  // More physical rooms than the type counted raises its total, which OTAs are sent.
+  if ((await prisma.room.count({ where: { roomTypeId: body.roomTypeId } })) > roomType.totalRooms) schedulePropertySync(body.propertyId);
   return json(body.roomNumbers ? created : created[0], { status: 201 });
 });

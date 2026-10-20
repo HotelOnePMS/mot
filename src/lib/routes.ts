@@ -51,12 +51,16 @@ export const CONSOLE_ACCESS: { prefix: string; roles: readonly StaffRole[] }[] =
   { prefix: '/admin/housekeeping', roles: ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'] },
   { prefix: '/admin/bookings', roles: ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'] },
   { prefix: '/admin/rate-calendar', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
+  // Same roles as the 'channels.view' permission; connecting an OTA needs 'channels.manage'.
+  { prefix: '/admin/channels', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
   { prefix: '/admin/room-types', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
   { prefix: '/admin/properties', roles: ['ADMIN', 'OWNER'] },
   { prefix: '/admin/users', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
   { prefix: '/admin/activity', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
   { prefix: '/admin/settings', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
   { prefix: '/admin/analytics', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
+  // Same roles as the 'advisor.use' permission.
+  { prefix: '/admin/advisor', roles: ['ADMIN', 'OWNER'] },
   // Card disputes: same roles as the 'disputes.view' permission; submitting evidence needs 'disputes.manage'.
   { prefix: '/admin/disputes', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
   { prefix: '/admin/voice', roles: ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'] },
