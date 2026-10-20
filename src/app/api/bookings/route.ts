@@ -12,6 +12,7 @@ import { confirmationEmailAllowed, confirmReservationPayAtProperty, createReserv
 import { createCheckoutSession } from '@/server/payments/checkout';
 import { getPaymentTerms } from '@/server/payments/policy';
 import { publicSiteUrl } from '@/server/public-url';
+import { getPaymentConfig } from '@/lib/stripe';
 
 const createBookingSchema = z
   .object({
@@ -33,6 +34,8 @@ const createBookingSchema = z
     // whether (and how much) to pay online comes from the hotel's payment policy.
     acceptPolicy: z.literal(true, { errorMap: () => ({ message: 'Please accept the cancellation policy to book.' }) }),
     policyHash: z.string().min(1),
+    // The page can show Stripe's embedded payment form (it stays on the site, so a voice call carries on).
+    embeddedCheckout: z.boolean().optional(),
   })
   .refine((v) => v.lines || v.roomTypeId, { message: 'Choose a room.', path: ['roomTypeId'] });
 
@@ -75,7 +78,10 @@ export const POST = handleRoute(async (request: NextRequest) => {
   // Online payment: the reservation holds its rooms until Stripe confirms the payment (webhook).
   if (lead.paymentStatus === 'AWAITING_PAYMENT') {
     if (!terms.stripeAccountId || bookings.some((b) => b.paymentDue === null)) throw badRequest('Online payment is not available for this hotel right now.');
+    const { publishableKey } = getPaymentConfig();
+    const embedded = !!input.embeddedCheckout && !!publishableKey;
     const checkout = await createCheckoutSession({
+      embedded,
       bookings: bookings.map((b) => ({
         id: b.id,
         code: b.code,
@@ -98,7 +104,11 @@ export const POST = handleRoute(async (request: NextRequest) => {
     return NextResponse.json({
       success: true,
       requiresPayment: true,
+      // Hosted page to open, or what Stripe.js needs to show the form on this page.
       checkoutUrl: checkout.url,
+      ...(embedded && checkout.clientSecret
+        ? { checkout: { clientSecret: checkout.clientSecret, publishableKey, stripeAccount: terms.stripeAccountId } }
+        : {}),
       amountDue: fromCents(bookings.reduce((s, b) => s + toCents(Number(b.paymentDue)), 0)),
       booking: { id: lead.id, code: lead.code, status: lead.status },
       lines,

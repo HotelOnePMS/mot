@@ -22,6 +22,7 @@ import { Callout, EmptyState, Skeleton } from '@/components/ui/primitives';
 import { SegmentedControl } from '@/components/ui/segmented';
 import { SmartImage } from '@/components/ui/smart-image';
 import { PublicDemoNote } from '@/components/guest/PublicDemoNote';
+import { EmbeddedPayment, type EmbeddedCheckoutInfo } from '@/components/guest/EmbeddedPayment';
 import { orderItemsKey, useVoicePage, voiceText, type VoiceActionResult, type VoiceBookingRequest } from '@/components/voice/page-context';
 import { GuestShell } from '../../_components/guest-shell';
 import { usePropertyShell } from '../../_components/property-shell';
@@ -335,6 +336,8 @@ function Checkout() {
   // confirm can't both get through before React re-renders with `busy`.
   const booking = React.useRef(false);
   const [error, setError] = React.useState('');
+  // Card payment in the page (Stripe's embedded form): the site, and a voice call on it, stay put.
+  const [payment, setPayment] = React.useState<{ bookingId: string; checkout: EmbeddedCheckoutInfo } | null>(null);
   const [needDetails, setNeedDetails] = React.useState(false);
   const confirmRef = React.useRef<HTMLButtonElement>(null);
   // Agent links pre-fill the guest's details (guestName, guestEmail, guestPhone).
@@ -414,10 +417,16 @@ function Checkout() {
     setBusy(true);
     setError('');
     try {
-      const r = await api<{ requiresPayment: boolean; checkoutUrl?: string; booking: { id: string; code?: string | null; totalPrice?: number } }>('/api/bookings', {
+      const r = await api<{ requiresPayment: boolean; checkoutUrl?: string | null; checkout?: EmbeddedCheckoutInfo; booking: { id: string; code?: string | null; totalPrice?: number } }>('/api/bookings', {
         method: 'POST',
-        json: { propertyId, lines, checkIn, checkOut, guests, notes: notes.trim() || null, acceptPolicy: true, policyHash: terms.policyHash },
+        json: { propertyId, lines, checkIn, checkOut, guests, notes: notes.trim() || null, acceptPolicy: true, policyHash: terms.policyHash, embeddedCheckout: true },
       });
+      if (r.requiresPayment && r.checkout) {
+        setPayment({ bookingId: r.booking.id, checkout: r.checkout });
+        window.scrollTo({ top: 0 });
+        return { ok: false, error: 'The secure card payment form is open on screen.' };
+      }
+      // Stripe's hosted page (no publishable key configured): the browser leaves the site to pay.
       if (r.requiresPayment && r.checkoutUrl) {
         window.location.href = r.checkoutUrl;
         return { ok: false, error: 'Opening the card payment page.' };
@@ -466,8 +475,9 @@ function Checkout() {
       roomTypeId && checkIn && checkOut
         ? { propertyId, roomTypeId, items, checkIn, checkOut, guests, rooms, hotel: name ?? null, room: roomName ?? null, total, currency: quote?.currency ?? 'USD' }
         : null,
-    summary:
-      lines.length && checkIn && checkOut
+    summary: payment
+      ? `card payment for ${orderWords}: Stripe’s secure card form is open on screen and the guest types their card details there (never by voice); their booking page opens by itself once the payment goes through`
+      : lines.length && checkIn && checkOut
         ? [
             `checkout for ${orderWords}`,
             unavailable ? voiceText(soldOutText, 160).replace(/\.$/, '') : '',
@@ -504,6 +514,7 @@ function Checkout() {
         };
       },
       confirmBooking: async (want): Promise<VoiceActionResult> => {
+        if (payment) return { ok: false, error: 'The card payment form is already open on screen. The guest types their card details there and pays; never take card details by voice.' };
         if (booking.current || busy) return { ok: false, error: 'It’s already booking — wait a moment.' };
         if (differsFromScreen(want)) {
           return {
@@ -569,6 +580,34 @@ function Checkout() {
                 </Button>
               }
             />
+          </div>
+        </div>
+      </GuestShell>
+    );
+  }
+
+  if (payment) {
+    const open = (state: 'success' | 'cancelled') => router.push(`/bookings/${payment.bookingId}?payment=${state}`);
+    return (
+      <GuestShell brandColor={brandColor} brand={name ? { name, href: back } : undefined} hotel={hotel} demo={isDemo}>
+        <div className="mx-auto max-w-3xl px-4 pb-16 sm:px-6">
+          <h1 className="mt-6 font-display text-3xl tracking-tight sm:text-4xl">Pay securely</h1>
+          <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Lock className="h-4 w-4 shrink-0" aria-hidden /> Your rooms are held while you pay. Card details go straight to Stripe{name ? ` and the payment to ${name}` : ''}.
+          </p>
+          <div className="mt-6 overflow-hidden rounded-2xl border bg-card p-2 shadow-soft sm:p-4">
+            <EmbeddedPayment
+              checkout={payment.checkout}
+              onComplete={() => open('success')}
+              // Stripe.js blocked or offline: the booking page explains the payment didn't go through.
+              onUnavailable={() => open('cancelled')}
+            />
+          </div>
+          <div className="mt-4 flex justify-center">
+            {/* data-voice-avoid: the voice launcher or live pill moves off this button on phones. */}
+            <Button data-voice-avoid variant="ghost" onClick={() => open('cancelled')}>
+              Cancel payment
+            </Button>
           </div>
         </div>
       </GuestShell>
