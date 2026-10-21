@@ -136,25 +136,31 @@ export async function buildFolio(b: BookingWithRelations): Promise<FolioView> {
  * only (folio.adjust). At most the stay's charges less the allowances already given; it lowers the balance and, when
  * that is now covered, marks the stay paid.
  */
-export async function addAllowance(op: OpContext, bookingId: string, input: { amount: number; reason: string }): Promise<FolioView> {
+export async function addAllowance(op: OpContext, bookingId: string, input: { amount: number; reason: string; id?: string }): Promise<FolioView> {
   requirePermission(op.actor, 'folio.adjust');
   const booking = await getBookingForStaff(op.actor, bookingId);
   if (booking.status === 'CANCELLED' || booking.status === 'NO_SHOW') throw badRequest('This reservation is closed. Reinstate it before changing what it costs.');
   const reason = input.reason.replace(/\s+/g, ' ').trim().slice(0, 200);
   if (reason.length < 3) throw badRequest('Say why the stay costs less (for example “air conditioning broken” or “left a night early”).');
   if (containsCardNumber(reason)) throw badRequest(CARD_NUMBER_REFUSED);
-  const cents = toCents(input.amount);
+  // In the hotel's currency: whole yen, two decimals for dollars.
+  const cents = toCents(roundMoney(input.amount, booking.currency));
   if (!Number.isFinite(cents) || cents <= 0) throw badRequest('Enter the amount to take off.');
-  await prisma.$transaction(async (tx) => {
+  const added = await prisma.$transaction(async (tx) => {
     // One at a time per booking, so two allowances at once can't together take off more than the stay costs.
     await tx.$queryRaw`SELECT "id" FROM "bookings" WHERE "id" = ${booking.id} FOR UPDATE`;
+    // Given with a fixed id (one per refund) and already there: the same request sent twice, nothing more to do.
+    if (input.id && (await tx.folioAllowance.findUnique({ where: { id: input.id }, select: { id: true } }))) return false;
     const given = await tx.folioAllowance.aggregate({ where: { bookingId: booking.id, voidedAt: null }, _sum: { amount: true } });
     const leftCents = toCents(Number(booking.totalPrice)) - toCents(Number(given._sum.amount ?? 0));
     if (cents > leftCents) throw badRequest(`At most ${money(fromCents(Math.max(0, leftCents)), { currency: booking.currency })} can be taken off: what’s left of the stay’s charges.`);
-    await tx.folioAllowance.create({ data: { bookingId: booking.id, propertyId: booking.propertyId, amount: fromCents(cents), currency: booking.currency, reason, createdById: op.actor.userId } });
+    await tx.folioAllowance.create({ data: { ...(input.id ? { id: input.id } : {}), bookingId: booking.id, propertyId: booking.propertyId, amount: fromCents(cents), currency: booking.currency, reason, createdById: op.actor.userId } });
+    return true;
   });
-  await refreshPaymentStatus(booking);
-  await recordAudit(op, booking.propertyId, 'FOLIO_ALLOWANCE', `Allowance of ${money(fromCents(cents), { currency: booking.currency })} on ${booking.code ?? booking.id}: ${reason}`, { bookingId: booking.id });
+  if (added) {
+    await refreshPaymentStatus(booking);
+    await recordAudit(op, booking.propertyId, 'FOLIO_ALLOWANCE', `Allowance of ${money(fromCents(cents), { currency: booking.currency })} on ${booking.code ?? booking.id}: ${reason}`, { bookingId: booking.id });
+  }
   return buildFolio(await getBookingForStaff(op.actor, booking.id));
 }
 

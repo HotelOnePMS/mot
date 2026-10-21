@@ -1,15 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// A fake Stripe for refunds: the card's refunded total, as the charge would report it.
+// A fake Stripe for refunds: the card's refunded total, as the charge would report it. Like Stripe, a request sent
+// again with the same idempotency key returns the first refund instead of refunding twice. `duringRefund` runs while
+// the refund is "at Stripe", for races.
 const stripe = vi.hoisted(() => {
   const refunded = new Map<string, number>();
+  const byKey = new Map<string, { id: string; amount: number }>();
+  const hooks = { duringRefund: null as null | (() => Promise<void>) };
   return {
     refunded,
+    byKey,
+    hooks,
     api: {
       refunds: {
-        create: vi.fn(async (params: { payment_intent: string; amount: number }) => {
+        create: vi.fn(async (params: { payment_intent: string; amount: number }, opts?: { idempotencyKey?: string }) => {
+          const key = opts?.idempotencyKey;
+          if (key && byKey.has(key)) return byKey.get(key)!;
+          const refund = { id: `re_${byKey.size + refunded.size}`, amount: params.amount };
+          if (key) byKey.set(key, refund);
           refunded.set(params.payment_intent, (refunded.get(params.payment_intent) ?? 0) + params.amount);
-          return { id: `re_${refunded.size}`, amount: params.amount };
+          if (hooks.duringRefund) {
+            const run = hooks.duringRefund;
+            hooks.duringRefund = null;
+            await run();
+          }
+          return refund;
         }),
       },
       paymentIntents: {
@@ -282,6 +297,33 @@ describe('allowances on the folio', () => {
     expect((await transitionBooking(desk, suiteLine.id, 'CHECKED_OUT')).booking.status).toBe('CHECKED_OUT');
   });
 
+  it('in a currency without decimals, rounds to whole units so nothing uncollectable is left', async () => {
+    const h = await makeHotel({ basePrice: 12000, currency: 'JPY' });
+    const desk = { actor: await actorFor((await makeUser({ role: 'FRONT_DESK', propertyIds: [h.property.id] })).id), source: 'classic' as const };
+    const manager = { actor: await actorFor((await makeUser({ role: 'MANAGER', propertyIds: [h.property.id] })).id), source: 'classic' as const };
+    const booking = await createDeskReservation(desk, { propertyId: h.property.id, roomTypeId: h.roomType.id, checkIn: h.today, checkOut: addDaysISO(h.today, 2), guests: 1, rooms: 1, guest: { firstName: 'Mia', lastName: 'Ortiz' } });
+    const folio = await addAllowance(manager, booking.id, { amount: 1000.4, reason: 'Noise' });
+    expect(folio.allowances[0].amount).toBe(1000);
+    const s = await summaryOf(desk.actor, booking.id);
+    expect(s).toMatchObject({ allowances: 1000, balance: 23000, checkOutDue: 23000 });
+    await recordCashPayment(desk, booking.id, { kind: 'PAYMENT', amount: 23000 });
+    expect((await summaryOf(desk.actor, booking.id)).checkOutDue).toBe(0);
+  });
+
+  it('on a shared reservation with a cancelled room type, the credit lands on the room type kept', async () => {
+    const { desk, manager, queen, suiteLine } = await sharedReservation();
+    const total = Number(queen.totalPrice) + Number(suiteLine.totalPrice);
+    await recordCashPayment(desk, queen.id, { kind: 'PAYMENT', amount: total });
+    await transitionBooking(desk, suiteLine.id, 'CANCELLED');
+    // Hand back the cancelled room type's price, then take 50 off the room type kept: the guest is owed 50.
+    const cash = await prisma.payment.findFirstOrThrow({ where: { bookingId: queen.id, method: 'CASH' } });
+    await prisma.payment.update({ where: { id: cash.id }, data: { amountRefunded: Number(suiteLine.totalPrice), status: 'PARTIALLY_REFUNDED' } });
+    expect((await summaryOf(desk.actor, queen.id)).balance).toBe(0);
+    await addAllowance(manager, queen.id, { amount: 50, reason: 'Noise' });
+    expect(await summaryOf(desk.actor, queen.id)).toMatchObject({ allowances: 50, balance: -50, checkOutDue: 0 });
+    expect((await getFolio(desk.actor, queen.id)).totals.balance).toBe(-50);
+  });
+
   it('prints the allowance on the registration card', async () => {
     const { h, desk, manager, booking } = await setup();
     const draft = { roomId: h.rooms[0].id, guestAddress: null, id: { idType: 'PASSPORT' as const, country: 'US', last4: '4567' }, deposit: { kind: 'NONE' as const } };
@@ -422,8 +464,43 @@ describe('refund with an allowance', () => {
 
   beforeEach(() => {
     stripe.refunded.clear();
+    stripe.byKey.clear();
+    stripe.hooks.duringRefund = null;
     stripe.api.refunds.create.mockClear();
     session.userId = null;
+  });
+
+  it('sent twice at once (a double click, two tabs): refunded once, one allowance', async () => {
+    const { desk, booking, payment } = await paidOnline();
+    const results = await Promise.allSettled([
+      refundPayment(booking.id, { paymentId: payment.id, amount: 40, reason: 'Pool closed both days', allowance: true }),
+      refundPayment(booking.id, { paymentId: payment.id, amount: 40, reason: 'Pool closed both days', allowance: true }),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+    expect([...stripe.refunded.values()]).toEqual([4000]);
+    expect(await prisma.folioAllowance.count({ where: { bookingId: booking.id, voidedAt: null } })).toBe(1);
+    expect(await summaryOf(desk.actor, booking.id)).toMatchObject({ allowances: 40, amountPaid: 200, balance: 0 });
+  });
+
+  it('when the guest already has a credit, refunds it as it is (no second allowance)', async () => {
+    const { desk, manager, booking, payment } = await paidOnline();
+    await addAllowance(manager, booking.id, { amount: 40, reason: 'Air conditioning broken' });
+    expect((await summaryOf(desk.actor, booking.id)).balance).toBe(-40);
+    await expect(refundPayment(booking.id, { paymentId: payment.id, amount: 40, reason: 'Air conditioning broken', allowance: true })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/credit of 40\.00 USD/) });
+    expect(stripe.api.refunds.create).not.toHaveBeenCalled();
+    await refundPayment(booking.id, { paymentId: payment.id, amount: 40 });
+    expect(await summaryOf(desk.actor, booking.id)).toMatchObject({ allowances: 40, balance: 0 });
+  });
+
+  it('if another allowance takes the charges off while the refund is at Stripe, the refund stands and says so', async () => {
+    const { desk, manager, booking, payment } = await paidOnline();
+    stripe.hooks.duringRefund = async () => {
+      await addAllowance(manager, booking.id, { amount: 220, reason: 'Rate correction' });
+    };
+    const result = await refundPayment(booking.id, { paymentId: payment.id, amount: 40, reason: 'Pool closed', allowance: true });
+    expect(result).toMatchObject({ refunded: 40, allowanceError: expect.stringMatching(/refund went through/) });
+    expect(Number((await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } })).amountRefunded)).toBe(40);
+    expect((await summaryOf(desk.actor, booking.id)).allowances).toBe(220);
   });
 
   it('lowers what the stay costs by the refunded amount, so nothing is owed again', async () => {
@@ -450,18 +527,19 @@ describe('refund with an allowance', () => {
     expect((await getFolio(desk.actor, booking.id)).allowances).toMatchObject([{ amount: 25, reason: 'Refunded to the card' }]);
   });
 
-  it('refuses more than the charges left before any money moves', async () => {
+  it('refuses taking more off than is owed before any money moves', async () => {
     const { desk, manager, booking, payment } = await paidOnline();
     await addAllowance(manager, booking.id, { amount: 220, reason: 'Rate correction' });
-    await expect(refundPayment(booking.id, { paymentId: payment.id, amount: 30, allowance: true })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/at most 20\.00 USD/) });
+    // The charges are already 220 lower than what was paid: another allowance would take the same money off twice.
+    await expect(refundPayment(booking.id, { paymentId: payment.id, amount: 30, allowance: true })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/credit of 220\.00 USD/) });
     expect(stripe.api.refunds.create).not.toHaveBeenCalled();
     expect(Number((await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } })).amountRefunded)).toBe(0);
     expect((await summaryOf(desk.actor, booking.id)).allowances).toBe(220);
 
-    // Up to what is left works.
-    await refundPayment(booking.id, { paymentId: payment.id, amount: 20, allowance: true });
+    // Refunding the credit as it is works.
+    await refundPayment(booking.id, { paymentId: payment.id, amount: 220 });
     expect(stripe.api.refunds.create).toHaveBeenCalledTimes(1);
-    expect((await summaryOf(desk.actor, booking.id)).allowances).toBe(240);
+    expect(await summaryOf(desk.actor, booking.id)).toMatchObject({ allowances: 220, balance: 0 });
   });
 
   it('refuses a reason the allowance wouldn’t take, or a card number, before any money moves', async () => {

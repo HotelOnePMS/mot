@@ -108,30 +108,34 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
   const payment = info?.payments.find((p) => p.id === paymentId);
   const value = Number(amount);
   // Managers can also take the refund off what the stay costs (an allowance), so it isn't owed again: not on a closed stay.
-  const canAllow = can('folio.adjust') && booking.status !== 'CANCELLED' && booking.status !== 'NO_SHOW';
+  // Already in credit (an allowance lowered the charges after they were paid): that credit is refunded as it is.
+  const inCredit = booking.balance < -0.004;
+  const canAllow = can('folio.adjust') && booking.status !== 'CANCELLED' && booking.status !== 'NO_SHOW' && !inCredit;
   const allowing = canAllow && allowance;
   // As the server checks before any money moves: at most the stay's charges less the allowances already given.
   const allowanceLeft = Math.max(0, Math.round((booking.totalPrice - booking.allowances) * 100) / 100);
   const overAllowance = allowing && Number.isFinite(value) && value > allowanceLeft + 0.004;
-  // The allowance's reason is the refund's: required with it, and never a card number.
+  // The allowance's reason is the refund's: required with it. Never a card number (it goes to Stripe and the log).
   const why = reason.replace(/\s+/g, ' ').trim();
-  const cardNumber = allowing && containsCardNumber(why);
+  const cardNumber = containsCardNumber(why);
   const valid =
-    !!payment && Number.isFinite(value) && value > 0 && value <= payment.refundable + 0.004 && (!allowing || (why.length >= 3 && !cardNumber && !overAllowance));
+    !!payment && Number.isFinite(value) && value > 0 && value <= payment.refundable + 0.004 && !cardNumber && (!allowing || (why.length >= 3 && !overAllowance));
 
   async function refund() {
     setBusy(true);
     setError('');
     try {
-      await api(`/api/admin/bookings/${booking.id}/refund`, {
+      const result = await api<{ allowanceError?: string }>(`/api/admin/bookings/${booking.id}/refund`, {
         method: 'POST',
         json: { paymentId, amount: Math.round(value * 100) / 100, reason: why || undefined, allowance: allowing || undefined },
       });
-      toast.success(
-        allowing
-          ? `Refunded ${formatMoney(value, booking.currency, { cents: true })} to the guest’s card and took it off the stay`
-          : `Refunded ${formatMoney(value, booking.currency, { cents: true })} to the guest’s card`
-      );
+      if (result.allowanceError) toast.warning(result.allowanceError);
+      else
+        toast.success(
+          allowing
+            ? `Refunded ${formatMoney(value, booking.currency, { cents: true })} to the guest’s card and took it off the stay`
+            : `Refunded ${formatMoney(value, booking.currency, { cents: true })} to the guest’s card`
+        );
       // The folio and the desk show the refund (and the allowance) too.
       await Promise.all(
         ['', '/payment', '/refund', '/folio', '/desk-payments'].map((path) => mutate(`/api/admin/bookings/${booking.id}${path}`))
@@ -189,6 +193,11 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
             <Field label={`Amount to refund (${booking.currency})`} htmlFor="refund-amount" hint={payment ? `Up to ${formatMoney(payment.refundable, booking.currency, { cents: true })} on this payment.` : undefined}>
               <Input id="refund-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
             </Field>
+            {inCredit && can('folio.adjust') && booking.status !== 'CANCELLED' && booking.status !== 'NO_SHOW' && (
+              <p className="text-xs text-muted-foreground">
+                The guest has a credit of {formatMoney(-booking.balance, booking.currency, { cents: true })} on this stay (an allowance already lowered the charges). Refund it as it is.
+              </p>
+            )}
             {canAllow && (
               <div className="space-y-1">
                 <label htmlFor="refund-allowance" className="flex min-h-10 cursor-pointer items-start gap-3 text-sm">

@@ -86,7 +86,7 @@ export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
 export async function refundPayment(
   bookingId: string,
   input: { paymentId: string; amount?: number; reason?: string; allowance?: boolean },
-): Promise<{ refunded: number; remaining: number }> {
+): Promise<{ refunded: number; remaining: number; allowanceError?: string }> {
   const actor = await requireStaff('payments.refund');
   const booking = await getBookingForStaff(actor, bookingId);
   if (!isStripeConfigured()) throw badRequest('Online payments aren’t enabled on this deployment.');
@@ -113,7 +113,13 @@ export async function refundPayment(
     requirePermission(actor, 'folio.adjust');
     if (allowanceReason.length < 3) throw badRequest('Say why the stay costs less (for example “air conditioning broken” or “left a night early”).');
     if (booking.status === 'CANCELLED' || booking.status === 'NO_SHOW') throw badRequest('This reservation is closed, so there’s nothing to take off what it costs. Refund without an allowance.');
-    const leftCents = toCents(Number(booking.totalPrice)) - toCents(toBookingSummary(booking).allowances);
+    const summary = toBookingSummary(booking);
+    // Already in credit (an allowance lowered the charges after they were paid): refund that credit as it is; another
+    // allowance would take the same money off twice.
+    if (summary.balance < -0.004) {
+      throw badRequest(`The guest already has a credit of ${fromCents(toCents(-summary.balance)).toFixed(2)} ${payment.currency.toUpperCase()} on this stay. Refund it without an allowance.`);
+    }
+    const leftCents = toCents(Number(booking.totalPrice)) - toCents(summary.allowances);
     if (cents > leftCents) throw badRequest(`An allowance can take off at most ${fromCents(Math.max(0, leftCents)).toFixed(2)} ${payment.currency.toUpperCase()}. Refund that much, or refund without an allowance.`);
   }
 
@@ -140,6 +146,15 @@ export async function refundPayment(
     bookingId: booking.id,
     paymentId: payment.id,
   });
-  if (input.allowance) await addAllowance({ actor, source: 'classic' }, booking.id, { amount: fromCents(cents), reason: allowanceReason });
-  return { refunded: fromCents(cents), remaining: fromCents(refundableCents(paid, total)) };
+  const result = { refunded: fromCents(cents), remaining: fromCents(refundableCents(paid, total)) };
+  if (input.allowance) {
+    // The money has moved: if the allowance can't be added now (another one took the charges off a moment ago), say so
+    // instead of failing a refund that went through. One allowance per refund, even if the request is sent twice.
+    try {
+      await addAllowance({ actor, source: 'classic' }, booking.id, { amount: fromCents(cents), reason: allowanceReason, id: `rf-${payment.id}-${already}-${cents}` });
+    } catch (e) {
+      return { ...result, allowanceError: `The refund went through, but the allowance wasn’t added: ${(e as Error).message}` };
+    }
+  }
+  return result;
 }

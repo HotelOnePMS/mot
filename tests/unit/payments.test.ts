@@ -118,6 +118,14 @@ test('refunds come off a cancelled room type first, so the rooms kept stay paid'
     { paidCents: 30000, refundedCents: 6000 },
     { paidCents: 20000, refundedCents: 20000 },
   ]);
+  // Paid beyond what's due now (an allowance lowered the room type kept): the credit is the kept room type's.
+  assert.deepEqual(
+    reservationShares({ paidCents: 80000, refundedCents: 60000, lines: [{ dueCents: 15000, cancelled: false }, { dueCents: 60000, cancelled: true }] }),
+    [
+      { paidCents: 20000, refundedCents: 0 },
+      { paidCents: 60000, refundedCents: 60000 },
+    ],
+  );
   // Nothing cancelled: in proportion, never more than was paid.
   assert.deepEqual(reservationShares({ paidCents: 1000, refundedCents: 5000, lines: [{ dueCents: 1, cancelled: false }, { dueCents: 1, cancelled: false }] }), [
     { paidCents: 500, refundedCents: 500 },

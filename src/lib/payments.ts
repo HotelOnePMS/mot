@@ -118,13 +118,6 @@ export function allocateCents(cents: number, weights: readonly number[]): number
 }
 
 /**
- * One payment for several room types, shared out per room type: what was
- * charged for each (in proportion to what was due for it) and what was
- * refunded of it. Refunds count against cancelled room types first, up to what
- * was charged for them, then against the rest in proportion, so cancelling and
- * refunding one room type leaves the others fully paid. Whole cents that add up.
- */
-/**
  * A room type's weight when a reservation's payments are spread over its lines: what it asked for online (its
  * paymentDue) or, without one, what it costs; less its allowances, in proportion. Shared by the summaries
  * (mappers.ts) and the payment statuses (record.ts), so a cent of rounding lands on the same line.
@@ -135,12 +128,30 @@ export function shareWeightCents(line: { totalCents: number; dueCents: number | 
   return Math.round((line.dueCents * owed) / line.totalCents);
 }
 
+/**
+ * One payment for several room types, shared out per room type: what was
+ * charged for each (in proportion to what was due for it) and what was
+ * refunded of it. Refunds count against cancelled room types first, up to what
+ * was charged for them, then against the rest in proportion, so cancelling and
+ * refunding one room type leaves the others fully paid. Anything paid beyond
+ * what was due (an allowance lowered a room type afterwards) is the credit of
+ * the room types still going ahead, not of a cancelled one. Whole cents that
+ * add up.
+ */
 export function reservationShares(input: {
   paidCents: number;
   refundedCents: number;
   lines: readonly { dueCents: number; cancelled: boolean }[];
 }): { paidCents: number; refundedCents: number }[] {
-  const paid = allocateCents(Math.max(0, input.paidCents), input.lines.map((l) => l.dueCents));
+  const total = Math.max(0, input.paidCents);
+  const weights = input.lines.map((l) => l.dueCents);
+  const due = weights.reduce((s, w) => s + (Number.isFinite(w) && w > 0 ? w : 0), 0);
+  const upToDue = due > 0 ? Math.min(total, due) : total;
+  const paid = allocateCents(upToDue, weights);
+  if (total > upToDue) {
+    const open = input.lines.map((l, i) => (l.cancelled ? 0 : Math.max(1, weights[i])));
+    allocateCents(total - upToDue, open.some((w) => w > 0) ? open : weights).forEach((c, i) => (paid[i] += c));
+  }
   const refunded = paid.map(() => 0);
   let left = Math.min(Math.max(0, input.refundedCents), Math.max(0, input.paidCents));
   input.lines.forEach((l, i) => {
