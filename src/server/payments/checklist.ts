@@ -1,6 +1,8 @@
 /**
  * Front-desk check-in checklist for bookings carrying risk flags. Staff tick
  * items; who and when are stored with the booking (and go into dispute evidence).
+ * When someone else paid and isn't there to show the card, a verified
+ * cardholder authorization (cardAuthorization.ts) covers "card shown".
  */
 import { prisma } from '@/lib/prisma';
 import { checklistRequirements, openChecklistItems, type ChecklistItem, type ChecklistRequirements } from '@/lib/risk';
@@ -9,11 +11,13 @@ import { badRequest } from '../errors';
 import { recordAudit } from '../services/audit';
 import { getBookingForStaff } from '../services/bookings';
 import { toBookingSummary } from '../services/mappers';
+import { verifiedAuthorizationFor } from './cardAuthorization';
 
 export interface ChecklistState {
   /** Null when the booking has no risk flags: nothing to check. */
   required: ChecklistRequirements | null;
-  items: { item: ChecklistItem; label: string; required: boolean; done: boolean; at: string | null; by: string | null }[];
+  /** `via`: done by something other than a tick (the cardholder's verified authorization covers the card). */
+  items: { item: ChecklistItem; label: string; required: boolean; done: boolean; at: string | null; by: string | null; via: string | null }[];
   open: ChecklistItem[];
 }
 
@@ -29,8 +33,11 @@ const COLUMNS: Record<ChecklistItem, { at: 'idMatchedAt' | 'cardShownAt' | 'regi
   registrationSigned: { at: 'registrationSignedAt', by: 'registrationSignedById' },
 };
 
-async function stateFor(bookingId: string, required: ChecklistRequirements | null): Promise<ChecklistState> {
-  const row = await prisma.bookingChecklist.findUnique({ where: { bookingId } });
+async function stateFor(booking: { id: string; groupCode: string | null }, required: ChecklistRequirements | null): Promise<ChecklistState> {
+  const [row, authorization] = await Promise.all([
+    prisma.bookingChecklist.findUnique({ where: { bookingId: booking.id } }),
+    required?.cardShown ? verifiedAuthorizationFor(booking) : Promise.resolve(null),
+  ]);
   const ids = row ? [row.idMatchedById, row.cardShownById, row.registrationSignedById].filter((id): id is string => !!id) : [];
   const users = ids.length ? await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, firstName: true, lastName: true } }) : [];
   const nameOf = (id: string | null | undefined) => {
@@ -42,7 +49,12 @@ async function stateFor(bookingId: string, required: ChecklistRequirements | nul
     .filter((item) => item !== 'cardShown' || required?.cardShown || (row && row[COLUMNS.cardShown.at]))
     .map((item) => {
       const at = row?.[COLUMNS[item].at] ?? null;
-      return { item, label: LABEL[item], required: item !== 'cardShown' || !!required?.cardShown, done: !!at, at: at?.toISOString() ?? null, by: nameOf(row?.[COLUMNS[item].by]) };
+      const base = { item, label: LABEL[item], required: item !== 'cardShown' || !!required?.cardShown };
+      // A tick by staff wins; otherwise the cardholder's verified authorization stands in for seeing the card.
+      if (item === 'cardShown' && !at && authorization) {
+        return { ...base, done: true, at: authorization.at.toISOString(), by: authorization.by, via: `Covered by ${authorization.signerName || 'the cardholder'}’s signed authorization` };
+      }
+      return { ...base, done: !!at, at: at?.toISOString() ?? null, by: nameOf(row?.[COLUMNS[item].by]), via: null };
     });
   const done = Object.fromEntries(items.map((i) => [i.item, i.done]));
   return { required, items, open: openChecklistItems(required, done) };
@@ -51,7 +63,7 @@ async function stateFor(bookingId: string, required: ChecklistRequirements | nul
 export async function getChecklist(bookingId: string): Promise<ChecklistState> {
   const actor = await requireStaff('booking.view');
   const booking = await getBookingForStaff(actor, bookingId);
-  return stateFor(booking.id, checklistRequirements(toBookingSummary(booking).riskFlags));
+  return stateFor(booking, checklistRequirements(toBookingSummary(booking).riskFlags));
 }
 
 /** Tick or untick one item. Needs the same role as checking a guest in. */
@@ -65,5 +77,5 @@ export async function setChecklistItem(bookingId: string, item: ChecklistItem, d
   const values = done ? { [col.at]: new Date(), [col.by]: actor.userId } : { [col.at]: null, [col.by]: null };
   await prisma.bookingChecklist.upsert({ where: { bookingId: booking.id }, create: { bookingId: booking.id, ...values }, update: values });
   await recordAudit({ actor, source: 'classic' }, booking.propertyId, 'BOOKING_CHECKLIST', `${done ? 'Ticked' : 'Unticked'} “${LABEL[item]}” on ${booking.code ?? 'booking'}`, { bookingId: booking.id, item, done });
-  return stateFor(booking.id, required);
+  return stateFor(booking, required);
 }

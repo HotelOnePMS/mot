@@ -32,6 +32,8 @@ export const RESET_IP = (ip: string): LimitRule => ({ key: limitKey('reset-ip', 
 export const RESET_EMAIL = (email: string): LimitRule => ({ key: limitKey('reset-email', email), max: 3, windowMs: 60 * MINUTE });
 export const VERIFY_USER = (userId: string): LimitRule => ({ key: limitKey('verify-user', userId), max: 5, windowMs: 60 * MINUTE });
 export const MFA_USER = (userId: string): LimitRule => ({ key: limitKey('mfa-user', userId), max: 8, windowMs: 15 * MINUTE, failuresOnly: true });
+/** Card authorization forms submitted from one network (each link also locks after repeated wrong card digits). */
+export const CARD_AUTH_IP = (ip: string): LimitRule => ({ key: limitKey('card-auth-ip', ip), max: 30, windowMs: 60 * MINUTE });
 
 async function used(rule: LimitRule): Promise<number> {
   return prisma.authAttempt.count({

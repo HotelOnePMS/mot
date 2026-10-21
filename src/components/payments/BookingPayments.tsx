@@ -58,7 +58,7 @@ interface RefundInfo {
 
 interface ChecklistState {
   required: { cardShown: boolean } | null;
-  items: { item: 'idMatched' | 'cardShown' | 'registrationSigned'; label: string; required: boolean; done: boolean; at: string | null; by: string | null }[];
+  items: { item: 'idMatched' | 'cardShown' | 'registrationSigned'; label: string; required: boolean; done: boolean; at: string | null; by: string | null; via: string | null }[];
   open: string[];
 }
 
@@ -210,13 +210,15 @@ function Checklist({ booking }: { booking: BookingSummary }) {
                 type="checkbox"
                 className="mt-0.5 size-4 shrink-0 accent-primary"
                 checked={i.done}
-                disabled={!editable || pending === i.item}
+                disabled={!editable || pending === i.item || !!i.via}
                 onChange={(e) => void toggle(i.item, e.target.checked)}
               />
               <span className="min-w-0">
                 <span className="block">{i.label}</span>
+                {i.via && <span className="block text-xs text-success-soft-foreground">{i.via}</span>}
                 {i.done && i.at && (
                   <span className="block text-xs text-muted-foreground">
+                    {i.via ? 'Verified by ' : ''}
                     {i.by ?? 'Staff'} · {formatDateTime(i.at)}
                   </span>
                 )}

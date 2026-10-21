@@ -45,6 +45,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { BookingStatusBadge, SourceBadge } from '@/components/hotel/badges';
 import { BookingPayments } from '@/components/payments/BookingPayments';
+import { CardAuthorizationPanel } from '@/components/payments/CardAuthorizationPanel';
 import { AssignRoomDialog, CheckInDialog, CheckOutDialog, ConfirmDialog, NoteDialog } from '@/components/frontdesk/dialogs';
 import { useBookingActions } from '@/components/frontdesk/useBookingActions';
 import { useConsole } from '@/components/console/ConsoleProvider';
@@ -474,6 +475,9 @@ export default function BookingDetailPage() {
 
           {/* Payment, risk flags and refunds */}
           <BookingPayments booking={b} />
+
+          {/* Someone else pays: the cardholder's signed authorization with photo ID */}
+          {can('booking.cardAuth') && <CardAuthorizationPanel booking={b} />}
 
           {/* Agent (AI feature) */}
           {can('agent.use') && !closed && (
