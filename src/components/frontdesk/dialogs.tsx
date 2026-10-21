@@ -16,6 +16,8 @@ import { Field } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Callout, Skeleton } from '@/components/ui/primitives';
 import { Textarea } from '@/components/ui/textarea';
+import { useConsole } from '@/components/console/ConsoleProvider';
+import { CheckInCollect, CollectPaymentDialog, useDeskPayments } from '@/components/payments/DeskPayments';
 import { useBookingActions } from './useBookingActions';
 
 type Prefs = { highFloor: boolean; quiet: boolean };
@@ -128,6 +130,7 @@ function RoomPicker({
 
 export function CheckInDialog({ booking, open, onOpenChange }: { booking: BookingSummary | null; open: boolean; onOpenChange: (o: boolean) => void }) {
   const { transition, pending } = useBookingActions();
+  const { can } = useConsole();
   const [roomId, setRoomId] = React.useState<string | null>(null);
   const [option, setOption] = React.useState<RoomOption | null>(null);
   const [showAll, setShowAll] = React.useState(false);
@@ -193,6 +196,7 @@ export function CheckInDialog({ booking, open, onOpenChange }: { booking: Bookin
         {booking.paymentStatus === 'AWAITING_PAYMENT' && (
           <Callout tone="warning">Online payment didn’t complete — collect {money(booking.totalPrice, { currency: booking.currency })} at the desk.</Callout>
         )}
+        {can('payments.collect') && <CheckInCollect booking={booking} />}
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
@@ -267,6 +271,8 @@ export function AssignRoomDialog({ booking, open, onOpenChange }: { booking: Boo
 
 export function CheckOutDialog({ booking, open, onOpenChange, today }: { booking: BookingSummary | null; open: boolean; onOpenChange: (o: boolean) => void; today: string }) {
   const { transition, pending } = useBookingActions();
+  const { data: desk } = useDeskPayments(open ? booking?.id : null);
+  const [collecting, setCollecting] = React.useState(false);
   if (!booking) return null;
   const early = booking.checkOut > today;
   const balance = Math.max(0, booking.totalPrice - booking.amountPaid);
@@ -283,9 +289,32 @@ export function CheckOutDialog({ booking, open, onOpenChange, today }: { booking
         {(early || unpaid) && (
           <div className="space-y-2">
             {early && <Callout tone="info">Early departure — the unused nights go back on sale.</Callout>}
-            {unpaid && <Callout tone="warning">Balance of {money(balance, { currency: booking.currency })} to settle before the guest leaves.</Callout>}
+            {unpaid && (
+              <Callout
+                tone="warning"
+                action={
+                  desk ? (
+                    <Button size="sm" variant="outline" onClick={() => setCollecting(true)}>
+                      Take payment
+                    </Button>
+                  ) : undefined
+                }
+              >
+                Balance of {money(balance, { currency: booking.currency })} to settle before the guest leaves.
+              </Callout>
+            )}
           </div>
         )}
+        {desk && desk.deposit.held > 0.004 && (
+          <Callout tone="info">
+            {money(desk.deposit.held, { currency: booking.currency })} security deposit still held. Return it (or keep what’s owed) from the{' '}
+            <a href={`/admin/bookings/${booking.id}`} className="font-medium underline underline-offset-2">
+              reservation page
+            </a>
+            .
+          </Callout>
+        )}
+        <CollectPaymentDialog booking={booking} kind="PAYMENT" open={collecting} onOpenChange={setCollecting} />
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Not yet

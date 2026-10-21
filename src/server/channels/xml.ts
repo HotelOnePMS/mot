@@ -10,6 +10,16 @@ const parser = new XMLParser({
   trimValues: true,
 });
 
+/**
+ * Error details are logged and stored: hide anything that looks like a card
+ * number (13-19 digits, spaces or dashes allowed) and card security codes.
+ */
+export function maskCardNumbers(body: string): string {
+  return body
+    .replace(/\b\d(?:[ -]?\d){12,18}\b/g, (m) => `••••${m.replace(/\D/g, '').slice(-4)}`)
+    .replace(/(SeriesCode|seriesCode|CVC|cvc|CVV|cvv)(\s*=\s*")[^"]*"/g, '$1$2•••"');
+}
+
 /** Escapes a value for use in XML text or a double-quoted attribute */
 export function esc(value: string | number | boolean | null | undefined): string {
   return String(value ?? '')
@@ -26,7 +36,7 @@ export function parseXml(xml: string): Record<string, any> {
   } catch (error) {
     throw new ChannelApiError('OTA returned malformed XML', {
       error: error instanceof Error ? error.message : String(error),
-      body: xml.slice(0, 2000),
+      body: maskCardNumbers(xml.slice(0, 2000)),
     });
   }
 }
@@ -99,7 +109,7 @@ export async function postXml({
   }
   if (!response.ok) {
     throw new ChannelApiError(`OTA request failed with HTTP ${response.status}`, {
-      body: responseBody.slice(0, 2000),
+      body: maskCardNumbers(responseBody.slice(0, 2000)),
     });
   }
   return responseBody;

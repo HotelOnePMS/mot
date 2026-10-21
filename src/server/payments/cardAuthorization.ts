@@ -86,10 +86,13 @@ async function reservationOf(booking: { id: string; groupCode: string | null }) 
   return { lead, lines, amount: fromCents(totalCents) };
 }
 
-/** The card that paid online for the reservation (its first successful payment), if any. */
+/**
+ * The card that paid remotely for the reservation (its first successful online or typed-in payment), if any.
+ * Security deposits and cards presented at the desk are left out: the cardholder was there.
+ */
 async function paidCard(leadId: string) {
   return prisma.payment.findFirst({
-    where: { bookingId: leadId, status: { in: PAID }, cardLast4: { not: null } },
+    where: { bookingId: leadId, status: { in: PAID }, cardLast4: { not: null }, kind: { not: 'SECURITY_DEPOSIT' }, method: { in: ['ONLINE', 'CARD_ENTRY'] } },
     orderBy: { createdAt: 'asc' },
     select: { id: true, cardBrand: true, cardLast4: true, cardholderName: true, billingCountry: true, billingEmail: true },
   });

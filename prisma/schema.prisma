@@ -9,46 +9,46 @@ datasource db {
 }
 
 model User {
-  id                 String                   @id @default(cuid())
-  email              String                   @unique
-  password           String
-  firstName          String
-  lastName           String
-  phone              String?
-  address            String?
-  city               String?
-  state              String?
-  zipCode            String?
-  country            String?
-  role               UserRole                 @default(CUSTOMER)
-  isActive           Boolean                  @default(true)
+  id                        String                     @id @default(cuid())
+  email                     String                     @unique
+  password                  String
+  firstName                 String
+  lastName                  String
+  phone                     String?
+  address                   String?
+  city                      String?
+  state                     String?
+  zipCode                   String?
+  country                   String?
+  role                      UserRole                   @default(CUSTOMER)
+  isActive                  Boolean                    @default(true)
   /// Set when the person proved they own the address (link, password reset, Google, SSO or SCIM).
-  emailVerifiedAt    DateTime?
+  emailVerifiedAt           DateTime?
   /// Two-step sign-in (TOTP). The secret is sealed with the vault; recovery codes are SHA-256 hashes.
-  mfaEnabled         Boolean                  @default(false)
-  mfaSecretCipher    String?
-  mfaRecoveryCodes   String[]                 @default([])
+  mfaEnabled                Boolean                    @default(false)
+  mfaSecretCipher           String?
+  mfaRecoveryCodes          String[]                   @default([])
   /// Identity-provider subject for SSO sign-in (unique per issuer).
-  ssoIssuer          String?
-  ssoSubject         String?
+  ssoIssuer                 String?
+  ssoSubject                String?
   /// The SCIM client's id for this person.
-  scimExternalId     String?
+  scimExternalId            String?
   /// Bumped to sign out every session (password reset, MFA change, role/active/email change, deactivation).
-  sessionVersion     Int                      @default(0)
-  passwordChangedAt  DateTime?
+  sessionVersion            Int                        @default(0)
+  passwordChangedAt         DateTime?
   /// True for a password set by someone else (team invite / owner-set temporary password): must be changed at first sign-in.
-  mustChangePassword Boolean                  @default(false)
-  createdAt          DateTime                 @default(now())
-  updatedAt          DateTime                 @updatedAt
-  bookings           Booking[]
-  organizations      OrganizationMember[]
-  authTokens         AuthToken[]
+  mustChangePassword        Boolean                    @default(false)
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  bookings                  Booking[]
+  organizations             OrganizationMember[]
+  authTokens                AuthToken[]
   // Properties assigned to this user (for Owner, Manager roles)
-  assignedProperties UserPropertyAssignment[]
+  assignedProperties        UserPropertyAssignment[]
   // Housekeeping tasks assigned to this user
-  housekeepingTasks  RoomHousekeeping[]
+  housekeepingTasks         RoomHousekeeping[]
   // Agentic-mode audit trail entries created by this user
-  agentAuditLogs     AgentAuditLog[]
+  agentAuditLogs            AgentAuditLog[]
   // Channel agent chat sessions started by this user
   channelAgentConversations ChannelAgentConversation[]
   // Pending password-reset links (only a hash of each token is stored)
@@ -58,73 +58,79 @@ model User {
 }
 
 model Property {
-  id                     String                   @id @default(cuid())
-  name                   String
-  description            String?
-  address                String
-  city                   String
-  state                  String
-  zipCode                String
-  phone                  String
-  email                  String?
-  amenities              String[]
-  isActive               Boolean                  @default(true)
+  id                       String                   @id @default(cuid())
+  name                     String
+  description              String?
+  address                  String
+  city                     String
+  state                    String
+  zipCode                  String
+  phone                    String
+  email                    String?
+  amenities                String[]
+  isActive                 Boolean                  @default(true)
   // SaaS branding / onboarding fields
-  tagline                String?
-  primaryColor           String?
-  logoUrl                String?
-  type                   String? // Hotel | Motel | Inn | B&B | Boutique | Other
-  isDemo                 Boolean                  @default(false)
+  tagline                  String?
+  primaryColor             String?
+  logoUrl                  String?
+  type                     String? // Hotel | Motel | Inn | B&B | Boutique | Other
+  isDemo                   Boolean                  @default(false)
   // Classic (traditional UI) vs Agentic (natural-language beta interface)
-  interfaceMode          InterfaceMode            @default(CLASSIC)
+  interfaceMode            InterfaceMode            @default(CLASSIC)
   // How the hotel adopted StayOS: everything on StayOS, keeping their PMS, or voice only
-  setupPath              SetupPath                @default(FULL)
+  setupPath                SetupPath                @default(FULL)
   /// The hotel group this hotel belongs to (null = an independent hotel).
-  organizationId         String?
-  organization           Organization?            @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId           String?
+  organization             Organization?            @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   /// IANA time zone for the hotel's "today" and policy cut-offs (null = the platform default, HOTEL_TIMEZONE).
-  timezone               String?
+  timezone                 String?
   /// ISO 4217 currency every price at this hotel is in.
-  currency               String                   @default("USD")
+  currency                 String                   @default("USD")
   /// Online payments (Stripe Connect Express, direct charges): the hotel's own connected account.
-  stripeAccountId        String?                  @unique
-  stripeChargesEnabled   Boolean                  @default(false)
-  stripePayoutsEnabled   Boolean                  @default(false)
-  stripeDetailsSubmitted Boolean                  @default(false)
-  paymentPolicy          PaymentPolicy            @default(PAY_AT_PROPERTY)
+  stripeAccountId          String?                  @unique
+  stripeChargesEnabled     Boolean                  @default(false)
+  stripePayoutsEnabled     Boolean                  @default(false)
+  stripeDetailsSubmitted   Boolean                  @default(false)
+  paymentPolicy            PaymentPolicy            @default(PAY_AT_PROPERTY)
   /// Nights charged at booking when paymentPolicy is DEPOSIT.
-  depositNights          Int                      @default(1)
+  depositNights            Int                      @default(1)
+  /// Security (incidentals) deposit taken at check-in: none, a card hold released at check-out, or a refundable charge.
+  securityDepositMode      SecurityDepositMode      @default(NONE)
+  /// Security deposit amount per stay, in the hotel's currency.
+  securityDepositAmount    Decimal                  @default(0) @db.Decimal(10, 2)
+  /// Stripe Terminal location on the hotel's connected account; card readers are registered to it.
+  stripeTerminalLocationId String?
   /// Default booking page address: "oceanview-resort" serves oceanview-resort.hotelone.site
-  subdomain              String?                  @unique
+  subdomain                String?                  @unique
   /// Property's own domain for its booking page, e.g. "book.mymotel.com"
-  customDomain           String?                  @unique
-  customDomainVerified   Boolean                  @default(false)
-  customDomainVerifiedAt DateTime?
-  createdAt              DateTime                 @default(now())
-  updatedAt              DateTime                 @updatedAt
-  bookings               Booking[]
-  payments               Payment[]
-  disputes               Dispute[]
-  cardAuthorizations     CardAuthorization[]
-  photos                 PropertyPhoto[]
-  roomTypes              RoomType[]
-  rooms                  Room[]
+  customDomain             String?                  @unique
+  customDomainVerified     Boolean                  @default(false)
+  customDomainVerifiedAt   DateTime?
+  createdAt                DateTime                 @default(now())
+  updatedAt                DateTime                 @updatedAt
+  bookings                 Booking[]
+  payments                 Payment[]
+  disputes                 Dispute[]
+  cardAuthorizations       CardAuthorization[]
+  photos                   PropertyPhoto[]
+  roomTypes                RoomType[]
+  rooms                    Room[]
   // Users assigned to this property
-  assignedUsers          UserPropertyAssignment[]
+  assignedUsers            UserPropertyAssignment[]
   // Agentic-mode audit trail
-  agentAuditLogs         AgentAuditLog[]
-  voiceAgent             VoiceAgentConfig?
-  phoneLine              VoicePhoneLine?
-  voiceSessions          VoiceSession[]
-  guestRequests          GuestRequest[]
-  pmsConnection          PmsConnection?
-  bridgeTasks            BridgeTask[]
-  agentSkills            AgentSkill[]
-  agentApiKeys           AgentApiKey[]
-  charges                PropertyCharge[]
-  nightAudits            NightAudit[]
+  agentAuditLogs           AgentAuditLog[]
+  voiceAgent               VoiceAgentConfig?
+  phoneLine                VoicePhoneLine?
+  voiceSessions            VoiceSession[]
+  guestRequests            GuestRequest[]
+  pmsConnection            PmsConnection?
+  bridgeTasks              BridgeTask[]
+  agentSkills              AgentSkill[]
+  agentApiKeys             AgentApiKey[]
+  charges                  PropertyCharge[]
+  nightAudits              NightAudit[]
   // OTA connections (Expedia, Booking.com)
-  channelConnections     ChannelConnection[]
+  channelConnections       ChannelConnection[]
 
   @@index([organizationId])
   @@map("properties")
@@ -143,25 +149,25 @@ model PropertyPhoto {
 }
 
 model RoomType {
-  id               String             @id @default(cuid())
-  propertyId       String
-  name             String
-  description      String?
-  capacity         Int
-  basePrice        Decimal            @db.Decimal(10, 2)
-  totalRooms       Int                @default(0)
-  amenities        String[]
-  isActive         Boolean            @default(true)
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  bookings         Booking[]
-  roomAvailability RoomAvailability[]
-  photos           RoomTypePhoto[]
-  dailyRates       RoomTypeRate[]
-  rooms            Room[]
+  id                   String                @id @default(cuid())
+  propertyId           String
+  name                 String
+  description          String?
+  capacity             Int
+  basePrice            Decimal               @db.Decimal(10, 2)
+  totalRooms           Int                   @default(0)
+  amenities            String[]
+  isActive             Boolean               @default(true)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  bookings             Booking[]
+  roomAvailability     RoomAvailability[]
+  photos               RoomTypePhoto[]
+  dailyRates           RoomTypeRate[]
+  rooms                Room[]
   channelMappings      ChannelRoomMapping[]
   channelRateOverrides ChannelRateOverride[]
-  property         Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  property             Property              @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
   @@map("room_types")
 }
@@ -289,6 +295,15 @@ model RoomTypeRate {
   @@unique([roomTypeId, date])
   @@index([date])
   @@map("room_type_rates")
+}
+
+/// How the front desk takes the security deposit at check-in.
+enum SecurityDepositMode {
+  NONE
+  /// Authorize the card and capture only what is owed at check-out (extended authorization where the card allows it).
+  HOLD
+  /// Charge the deposit and refund it at check-out.
+  CHARGE
 }
 
 enum PaymentPolicy {
@@ -800,7 +815,11 @@ model ChannelReservation {
   guestName    String?
   totalAmount  Decimal?                 @db.Decimal(10, 2)
   currency     String?
+  /// OTA payload with card numbers and security codes removed (see channels/cards.ts).
   rawPayload   Json?
+  /// The card the OTA sent with the booking (virtual card or the guest's), without its number: brand, last 4,
+  /// expiry, and for virtual cards the date it can be charged from and its balance. The desk charges it on Stripe's page.
+  paymentCard  Json?
   receivedAt   DateTime                 @default(now())
   updatedAt    DateTime                 @updatedAt
   connection   ChannelConnection        @relation(fields: [connectionId], references: [id], onDelete: Cascade)
@@ -872,21 +891,29 @@ model ChannelAgentAction {
   @@map("channel_agent_actions")
 }
 
-/// One card payment collected through Stripe on the hotel's connected account. No card data is stored:
-/// only the cardholder and risk details Stripe reports for the charge. Kept apart from the guest's name.
+/// Money collected for a booking: card payments through Stripe on the hotel's connected account (online, on a
+/// card reader, typed in at the desk, or an OTA's virtual card) and cash recorded at the desk. No card data is
+/// stored: only the cardholder and risk details Stripe reports for the charge. Kept apart from the guest's name.
 model Payment {
   id                      String    @id @default(cuid())
   bookingId               String
   propertyId              String
-  stripePaymentIntentId   String    @unique
+  /// Null for cash, and for a desk card payment whose Stripe page hasn't been completed yet.
+  stripePaymentIntentId   String?   @unique
   stripeChargeId          String?   @unique
   stripeCheckoutSessionId String?
-  /// DEPOSIT | FULL
+  /// ONLINE (guest paid when booking) | TERMINAL (card reader) | CARD_ENTRY (typed in at the desk) | VIRTUAL_CARD (OTA card) | CASH
+  method                  String    @default("ONLINE")
+  /// DEPOSIT | FULL (online at booking) | PAYMENT (toward the balance at the desk) | SECURITY_DEPOSIT (incidentals, returned at check-out)
   kind                    String    @default("FULL")
-  /// PENDING | SUCCEEDED | FAILED | PARTIALLY_REFUNDED | REFUNDED
+  /// PENDING | AUTHORIZED (card hold) | SUCCEEDED | FAILED | CANCELED (hold released, or abandoned) | PARTIALLY_REFUNDED | REFUNDED
   status                  String    @default("PENDING")
   amount                  Decimal   @db.Decimal(10, 2)
   amountRefunded          Decimal   @default(0) @db.Decimal(10, 2)
+  /// Card holds: the amount authorized; `amount` becomes what was captured.
+  amountAuthorized        Decimal?  @db.Decimal(10, 2)
+  /// Card holds: Stripe releases the authorization at this time unless it is captured.
+  captureBefore           DateTime?
   applicationFee          Decimal?  @db.Decimal(10, 2)
   currency                String    @default("usd")
   cardholderName          String?
@@ -901,6 +928,15 @@ model Payment {
   riskLevel               String?
   riskScore               Int?
   failureMessage          String?
+  /// Card reader the payment was sent to (Stripe Terminal reader id).
+  terminalReaderId        String?
+  /// Cash: what the guest handed over (change = tendered - amount).
+  cashTendered            Decimal?  @db.Decimal(10, 2)
+  /// Security deposits: when it was settled at check-out (hold released or captured, charge refunded or kept).
+  settledAt               DateTime?
+  /// Staff member who took or recorded the payment at the desk.
+  recordedById            String?
+  note                    String?
   paidAt                  DateTime?
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
@@ -909,10 +945,10 @@ model Payment {
 
   @@index([bookingId])
   @@index([propertyId, createdAt])
+  @@index([stripeCheckoutSessionId])
   @@map("payments")
 }
 
-/// A card dispute (chargeback) opened on a hotel's Stripe account, with the evidence we assembled for it.
 model Dispute {
   id                    String    @id @default(cuid())
   stripeDisputeId       String    @unique

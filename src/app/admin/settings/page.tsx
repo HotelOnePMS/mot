@@ -15,6 +15,7 @@ import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/primitives';
 import { useConsole } from '@/components/console/ConsoleProvider';
 import { PaymentSettings } from '@/components/payments/PaymentSettings';
+import { DeskSettings } from '@/components/payments/DeskSettings';
 import { PricingSettings } from '@/components/setup/PricingSettings';
 
 const FRAME = 'mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8';
@@ -237,6 +238,12 @@ export default function SettingsPage() {
           {can('payments.view') && property && (
             <Section title="Online payments" description="Let guests pay a deposit or the full stay by card, straight to your Stripe account.">
               <PaymentSettings propertyId={property.id} />
+            </Section>
+          )}
+
+          {can('payments.view') && property && (
+            <Section title="Front desk payments" description="The security deposit taken at check-in, and the card readers at your desk.">
+              <DeskSettings propertyId={property.id} />
             </Section>
           )}
 
