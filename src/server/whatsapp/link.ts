@@ -8,7 +8,7 @@
 import { createHash, randomInt } from 'crypto';
 import { prisma } from '@/lib/prisma';
 import { isStaffRole } from '@/lib/routes';
-import { scopeProperties, type Actor } from '../authz';
+import { hasPropertyAccess, scopeProperties, type Actor } from '../authz';
 import { canUseWhatsAppAnywhere } from '../agent/policy';
 import { forbidden } from '../errors';
 import { recordAudit } from '../services/audit';
@@ -69,20 +69,35 @@ export async function startLink(actor: Actor): Promise<{ code: string; expiresAt
   const raw = Array.from({ length: 8 }, () => ALPHABET[randomInt(ALPHABET.length)]).join('');
   const expiresAt = new Date(Date.now() + CODE_TTL_MS);
   const user = await prisma.user.findUniqueOrThrow({ where: { id: actor.userId }, select: { sessionVersion: true } });
+  // The code belongs to this session: it stops working if the person is signed out everywhere before using it.
+  const pending = { codeHash: hashCode(raw), codeExpiresAt: expiresAt, codeSessionVersion: user.sessionVersion, codeAuthMethod: actor.authMethod ?? 'password' };
   await prisma.staffWhatsAppLink.upsert({
     where: { userId: actor.userId },
-    create: { userId: actor.userId, codeHash: hashCode(raw), codeExpiresAt: expiresAt, sessionVersion: user.sessionVersion },
-    update: { codeHash: hashCode(raw), codeExpiresAt: expiresAt },
+    create: { userId: actor.userId, ...pending, sessionVersion: user.sessionVersion },
+    update: pending,
   });
   const code = `${raw.slice(0, 4)}-${raw.slice(4)}`;
   const digits = cfg.displayNumber?.replace(/\D/g, '');
   return { code, expiresAt: expiresAt.toISOString(), staffNumber: cfg.displayNumber, chatUrl: digits ? `https://wa.me/${digits}?text=${encodeURIComponent(`LINK ${code}`)}` : null };
 }
 
-/** Linking and unlinking go in the activity log of the chat's hotel, or the person's first hotel. */
+/** Stops a code that hasn't been used yet ("Cancel" in the console). An existing link keeps working. */
+export async function cancelLinkCode(actor: Actor): Promise<void> {
+  await prisma.staffWhatsAppLink.updateMany({ where: { userId: actor.userId }, data: { codeHash: null, codeExpiresAt: null, codeSessionVersion: null, codeAuthMethod: null } });
+  await prisma.staffWhatsAppLink.deleteMany({ where: { userId: actor.userId, number: null } });
+}
+
+/**
+ * Linking and unlinking go in the activity log of the chat's hotel (while the
+ * person still works there), or the person's first hotel. A platform admin's
+ * link isn't any customer hotel's business: it goes to the server log.
+ */
 export async function auditLink(actor: Actor, propertyId: string | null, action: 'WHATSAPP_LINKED' | 'WHATSAPP_UNLINKED', summary: string, data: Record<string, unknown> = {}): Promise<void> {
-  const pid = propertyId ?? (await prisma.property.findFirst({ where: scopeProperties(actor), orderBy: { createdAt: 'asc' }, select: { id: true } }))?.id;
+  const chatHotel = propertyId && actor.propertyIds !== 'ALL' && hasPropertyAccess(actor, propertyId) ? propertyId : null;
+  const pid =
+    chatHotel ?? (actor.propertyIds === 'ALL' ? null : (await prisma.property.findFirst({ where: scopeProperties(actor), orderBy: { createdAt: 'asc' }, select: { id: true } }))?.id);
   if (pid) await recordAudit({ actor, source: 'agent' }, pid, action, summary, { channel: 'whatsapp', ...data });
+  else console.info(`[whatsapp] ${action} ${summary} by ${actor.email} (${actor.userId})`);
 }
 
 export async function unlink(actor: Actor, via: 'console' | 'whatsapp'): Promise<void> {
@@ -92,26 +107,42 @@ export async function unlink(actor: Actor, via: 'console' | 'whatsapp'): Promise
   if (link.number) await auditLink(actor, link.propertyId, 'WHATSAPP_UNLINKED', `Unlinked WhatsApp ${maskNumber(link.number)}`, { via });
 }
 
-export type LinkOutcome = { ok: true; userId: string; firstName: string; sessionVersion: number } | { ok: false; reason: 'invalid' | 'taken' };
+export type LinkOutcome = { ok: true; userId: string; firstName: string; sessionVersion: number; authMethod: string } | { ok: false; reason: 'invalid' | 'taken' };
 
 /**
  * Binds the sender's number to the account whose code they sent. The code is
- * single-use and expires after 10 minutes. The link records the account's
- * sessionVersion, so "sign out everywhere" also ends it.
+ * single-use, expires after 10 minutes, and only works while the console
+ * session that asked for it would (same sessionVersion). The link records the
+ * account's sessionVersion, so "sign out everywhere" also ends it.
  */
 export async function linkByCode(from: string, code: string): Promise<LinkOutcome> {
   const pending = await prisma.staffWhatsAppLink.findUnique({
     where: { codeHash: hashCode(code) },
-    select: { userId: true, codeExpiresAt: true, user: { select: { firstName: true, sessionVersion: true, isActive: true } } },
+    select: { userId: true, codeExpiresAt: true, codeSessionVersion: true, codeAuthMethod: true, user: { select: { firstName: true, sessionVersion: true, isActive: true } } },
   });
   if (!pending || !pending.codeExpiresAt || pending.codeExpiresAt < new Date() || !pending.user.isActive) return { ok: false, reason: 'invalid' };
+  // Signed out everywhere (or a new password) since the code was shown: it no longer works.
+  if (pending.codeSessionVersion !== pending.user.sessionVersion) return { ok: false, reason: 'invalid' };
+  const authMethod = pending.codeAuthMethod ?? 'password';
   const other = await prisma.staffWhatsAppLink.findUnique({ where: { number: from }, select: { userId: true } });
   if (other && other.userId !== pending.userId) return { ok: false, reason: 'taken' };
   // Clearing the code in the same update makes it single-use even if two messages race.
   const { count } = await prisma.staffWhatsAppLink.updateMany({
-    where: { userId: pending.userId, codeHash: hashCode(code) },
-    data: { number: from, linkedAt: new Date(), codeHash: null, codeExpiresAt: null, sessionVersion: pending.user.sessionVersion, pendingPlan: null, choices: [] },
+    where: { userId: pending.userId, codeHash: hashCode(code), codeSessionVersion: pending.user.sessionVersion },
+    data: {
+      number: from,
+      linkedAt: new Date(),
+      codeHash: null,
+      codeExpiresAt: null,
+      codeSessionVersion: null,
+      codeAuthMethod: null,
+      sessionVersion: pending.user.sessionVersion,
+      authMethod,
+      pendingPlan: null,
+      choices: [],
+      alertUnseen: false,
+    },
   });
   if (!count) return { ok: false, reason: 'invalid' };
-  return { ok: true, userId: pending.userId, firstName: pending.user.firstName, sessionVersion: pending.user.sessionVersion };
+  return { ok: true, userId: pending.userId, firstName: pending.user.firstName, sessionVersion: pending.user.sessionVersion, authMethod };
 }

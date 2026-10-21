@@ -4,7 +4,7 @@
  * sets it per hotel on the Agent access page; src/server/agent/policy.ts
  * stores and applies it.
  *
- * Client-safe: types, keys and labels only.
+ * Client-safe: types, keys, labels and pure helpers only.
  */
 
 /** Roles an owner configures. Owners and platform admins always keep every agent permission. */
@@ -54,4 +54,12 @@ export interface AgentAccessUpdate {
   propertyId: string;
   capabilities: Record<PolicyRole, Record<string, boolean>>;
   alerts: Record<AlertRole, NoticeKind[]>;
+}
+
+/** The switches as the page shows them saved, ready to change and save again. A locked switch keeps its stored value, so saving doesn't change it. */
+export function draftFrom(v: Pick<AgentAccessView, 'capabilities' | 'alerts'>): Pick<AgentAccessUpdate, 'capabilities' | 'alerts'> {
+  return {
+    capabilities: Object.fromEntries(POLICY_ROLES.map((r) => [r, Object.fromEntries(v.capabilities.map((c) => [c.key, c.cells[r].on]))])) as AgentAccessUpdate['capabilities'],
+    alerts: Object.fromEntries(ALERT_ROLES.map((r) => [r, v.alerts.filter((a) => a.cells[r].on).map((a) => a.kind)])) as AgentAccessUpdate['alerts'],
+  };
 }

@@ -11,7 +11,7 @@ import type { BookingStatus, BookingSummary, ISODate, OccupancyDay } from '@/lib
 import { money, PAYMENT_STATUS } from '@/lib/status';
 import { can, type Permission } from '../authz';
 import { addDaysISO, diffDays, eachNight, formatDay, toISODate } from '../dates';
-import { DomainError } from '../errors';
+import { DomainError, forbidden } from '../errors';
 import type { OpContext } from '../services/audit';
 import { listActivity } from '../services/audit';
 import { addBookingNote, allowedTransitions, assignRoom, checkTransition, suggestRooms, transitionBooking } from '../services/bookings';
@@ -162,6 +162,9 @@ function fail(text: string): PlanOutput {
   return { steps: [], warnings: [], risk: 'low', blocks: [{ type: 'error', text }], abort: true };
 }
 
+/** Something the role can't do through the agent, and where that's changed. */
+const denied = (text: string) => `${text} The owner can change this under Agent access.`;
+
 function summarizeOccupancy(days: OccupancyDay[]) {
   const sold = days.reduce((s, d) => s + d.roomsSold, 0);
   const capacity = days.reduce((s, d) => s + d.totalRooms, 0);
@@ -202,6 +205,8 @@ function checkOutOptions(departures: BookingSummary[], inHouse: BookingSummary[]
 
 /** "Check out a guest" with nobody named: offer the people it could be instead of a dead end. */
 async function pickGuest(ctx: ToolCtx, purpose: 'checkIn' | 'checkOut'): Promise<AgentBlock> {
+  const need = READ_PERMISSION[purpose === 'checkIn' ? 'arrivals' : 'inHouse']!;
+  if (!can(ctx.actor, need.perm)) return { type: 'error', text: denied(need.denied) };
   const s = await frontDeskSummary(ctx.actor, ctx.propertyId, ctx.today);
   const options = purpose === 'checkIn' ? checkInOptions(s.arrivals) : checkOutOptions(s.departures, s.inHouse, ctx.today);
   if (!options.length) {
@@ -248,7 +253,7 @@ const READ_PERMISSION: Partial<Record<Intent['kind'], { perm: Permission; denied
 export async function runRead(ctx: ToolCtx, intent: Intent): Promise<ReadOutput> {
   const { actor, propertyId, today } = ctx;
   const need = READ_PERMISSION[intent.kind];
-  if (need && !can(actor, need.perm)) return { blocks: [{ type: 'error', text: `${need.denied} The owner can change this under Agent access.` }] };
+  if (need && !can(actor, need.perm)) return { blocks: [{ type: 'error', text: denied(need.denied) }] };
   switch (intent.kind) {
     case 'overview': {
       const s = await frontDeskSummary(actor, propertyId, today);
@@ -581,11 +586,22 @@ async function pickRoom(
   return { ok: false, block: { type: 'error', text: `No ${b.roomType.name} room is free for ${guestName(b)}’s nights.` } };
 }
 
+/** Booking changes start by finding the booking, so each needs look-ups as well (the booking services check booking.view again on YES). */
+const NO_LOOKUP = denied('Your role can’t look up reservations, so it can’t change them either.');
+
+/** What confirm, cancel and no-show need, checked before the booking is looked up. */
+const TRANSITION_PERMISSION: Record<'confirm' | 'cancel' | 'noShow', { perm: Permission; denied: string }> = {
+  confirm: { perm: 'booking.confirm', denied: 'Your role can’t confirm reservations.' },
+  cancel: { perm: 'booking.cancel', denied: 'Your role can’t cancel reservations.' },
+  noShow: { perm: 'booking.noShow', denied: 'Your role can’t mark no-shows.' },
+};
+
 export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutput> {
   const { actor, propertyId, today } = ctx;
   switch (intent.kind) {
     case 'checkIn': {
       if (!can(actor, 'booking.checkin')) return fail('Your role can’t check guests in.');
+      if (!can(actor, 'booking.view')) return fail(NO_LOOKUP);
       if (noGuestNamed(intent.ref)) return { steps: [], warnings: [], risk: 'low', blocks: [await pickGuest(ctx, 'checkIn')], abort: true };
       const r = await resolveBooking(ctx, intent.ref, 'checkIn');
       if (!r.ok) return { steps: [], warnings: [], risk: 'low', blocks: [r.block], abort: true };
@@ -620,6 +636,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
     }
     case 'checkOut': {
       if (!can(actor, 'booking.checkout')) return fail('Your role can’t check guests out.');
+      if (!can(actor, 'booking.view')) return fail(NO_LOOKUP);
       if (noGuestNamed(intent.ref)) return { steps: [], warnings: [], risk: 'low', blocks: [await pickGuest(ctx, 'checkOut')], abort: true };
       const r = await resolveBooking(ctx, intent.ref, 'checkOut');
       if (!r.ok) return { steps: [], warnings: [], risk: 'low', blocks: [r.block], abort: true };
@@ -648,6 +665,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
     }
     case 'assignRoom': {
       if (!can(actor, 'booking.assignRoom')) return fail('Your role can’t assign rooms.');
+      if (!can(actor, 'booking.view')) return fail(NO_LOOKUP);
       const r = await resolveBooking(ctx, intent.ref, 'upcoming');
       if (!r.ok) return { steps: [], warnings: [], risk: 'low', blocks: [r.block], abort: true };
       const b = r.value;
@@ -669,6 +687,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
     }
     case 'note': {
       if (!can(actor, 'booking.note')) return fail('Your role can’t add notes.');
+      if (!can(actor, 'booking.view')) return fail(NO_LOOKUP);
       const r = await resolveBooking(ctx, intent.ref, 'any');
       if (!r.ok) return { steps: [], warnings: [], risk: 'low', blocks: [r.block], abort: true };
       return {
@@ -681,6 +700,10 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
     case 'confirm':
     case 'cancel':
     case 'noShow': {
+      // Reinstating a cancelled or no-show booking needs booking.reinstate too, which no switch covers: booking.confirm is what the owner turns off.
+      const need = TRANSITION_PERMISSION[intent.kind];
+      if (!can(actor, need.perm)) return fail(denied(need.denied));
+      if (!can(actor, 'booking.view')) return fail(NO_LOOKUP);
       const to: BookingStatus = intent.kind === 'confirm' ? 'CONFIRMED' : intent.kind === 'cancel' ? 'CANCELLED' : 'NO_SHOW';
       const r = await resolveBooking(ctx, intent.ref, intent.kind === 'noShow' ? 'checkIn' : 'upcoming');
       if (!r.ok) return { steps: [], warnings: [], risk: 'low', blocks: [r.block], abort: true };
@@ -803,6 +826,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
     }
     case 'assignArrivals': {
       if (!can(actor, 'booking.assignRoom')) return fail('Your role can’t assign rooms.');
+      if (!can(actor, 'booking.view') || !can(actor, 'frontdesk.view')) return fail(NO_LOOKUP);
       const s = await frontDeskSummary(actor, propertyId, today);
       const pending = s.arrivals.filter((b) => b.status !== 'CHECKED_IN' && !b.room);
       if (!pending.length) return { steps: [], warnings: [], risk: 'low', blocks: [{ type: 'text', text: 'Every arrival today already has a room. 🎉' }] };
@@ -894,6 +918,8 @@ export async function executeStep(ctx: OpContext, step: PlanStep): Promise<StepR
         return { ok: true, line: `Checked out ${r.booking.guest.name}${r.effects.length ? ` · ${r.effects.join(' · ')}` : ''}`, bookingId: r.booking.id };
       }
       case 'transition': {
+        // Reinstating needs booking.reinstate, which no switch covers, so the confirm switch decides here too (it may have been turned off since the plan was made).
+        if (a.to === 'CONFIRMED' && !can(ctx.actor, 'booking.confirm')) throw forbidden(denied('Your role can’t confirm reservations.'));
         const r = await transitionBooking(ctx, String(a.bookingId), a.to as BookingStatus, { note: a.note ? String(a.note) : undefined });
         return { ok: true, line: `${r.booking.guest.name} (${r.booking.code}) is now ${r.to.toLowerCase().replace('_', ' ')}`, bookingId: r.booking.id };
       }

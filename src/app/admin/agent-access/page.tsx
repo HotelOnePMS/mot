@@ -4,7 +4,7 @@ import * as React from 'react';
 import useSWR from 'swr';
 import { toast } from 'sonner';
 import { RotateCcw } from 'lucide-react';
-import { ALERT_ROLES, POLICY_ROLES, type AccessCell, type AgentAccessUpdate, type AgentAccessView, type AlertRole, type NoticeKind } from '@/lib/agent/access';
+import { ALERT_ROLES, draftFrom, POLICY_ROLES, type AccessCell, type AgentAccessUpdate, type AgentAccessView, type AlertRole, type NoticeKind } from '@/lib/agent/access';
 import { api, fetcher } from '@/lib/fetcher';
 import { timeAgo } from '@/lib/format';
 import { roleLabel } from '@/lib/status';
@@ -17,13 +17,6 @@ import { PageShell, SectionHeader } from '@/components/console/PageShell';
 import { useConsole, usePropertyUrl } from '@/components/console/ConsoleProvider';
 
 type Draft = Pick<AgentAccessUpdate, 'capabilities' | 'alerts'>;
-
-function draftFrom(v: AgentAccessView): Draft {
-  return {
-    capabilities: Object.fromEntries(POLICY_ROLES.map((r) => [r, Object.fromEntries(v.capabilities.map((c) => [c.key, c.cells[r].on]))])) as Draft['capabilities'],
-    alerts: Object.fromEntries(ALERT_ROLES.map((r) => [r, v.alerts.filter((a) => a.cells[r].on).map((a) => a.kind)])) as Draft['alerts'],
-  };
-}
 
 function defaultsFrom(v: AgentAccessView): Draft {
   return {

@@ -26,7 +26,7 @@ interface Capability {
   label: string;
   description: string;
   perms: Permission[];
-  /** Another capability this one needs to be any use. */
+  /** Another capability this one needs to be any use: while that one is off, this one counts as off and its switch is locked. */
   needs?: string;
 }
 
@@ -35,10 +35,12 @@ export const CAPABILITIES: Capability[] = [
   { key: 'agent', label: 'Use the agent', description: 'Ask questions and propose changes in the console.', perms: ['agent.use'] },
   { key: 'whatsapp', label: 'Use the agent on WhatsApp', description: 'The same agent from their phone.', perms: ['whatsapp.use'], needs: 'agent' },
   { key: 'lookup', label: 'Look up guests and bookings', description: 'Arrivals, departures, in-house and reservations.', perms: ['frontdesk.view', 'booking.view'] },
-  { key: 'checkin', label: 'Check guests in and out', description: '', perms: ['booking.checkin', 'booking.checkout'] },
-  { key: 'assignRoom', label: 'Assign rooms', description: '', perms: ['booking.assignRoom'] },
-  { key: 'notes', label: 'Add booking notes', description: '', perms: ['booking.note'] },
-  { key: 'reservations', label: 'Confirm, cancel and mark no-shows', description: '', perms: ['booking.confirm', 'booking.cancel', 'booking.noShow'] },
+  // Changing a booking starts by finding it, so these need look-ups (the booking services check booking.view too).
+  { key: 'checkin', label: 'Check guests in and out', description: '', perms: ['booking.checkin', 'booking.checkout'], needs: 'lookup' },
+  { key: 'assignRoom', label: 'Assign rooms', description: '', perms: ['booking.assignRoom'], needs: 'lookup' },
+  { key: 'notes', label: 'Add booking notes', description: '', perms: ['booking.note'], needs: 'lookup' },
+  // Bringing back a cancelled or no-show booking also needs booking.reinstate, which stays with the role: the agent checks booking.confirm first.
+  { key: 'reservations', label: 'Confirm, cancel and mark no-shows', description: '', perms: ['booking.confirm', 'booking.cancel', 'booking.noShow'], needs: 'lookup' },
   { key: 'roomStatus', label: 'Room status', description: 'See rooms and mark them clean or dirty.', perms: ['room.view', 'room.status'] },
   { key: 'outOfOrder', label: 'Take rooms out of order', description: '', perms: ['room.outOfOrder'] },
   { key: 'housekeeping', label: 'Assign housekeeping', description: 'Hand out cleaning and see the housekeeping board.', perms: ['housekeeping.view', 'housekeeping.assign'] },
@@ -148,10 +150,18 @@ export async function canUseWhatsAppAnywhere(actor: Actor): Promise<boolean> {
 
 const ROLE_WORDS: Record<string, string> = { OWNER: 'owners', MANAGER: 'managers', FRONT_DESK: 'front desk', HOUSEKEEPER: 'housekeeping' };
 
+const neededBy = (cap: Capability) => (cap.needs ? CAPABILITIES.find((c) => c.key === cap.needs) : undefined);
+
+/** Does the role hold every permission of the capability at this hotel? */
+function holds(cap: Capability, role: PolicyRole, rp: RolePolicy | undefined): boolean {
+  return cap.perms.every((p) => !rp?.revoked.includes(p) && (roleCan(role, p) || !!rp?.granted.includes(p)));
+}
+
 function capabilityCell(cap: Capability, role: PolicyRole, rp: RolePolicy | undefined): AccessCell {
-  const has = (p: Permission) => !rp?.revoked.includes(p) && (roleCan(role, p) || !!rp?.granted.includes(p));
-  const cell: AccessCell = { on: cap.perms.every(has), byDefault: cap.perms.every((p) => roleCan(role, p)) };
+  const cell: AccessCell = { on: holds(cap, role, rp), byDefault: cap.perms.every((p) => roleCan(role, p)) };
+  const need = neededBy(cap);
   if (!cap.perms.every((p) => roleCan(role, p) || GRANTABLE.has(p))) cell.locked = 'Only owners can do this.';
+  else if (need && !holds(need, role, rp)) cell.locked = `Turn on “${need.label}” for ${ROLE_WORDS[role]} first.`;
   return cell;
 }
 
@@ -163,7 +173,6 @@ function alertCell(kind: NoticeKind, role: AlertRole, policy: Policy): AccessCel
   if (!allowed) {
     const cap = CAPABILITIES.find((c) => c.perms.includes(perm));
     cell.locked = cap ? `Turn on “${cap.label}” for ${ROLE_WORDS[role]} first.` : `Not available to ${ROLE_WORDS[role]}.`;
-    cell.on = false;
   }
   return cell;
 }
@@ -181,6 +190,15 @@ export async function accessView(actor: Actor, propertyId: string): Promise<Agen
     propertyName: property.name,
     canEdit: can(actor, 'agent.policy'),
     whatsapp: !!whatsAppConfig(),
+    ...accessSwitches(policy),
+    updatedAt: row ? row.updatedAt.toISOString() : null,
+    updatedBy: editor ? `${editor.firstName} ${editor.lastName}`.trim() : null,
+  };
+}
+
+/** The page's switches for a stored policy. A locked switch keeps what's stored in `on` (the page shows it off), so saving the page leaves it as it was. */
+export function accessSwitches(policy: Policy): Pick<AgentAccessView, 'capabilities' | 'alerts'> {
+  return {
     capabilities: CAPABILITIES.map((cap) => ({
       key: cap.key,
       label: cap.label,
@@ -193,8 +211,6 @@ export async function accessView(actor: Actor, propertyId: string): Promise<Agen
       description: NOTICE_INFO[kind].description,
       cells: Object.fromEntries(ALERT_ROLES.map((role) => [role, alertCell(kind, role, policy)])) as Record<AlertRole, AccessCell>,
     })),
-    updatedAt: row ? row.updatedAt.toISOString() : null,
-    updatedBy: editor ? `${editor.firstName} ${editor.lastName}`.trim() : null,
   };
 }
 
@@ -204,10 +220,16 @@ export function policyFromUpdate(update: Pick<AgentAccessUpdate, 'capabilities' 
   for (const role of POLICY_ROLES) {
     const grant = new Set<Permission>();
     const revoke = new Set<Permission>();
+    const byDefault = (cap: Capability) => cap.perms.every((p) => roleCan(role, p));
+    // A switch whose needed capability ends up off counts as off: nothing is granted for it, and a role that has it by default loses it.
+    const wants = (cap: Capability): boolean => {
+      const need = neededBy(cap);
+      return (update.capabilities[role]?.[cap.key] ?? byDefault(cap)) && (!need || wants(need));
+    };
     for (const cap of CAPABILITIES) {
-      const want = update.capabilities[role]?.[cap.key];
+      const want = wants(cap);
       // At its default, a switch stores nothing — including one the role half has by default (shown off, nothing taken away).
-      if (want === undefined || want === cap.perms.every((p) => roleCan(role, p))) continue;
+      if (want === byDefault(cap)) continue;
       for (const p of cap.perms) {
         if (want && !roleCan(role, p) && GRANTABLE.has(p)) grant.add(p);
         if (!want && roleCan(role, p)) revoke.add(p);

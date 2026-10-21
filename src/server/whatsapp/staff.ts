@@ -18,6 +18,7 @@ import type { AgentBlock, AgentContextState } from '@/lib/agent/blocks';
 import { isStaffRole } from '@/lib/routes';
 import { actorForLinkedChannel, scopeProperties, type Actor } from '../authz';
 import { confirmPlan, runAgent } from '../agent/engine';
+import { verifyPlan } from '../agent/plan';
 import { agentActor, canUseWhatsApp, loadPolicy } from '../agent/policy';
 import { watchSoon } from '../agent/watch';
 import { sendAccountEmail } from '../email';
@@ -32,6 +33,7 @@ import { auditLink, linkByCode, maskNumber, parseLinkCommand, unlink } from './l
 export type ChannelCommand =
   | { kind: 'yes' }
   | { kind: 'no' }
+  | { kind: 'ack' }
   | { kind: 'pick'; n: number }
   | { kind: 'hotels' }
   | { kind: 'switch'; name: string }
@@ -40,15 +42,28 @@ export type ChannelCommand =
   | { kind: 'details' }
   | { kind: 'help' };
 
+const EMOJI = /[\p{Extended_Pictographic}\p{Emoji_Modifier}\u200d\ufe0f]/gu;
+const YES = /^(?:(?:ok(?:ay)?|sure|please) )?(?:yes|yeah|yep|yup|y|confirm(?:ed| it)?|go ahead|do it|go for it)(?: (?:yes|please|go ahead|do it|confirm|thanks|thank you))*$/;
+const NO = /^(?:no|n|nope|nah|cancel(?: it| that)?|don[’']?t)(?: (?:thanks|thank you|please|cancel(?: it| that)?|don[’']?t))*$/;
+/** Thanks and OKs (like NOT_A_COMMAND in agent/skills.ts): not a YES, and nothing for the agent to do. */
+const ACK_WORD = '(?:ok(?:ay)?|k+|sure|thanks?|thank you|thx|ty|great|perfect|cool|nice|good|got it|noted|alright|all right|awesome|lovely|fine|understood|cheers|sounds good|will do|(?:much )?appreciated|(?:so|very) much)';
+const ACK = new RegExp(`^${ACK_WORD}(?: ${ACK_WORD})*$`);
+
 /** Replies the chat handles itself; everything else goes to the agent. */
 export function parseChannelCommand(text: string): ChannelCommand | null {
   const t = text.trim().replace(/[.!\s]+$/, '');
-  if (/^(yes|y|yep|yeah|confirm|go ahead|do it)$/i.test(t)) return { kind: 'yes' };
-  if (/^(no|n|nope|cancel|don[’']?t)$/i.test(t)) return { kind: 'no' };
+  // "Yes, go ahead 👍" → "yes go ahead"; a message of emoji only is left empty.
+  const plain = t.toLowerCase().replace(EMOJI, ' ').replace(/[,.!\s]+/g, ' ').trim();
+  if (YES.test(plain)) return { kind: 'yes' };
+  if (NO.test(plain)) return { kind: 'no' };
+  if (ACK.test(plain) || (!plain && !!t)) return { kind: 'ack' };
   if (/^[1-9]$/.test(t)) return { kind: 'pick', n: Number(t) };
   if (/^(hotels|my hotels|which hotel|switch hotels?)\??$/i.test(t)) return { kind: 'hotels' };
   const sw = /^switch to\s+(.{2,80})$/i.exec(t);
-  if (sw) return { kind: 'switch', name: sw[1].trim() };
+  if (sw) {
+    const name = sw[1].replace(/[?.!\s]+$/, '');
+    return name ? { kind: 'switch', name } : { kind: 'hotels' };
+  }
   if (/^unlink$/i.test(t)) return { kind: 'unlink' };
   const alerts = /^(?:alerts|notifications)\s+(on|off)$/i.exec(t) ?? /^(mute|unmute)(?: alerts)?$/i.exec(t);
   if (alerts) return { kind: 'alerts', on: /^(on|unmute)$/i.test(alerts[1]) };
@@ -59,6 +74,9 @@ export function parseChannelCommand(text: string): ChannelCommand | null {
 }
 
 const MAX_RECENT = 12;
+/** HOTELS numbers this many, so each is a single digit. */
+const MAX_LISTED = 9;
+const YES_OR_NO = 'Reply *YES* to go ahead or *NO* to cancel.';
 
 type Link = NonNullable<Awaited<ReturnType<typeof loadLink>>>;
 type Hotel = { id: string; name: string; currency: string };
@@ -106,7 +124,7 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
       return;
     }
     await prisma.staffWhatsAppLink.update({ where: { userId: out.userId }, data: { lastInboundAt: new Date() } });
-    const linked = await actorForLinkedChannel(out.userId, out.sessionVersion);
+    const linked = await actorForLinkedChannel(out.userId, out.sessionVersion, out.authMethod);
     if (linked) {
       await auditLink(linked, null, 'WHATSAPP_LINKED', `Linked WhatsApp ${maskNumber(msg.from)}`);
       // Like a new sign-in alert: if someone else got hold of the code, the owner of the account finds out.
@@ -123,7 +141,7 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
     await reply(`Hi! This number is the hotel team’s assistant. To use it, link your phone at ${securityPage}.`);
     return;
   }
-  const person = await actorForLinkedChannel(link.userId, link.sessionVersion);
+  const person = await actorForLinkedChannel(link.userId, link.sessionVersion, link.authMethod);
   if (!person) {
     // Account turned off, or signed out everywhere since the link was made.
     await prisma.staffWhatsAppLink.update({ where: { userId: link.userId }, data: { number: null, linkedAt: null, pendingPlan: null, choices: [] } });
@@ -136,21 +154,37 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
     await reply(blocked);
     return;
   }
+  if (msg.type === 'reaction') {
+    // Not an answer: a 👍 on a plan never confirms it. Taking a reaction back (no emoji), and any other reaction, gets no reply.
+    if (msg.emoji && planWaiting(link)) await reply(YES_OR_NO);
+    return;
+  }
   await markReadAndTyping(cfg, msg.id);
+
+  let message = (msg.text ?? '').slice(0, 600);
+  const cmd = msg.text ? parseChannelCommand(message) : null;
+  // An alert that went out as a template ("Reply to see the details"): their next message gets the whole alert first.
+  if (link.alertUnseen && link.lastAlert && !(cmd && ['yes', 'no', 'unlink', 'alerts'].includes(cmd.kind))) {
+    const { count } = await prisma.staffWhatsAppLink.updateMany({ where: { userId: link.userId, alertUnseen: true }, data: { alertUnseen: false } });
+    if (count) {
+      await reply(link.lastAlert);
+      // Asking to see it, "ok", or a number from a list they hadn't read yet: the alert is the whole answer.
+      if (cmd?.kind === 'pick' || cmd?.kind === 'ack' || cmd?.kind === 'details' || msg.type === 'button' || /^\d+$/.test(message.trim())) return;
+    }
+  }
   if (!msg.text) {
     await reply('I can only read text messages for now.');
     return;
   }
 
-  const hotels = await prisma.property.findMany({ where: scopeProperties(person), orderBy: { createdAt: 'asc' }, select: { id: true, name: true, currency: true }, take: 50 });
-  let hotel = hotels.find((h) => h.id === link.propertyId) ?? hotels[0];
+  // Only the first few for HOTELS; every other hotel is looked up by id or name within the person's hotels.
+  const hotels = await prisma.property.findMany({ where: scopeProperties(person), orderBy: { createdAt: 'asc' }, select: HOTEL_FIELDS, take: MAX_LISTED + 1 });
+  let hotel = (link.propertyId ? await hotelById(person, link.propertyId) : null) ?? hotels[0];
   if (!hotel) {
     await reply('No hotel is assigned to your account yet. Ask the owner to add you to one.');
     return;
   }
 
-  let message = msg.text.slice(0, 600);
-  const cmd = parseChannelCommand(message);
   if (cmd?.kind === 'pick') {
     const choice = link.choices[cmd.n - 1];
     if (!choice) {
@@ -159,14 +193,14 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
     }
     const picked = readChoice(choice);
     if ('hotel' in picked) {
-      const h = hotels.find((x) => x.id === picked.hotel);
+      const h = await hotelById(person, picked.hotel);
       if (h) return switchHotel(person, link, h, reply);
       await reply('You no longer have access to that hotel. Send *HOTELS* to see yours.');
       return;
     }
     if (picked.at && picked.at !== hotel.id) {
       // An alert about another of their hotels: act there.
-      const h = hotels.find((x) => x.id === picked.at);
+      const h = await hotelById(person, picked.at);
       if (!h) {
         await reply('You no longer have access to that hotel. Send *HOTELS* to see yours.');
         return;
@@ -178,7 +212,7 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
   }
   switch (cmd?.kind) {
     case 'no':
-      await prisma.staffWhatsAppLink.update({ where: { userId: link.userId }, data: { pendingPlan: null, choices: [] } });
+      await prisma.staffWhatsAppLink.update({ where: { userId: link.userId }, data: { pendingPlan: null, choices: unseenAlertChoices(link) } });
       await reply(link.pendingPlan ? 'Cancelled — nothing was changed.' : 'OK. What would you like to do?');
       return;
     case 'unlink':
@@ -200,14 +234,22 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
         await reply(`You have one hotel: *${hotel.name}*.`);
         return;
       }
-      const shown = hotels.slice(0, 9);
+      const shown = hotels.slice(0, MAX_LISTED);
+      const others = hotels.length > MAX_LISTED ? (await prisma.property.count({ where: scopeProperties(person) })) - MAX_LISTED : 0;
       await prisma.staffWhatsAppLink.update({ where: { userId: link.userId }, data: { choices: shown.map((h) => `${HOTEL_CHOICE}${h.id}`), pendingPlan: null } });
-      await reply([`You’re working on *${hotel.name}*. Reply with a number to switch:`, ...shown.map((h, i) => `${i + 1}. ${h.name}`), hotels.length > 9 ? 'Or send “switch to” and the hotel’s name.' : ''].filter(Boolean).join('\n'));
+      await reply(
+        [
+          `You’re working on *${hotel.name}*. Reply with a number to switch:`,
+          ...shown.map((h, i) => `${i + 1}. ${h.name}`),
+          others ? `…and ${others} more. For those, send “switch to” and the hotel’s name.` : '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+      );
       return;
     }
     case 'switch': {
-      const q = cmd.name.toLowerCase();
-      const matches = hotels.filter((h) => h.name.toLowerCase().includes(q));
+      const matches = await hotelsNamed(person, cmd.name);
       if (matches.length !== 1) {
         await reply(matches.length ? `More than one hotel matches “${cmd.name}”: ${matches.map((h) => h.name).join(', ')}.` : `None of your hotels is called “${cmd.name}”. Send *HOTELS* to see them.`);
         return;
@@ -225,6 +267,11 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
     return;
   }
   if (cmd?.kind === 'yes') return confirmPending(person, link, hotel, reply);
+  if (cmd?.kind === 'ack') {
+    // "ok", "thanks", 👍: never a YES, and nothing for the agent (it would only say it didn't understand, or ask the PMS).
+    await reply(planWaiting(link) ? YES_OR_NO : '👍 Message me whenever you need something.');
+    return;
+  }
 
   const help = cmd?.kind === 'help';
   const blocks: AgentBlock[] = [];
@@ -234,7 +281,7 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
     else if (event.type === 'context') memory = event.context;
     else if (event.type === 'error') blocks.push({ type: 'error', text: event.message });
   }
-  const rendered = renderBlocks(blocks, { currency: hotel.currency, siteUrl: site });
+  const rendered = renderBlocks(blocks, { currency: hotel.currency, siteUrl: site, offered: unseenAlertChoices(link) });
   const tasks = await bridgeResults(blocks);
   const header = hotels.length > 1 ? `_${hotel.name}_\n\n` : '';
   const footer = help
@@ -246,12 +293,45 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
       propertyId: hotel.id,
       memory: memory as Prisma.InputJsonValue,
       recent: [...link.recent, message].slice(-MAX_RECENT),
-      // A new message replaces any plan still waiting: YES only ever confirms the latest one shown.
-      pendingPlan: rendered.planToken,
+      // A new plan replaces any plan still waiting: YES only ever confirms the latest one shown. A question asked
+      // meanwhile keeps it (it expires after 10 minutes anyway), unless the chat moved to another hotel.
+      ...(rendered.planToken || hotel.id !== link.propertyId ? { pendingPlan: rendered.planToken } : {}),
       choices: rendered.choices,
     },
   });
   await reply(`${header}${rendered.text}${tasks}${footer}`);
+}
+
+/** A plan is waiting for YES: one was shown, and it hasn't expired. */
+function planWaiting(link: Link): boolean {
+  if (!link.pendingPlan) return false;
+  try {
+    verifyPlan(link.pendingPlan, link.userId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The numbered replies of an alert the person is only now seeing (or hasn't yet): kept, and new numbers follow on. */
+const unseenAlertChoices = (link: Link) => (link.alertUnseen ? link.choices : []);
+
+const HOTEL_FIELDS = { id: true, name: true, currency: true } as const;
+
+/** One of the person's hotels, or null when it isn't (or is no longer) one of theirs. */
+const hotelById = (person: Actor, id: string): Promise<Hotel | null> =>
+  prisma.property.findFirst({ where: { AND: [scopeProperties(person), { id }] }, select: HOTEL_FIELDS });
+
+/** The person's hotels with that name (any case), or failing that, every one whose name contains it. */
+async function hotelsNamed(person: Actor, name: string): Promise<Hotel[]> {
+  const q = name.trim().toLowerCase();
+  const find = (filter: { equals: string } | { contains: string }) =>
+    prisma.property.findMany({ where: { AND: [scopeProperties(person), { name: { ...filter, mode: 'insensitive' } }] }, orderBy: { createdAt: 'asc' }, select: HOTEL_FIELDS, take: 10 });
+  const same = (h: Hotel) => h.name.trim().toLowerCase() === q;
+  const exact = (await find({ equals: name.trim() })).filter(same);
+  if (exact.length) return exact;
+  const near = (await find({ contains: name.trim() })).filter((h) => h.name.toLowerCase().includes(q));
+  return near.some(same) ? near.filter(same) : near;
 }
 
 /** Why this account can't use the console's agent right now (and where to fix it), or null. The console's requireStaff rules. */
@@ -268,10 +348,11 @@ async function confirmPending(actor: Actor, link: Link, hotel: Hotel, reply: Rep
     return;
   }
   // Cleared first, so a second YES can't run it again (confirmPlan also refuses a plan that already ran).
-  const { count } = await prisma.staffWhatsAppLink.updateMany({ where: { userId: link.userId, pendingPlan: link.pendingPlan }, data: { pendingPlan: null, choices: [] } });
+  const offered = unseenAlertChoices(link);
+  const { count } = await prisma.staffWhatsAppLink.updateMany({ where: { userId: link.userId, pendingPlan: link.pendingPlan }, data: { pendingPlan: null, choices: offered } });
   if (!count) return;
   const result = await confirmPlan(actor, link.pendingPlan, { channel: 'whatsapp' });
-  const rendered = renderBlocks(result.blocks, { currency: hotel.currency, siteUrl: publicSiteUrl() });
+  const rendered = renderBlocks(result.blocks, { currency: hotel.currency, siteUrl: publicSiteUrl(), offered });
   const memory = { ...((link.memory ?? {}) as AgentContextState), ...result.context };
   await prisma.staffWhatsAppLink.update({ where: { userId: link.userId }, data: { memory: memory as Prisma.InputJsonValue, choices: rendered.choices } });
   await reply(`${rendered.text}${await bridgeResults(result.blocks)}`);

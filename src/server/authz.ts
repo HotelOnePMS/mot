@@ -33,6 +33,8 @@ export interface Actor {
   emailVerified: boolean;
   /** Their organization requires two-step sign-in and they haven't set it up (password sessions only). */
   mfaSetupRequired: boolean;
+  /** How this session signed in. */
+  authMethod?: 'password' | 'sso' | 'google';
   /**
    * The hotel's agent permissions for this person's role (agent/policy.ts):
    * set only on the actor an agent run uses, whose propertyIds is narrowed
@@ -167,12 +169,14 @@ export async function getActor(): Promise<Actor | null> {
  * The actor behind a channel that was linked while signed in (the staff agent
  * on WhatsApp), or null when the account is inactive or was signed out
  * everywhere since (`sessionVersion` changed). Roles and hotels are read
- * fresh, so the channel follows every change made in the console.
+ * fresh, so the channel follows every change made in the console. It keeps
+ * the sign-in method of the session that linked it, so the organization's
+ * two-step sign-in rule applies to it as it does to that session.
  */
-export async function actorForLinkedChannel(userId: string, sessionVersion: number): Promise<Actor | null> {
+export async function actorForLinkedChannel(userId: string, sessionVersion: number, authMethod: string): Promise<Actor | null> {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: actorSelect });
   if (!user || !user.isActive || user.sessionVersion !== sessionVersion) return null;
-  return actorFromUser(user, user.ssoSubject ? 'sso' : 'password');
+  return actorFromUser(user, authMethod === 'sso' || authMethod === 'google' ? authMethod : 'password');
 }
 
 export interface ActorSource {
@@ -207,6 +211,7 @@ export function actorFromUser(user: ActorSource, authMethod: 'password' | 'sso' 
     mfaEnabled: user.mfaEnabled,
     emailVerified: !!user.emailVerifiedAt,
     mfaSetupRequired: isStaffRole(user.role) && !user.mfaEnabled && authMethod !== 'sso' && user.organizations.some((m) => m.organization.requireMfa),
+    authMethod,
   };
 }
 

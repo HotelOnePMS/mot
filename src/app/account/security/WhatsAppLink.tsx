@@ -58,6 +58,12 @@ export function WhatsAppLink({ status, refresh }: { status: WhatsAppStatus; refr
     }
   }
 
+  async function cancelCode() {
+    setPending(null);
+    // The code stops working on the server too, not just on this page.
+    await api('/api/account/whatsapp?code=1', { method: 'DELETE' }).catch((e: Error) => toast.error(e.message));
+  }
+
   async function unlinkPhone() {
     setBusy('unlink');
     try {
@@ -111,7 +117,7 @@ export function WhatsAppLink({ status, refresh }: { status: WhatsAppStatus; refr
                 </a>
               </Button>
             )}
-            <Button size="sm" variant="outline" onClick={() => setPending(null)}>
+            <Button size="sm" variant="outline" onClick={cancelCode}>
               Cancel
             </Button>
           </div>

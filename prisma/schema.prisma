@@ -340,33 +340,41 @@ model ExecutedPlan {
 /// A staff member's WhatsApp number for the staff agent, and that chat's state.
 /// The number is set only once the person sent their link code from it.
 model StaffWhatsAppLink {
-  userId         String    @id
+  userId             String    @id
   /// WhatsApp ID as Meta sends it: country code and number, digits only.
-  number         String?   @unique
-  linkedAt       DateTime?
+  number             String?   @unique
+  linkedAt           DateTime?
   /// SHA-256 of a pending link code (shown in the console, sent from the phone).
-  codeHash       String?   @unique
-  codeExpiresAt  DateTime?
+  codeHash           String?   @unique
+  codeExpiresAt      DateTime?
+  /// The sessionVersion the pending code was issued under: a code from before "sign out everywhere" doesn't link.
+  codeSessionVersion Int?
+  /// How the console session that asked for the pending code signed in (password, sso, google).
+  codeAuthMethod     String?
   /// The person's sessionVersion when linked: "sign out everywhere" also ends the WhatsApp link.
-  sessionVersion Int       @default(0)
+  sessionVersion     Int       @default(0)
+  /// How the console session that linked the phone signed in; the chat follows the same sign-in rules (two-step sign-in).
+  authMethod         String    @default("password")
   /// The hotel the chat works on.
-  propertyId     String?
+  propertyId         String?
   /// Agent conversation memory ("them", "that room") and the last messages ("save that as a shortcut").
-  memory         Json?
-  recent         String[]  @default([])
+  memory             Json?
+  recent             String[]  @default([])
   /// A signed plan waiting for the person to reply YES.
-  pendingPlan    String?
+  pendingPlan        String?
   /// Commands offered as numbered replies in the last message.
-  choices        String[]  @default([])
+  choices            String[]  @default([])
   /// The person's last message: WhatsApp allows free-form messages for 24 hours after it, templates after that.
-  lastInboundAt  DateTime?
+  lastInboundAt      DateTime?
   /// The person turned the always-on agent's alerts off ("ALERTS OFF").
-  alertsOff      Boolean   @default(false)
+  alertsOff          Boolean   @default(false)
   /// The last alert sent, so "details" can show it again after a template message (outside the 24-hour window).
-  lastAlert      String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastAlert          String?
+  /// The last alert went out as a template, so the person hasn't seen its text yet: their next message gets it first.
+  alertUnseen        Boolean   @default(false)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("staff_whatsapp_links")
 }

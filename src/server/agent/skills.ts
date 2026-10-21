@@ -673,13 +673,13 @@ export async function saveShortcut(input: { actor: Actor; propertyId: string; na
 
 export type ShortcutExpansion = { ok: true; skill: MacroSkill; steps: string[]; args: Record<string, string> } | { ok: false; blocks: AgentBlock[] };
 
-/** Fills a shortcut's inputs from the words after its name; asks for missing ones. Counts the use. */
-export async function expandShortcut(propertyId: string, skill: MacroSkill, rest: string): Promise<ShortcutExpansion> {
+/** Fills a shortcut's inputs from the words after its name; asks for missing ones (offering guests only to people who may see them). Counts the use. */
+export async function expandShortcut(actor: Actor, propertyId: string, skill: MacroSkill, rest: string): Promise<ShortcutExpansion> {
   const args = parseShortcutArgs(rest, skill.parameters);
   const missing = (skill.parameters?.required ?? []).filter((p) => !args[p]);
   const name = skill.title.charAt(0).toLowerCase() + skill.title.slice(1);
   if (missing.length) {
-    if (missing.length === 1 && /^guest\d*$/.test(missing[0]) && Object.keys(skill.parameters?.properties ?? {}).length === 1) {
+    if (missing.length === 1 && /^guest\d*$/.test(missing[0]) && Object.keys(skill.parameters?.properties ?? {}).length === 1 && can(actor, 'frontdesk.view')) {
       const options = await guestOptions(propertyId, name);
       if (options.length) return { ok: false, blocks: [{ type: 'clarify', question: `Who should I run “${skill.title}” for?`, options }] };
     }

@@ -7,7 +7,7 @@ import { prisma } from '@/lib/prisma';
 import type { AgentBlock, AgentContextState } from '@/lib/agent/blocks';
 import type { ISODate } from '@/lib/dto';
 import { BOOKING_STATUS } from '@/lib/status';
-import type { Actor } from '../authz';
+import { can, type Actor } from '../authz';
 import { formatDay, toISODate } from '../dates';
 import { bookingInclude, personName, type BookingWithRelations } from '../services/mappers';
 import type { GuestRef } from './nlu';
@@ -103,6 +103,10 @@ const PURPOSE_WORD: Record<BookingPurpose, string> = {
 };
 
 export async function resolveBooking(ctx: ResolveCtx, ref: GuestRef, purpose: BookingPurpose): Promise<Resolved<BookingWithRelations>> {
+  // Matches and "did you mean" lists show guests' names, codes, rooms and dates: only for people who may look up reservations.
+  if (!can(ctx.actor, 'booking.view')) {
+    return { ok: false, block: { type: 'error', text: 'Your role can’t look up reservations. The owner can change this under Agent access.' } };
+  }
   const base = { propertyId: ctx.propertyId };
 
   if (ref.pronoun && ctx.memory.lastBookingId) {

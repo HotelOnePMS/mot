@@ -38,12 +38,25 @@ describe('inbound messages', () => {
       { id: 'wamid.4', from: '15551230000', type: 'image' },
     ]);
     expect(inboundMessages(p, 'PNID')).toEqual([
-      { id: 'wamid.1', from: '15551230000', text: 'who’s arriving today?' },
-      { id: 'wamid.2', from: '15551230000', text: 'Show me' },
-      { id: 'wamid.3', from: '15551230000', text: 'Option' },
-      { id: 'wamid.4', from: '15551230000', text: null },
+      { id: 'wamid.1', from: '15551230000', text: 'who’s arriving today?', type: 'text' },
+      { id: 'wamid.2', from: '15551230000', text: 'Show me', type: 'button' },
+      { id: 'wamid.3', from: '15551230000', text: 'Option', type: 'interactive' },
+      { id: 'wamid.4', from: '15551230000', text: null, type: 'image' },
     ]);
     expect(inboundMessages(p, 'ANOTHER_NUMBER')).toEqual([]);
+  });
+
+  it('reads reactions, and a reaction taken back, as reactions with no text', () => {
+    const p = payload([
+      { id: 'wamid.5', from: '15551230000', type: 'reaction', reaction: { message_id: 'wamid.plan', emoji: '👍' } },
+      { id: 'wamid.6', from: '15551230000', type: 'reaction', reaction: { message_id: 'wamid.plan', emoji: '' } },
+      { id: 'wamid.7', from: '15551230000', type: 'reaction', reaction: { message_id: 'wamid.plan' } },
+    ]);
+    expect(inboundMessages(p, 'PNID')).toStrictEqual([
+      { id: 'wamid.5', from: '15551230000', text: null, type: 'reaction', emoji: '👍' },
+      { id: 'wamid.6', from: '15551230000', text: null, type: 'reaction', emoji: '' },
+      { id: 'wamid.7', from: '15551230000', text: null, type: 'reaction', emoji: '' },
+    ]);
   });
 
   it('ignores status updates and other objects', () => {
@@ -99,8 +112,28 @@ describe('chat commands', () => {
     expect(parseChannelCommand('UNLINK')).toEqual({ kind: 'unlink' });
   });
 
+  it('reads the usual ways of saying yes and no', () => {
+    for (const t of ['yes please', 'Yes, go ahead', 'yes do it', 'yes!', 'Yep', 'confirm', 'confirm it', 'go ahead please', 'ok, go ahead', 'Yes 👍']) expect(parseChannelCommand(t), t).toEqual({ kind: 'yes' });
+    for (const t of ['no thanks', 'No, cancel', 'nope', 'cancel that', 'don’t']) expect(parseChannelCommand(t), t).toEqual({ kind: 'no' });
+  });
+
+  it('takes thanks and OKs as acknowledgements, never as YES', () => {
+    for (const t of ['ok', 'OK.', 'okay', 'sure', 'thanks', 'Thank you!', 'thanks 🙏', 'great, thanks', 'perfect', 'cool', 'got it', 'ok thank you so much', '👍', '🙏🏽', '👌👌']) {
+      expect(parseChannelCommand(t), t).toEqual({ kind: 'ack' });
+    }
+  });
+
+  it('reads the hotel’s name without trailing punctuation', () => {
+    expect(parseChannelCommand('switch to Harbor Inn?')).toEqual({ kind: 'switch', name: 'Harbor Inn' });
+    expect(parseChannelCommand('Switch to harbor inn downtown!')).toEqual({ kind: 'switch', name: 'harbor inn downtown' });
+    expect(parseChannelCommand('switch to ??')).toEqual({ kind: 'hotels' });
+  });
+
   it('leaves everything else to the agent', () => {
     expect(parseChannelCommand('yes check in Smith')).toBeNull();
+    expect(parseChannelCommand('ok check in Smith')).toBeNull();
+    expect(parseChannelCommand('thanks, who’s arriving today?')).toBeNull();
+    expect(parseChannelCommand('good morning')).toBeNull();
     expect(parseChannelCommand('10')).toBeNull();
     expect(parseChannelCommand('who’s arriving today?')).toBeNull();
   });
@@ -138,6 +171,13 @@ describe('agent blocks as WhatsApp text', () => {
     expect(r.text).toContain('1. Jordan Smith');
     expect(r.text).toContain('3. brief me');
     expect(r.planToken).toBeNull();
+  });
+
+  it('numbers its replies after ones already offered above it', () => {
+    const r = renderBlocks([{ type: 'suggestions', items: ['brief me', 'who’s arriving today?'] }], { ...opts, offered: [choiceAt('p1', 'assign rooms')] });
+    expect(r.text).toContain('2. brief me');
+    expect(r.text).toContain('3. who’s arriving today?');
+    expect(r.choices).toEqual([choiceAt('p1', 'assign rooms'), 'brief me', 'who’s arriving today?']);
   });
 
   it('makes console links absolute', () => {

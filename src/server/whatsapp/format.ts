@@ -15,11 +15,13 @@ export interface RenderOptions {
   currency: string;
   /** This deployment's address, so console links can be absolute. */
   siteUrl: string | null;
+  /** Numbered replies already offered just above (an alert shown first): this message's numbers follow on from them. */
+  offered?: string[];
 }
 
 export interface Rendered {
   text: string;
-  /** Commands for numbered replies, in order ("1" is the first). */
+  /** Commands for numbered replies, in order ("1" is the first), including any already offered. */
   choices: string[];
   /** A plan is waiting for YES. */
   planToken: string | null;
@@ -73,7 +75,7 @@ function bookingLine(b: BookingSummary): string {
 
 export function renderBlocks(blocks: AgentBlock[], opts: RenderOptions): Rendered {
   const out: string[] = [];
-  const choices: string[] = [];
+  const choices: string[] = [...(opts.offered ?? [])];
   let planToken: string | null = null;
 
   /** Adds a numbered reply and returns its number, or null when there are already nine. */

@@ -6,11 +6,11 @@ Owners, managers and front desk can use the hotel agent from WhatsApp: ask about
 - **Always on.** The agent keeps an eye on each hotel and messages the right people when there is something to act on: overdue check-outs, late or unconfirmed arrivals, arrivals without a room, room types short of clean rooms, dirty rooms nobody is assigned to, guest messages and booking requests, card disputes, PMS work that failed or needs a person, and OTA connections that stopped syncing. It also sends a morning brief at 8am hotel time. Each alert lists its fix as a numbered reply: "1" runs it through the agent, so a change still needs a YES. Alerts are quiet from 10pm to 7am hotel time (card disputes come through anyway), and each problem is sent once.
 - **Owner-set access.** On **Setup → Agent access**, the owner chooses, per hotel, what managers, front desk and housekeeping may do through the agent (in the console and on WhatsApp), who may use WhatsApp, and which alerts each role gets. Owners always have everything. See [ROLES.md](ROLES.md#agent-access).
 
-Other chat commands: a number picks an option, **HOTELS** or **switch to Harbor Inn** changes hotel, **ALERTS OFF** / **ALERTS ON**, **DETAILS** repeats the last alert, **HELP**, and **UNLINK** disconnects the phone.
+Other chat commands: a number picks an option, **HOTELS** or **switch to Harbor Inn** changes hotel (an exact name wins over a longer one; HOTELS numbers the first nine, and "switch to" finds any of them), **ALERTS OFF** / **ALERTS ON**, **DETAILS** repeats the last alert, **HELP**, and **UNLINK** disconnects the phone. Only a yes ("YES", "yes please", "go ahead") confirms a change. "OK", "thanks" and reactions such as 👍 never do: with a plan waiting they get a reminder to reply YES or NO, and a question asked in between leaves the plan waiting until it expires. When an alert went out as a template (more than 24 hours after the person last wrote), their next message gets the whole alert first. If that message is a number, "ok" or the template's **Show me** button, they get only the alert, so nothing runs before they have read it.
 
 ## How a phone is linked
 
-1. In the console, **Account → Security → WhatsApp → Link my WhatsApp** shows a one-time code (valid for 10 minutes, single use).
+1. In the console, **Account → Security → WhatsApp → Link my WhatsApp** shows a one-time code (valid for 10 minutes, single use). **Cancel** stops the code at once, and so does signing out everywhere before it is used.
 2. From the phone, send `LINK ABCD-EFGH` to the staff number. The page shows the phone as linked, and the account gets an email about it.
 
 The number is proven by the phone that sent the code (Meta signs every webhook), and the account by the signed-in console. Nobody types a number that could be wrong or belong to someone else. Linking is per person. Anything that signs the person out everywhere also ends the link: "sign out everywhere", a new password, two-step sign-in turned on or off, a role or email change, or deactivation. They link again from the same page. The person's hotels and the hotel's agent access are read again on every message, so changes there apply at once.
@@ -55,7 +55,7 @@ Authorization: Bearer $CRON_SECRET
 - **Vercel Pro:** add `{ "path": "/api/cron/agent-watch", "schedule": "*/15 * * * *" }` to `crons` in `vercel.json`. Hobby plans only allow daily crons, and a more frequent one fails the deploy.
 - **Any plan:** a free scheduler such as cron-job.org with that URL and header, or a scheduled GitHub Actions workflow that runs `curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://hotelone.site/api/cron/agent-watch`. On a private repository that uses Actions minutes.
 
-Running it more often never sends anything twice: each alert is claimed once per hotel (`agent_notices`) before it is sent.
+Running it more often never sends anything twice: each alert is recorded once per hotel (`agent_notices`) and claimed for each person just before it is sent. A send that fails is tried again in the next round. Each person gets at most one message per round, covering all their hotels, with up to six alerts (urgent first); the rest follow in the next round.
 
 ## Where the code is
 

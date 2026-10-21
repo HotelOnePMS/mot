@@ -62,8 +62,12 @@ export interface InboundMessage {
   id: string;
   /** Sender's WhatsApp ID: country code and number, digits only. */
   from: string;
-  /** What they wrote or tapped; null for media, locations and the like. */
+  /** What they wrote or tapped; null for media, locations, reactions and the like. */
   text: string | null;
+  /** Meta's message type: text, button (a template's quick reply), interactive, reaction, image… */
+  type?: string;
+  /** A reaction's emoji; empty when the person took their reaction back. */
+  emoji?: string;
 }
 
 type WebhookMessage = {
@@ -73,6 +77,7 @@ type WebhookMessage = {
   text?: { body?: string };
   button?: { text?: string };
   interactive?: { button_reply?: { title?: string }; list_reply?: { title?: string } };
+  reaction?: { message_id?: string; emoji?: string };
 };
 type WebhookPayload = {
   object?: string;
@@ -95,7 +100,13 @@ export function inboundMessages(payload: unknown, phoneNumberId: string): Inboun
       for (const m of value.messages ?? []) {
         if (!m?.id || !m.from || !/^\d{6,15}$/.test(m.from)) continue;
         const text = m.text?.body ?? m.button?.text ?? m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title ?? null;
-        out.push({ id: m.id, from: m.from, text: text?.trim() ? text.trim() : null });
+        out.push({
+          id: m.id,
+          from: m.from,
+          text: text?.trim() ? text.trim() : null,
+          ...(m.type ? { type: m.type } : {}),
+          ...(m.type === 'reaction' ? { emoji: m.reaction?.emoji ?? '' } : {}),
+        });
       }
     }
   }

@@ -188,7 +188,7 @@ export async function* runAgent(request: AgentRunInput): AsyncGenerator<AgentEve
   }
   if (hit) {
     yield { type: 'status', text: `Running “${hit.skill.title}”…` };
-    const exp = await expandShortcut(propertyId, hit.skill, hit.rest);
+    const exp = await expandShortcut(actor, propertyId, hit.skill, hit.rest);
     if (!exp.ok) {
       for (const block of exp.blocks) yield { type: 'block', block };
       yield { type: 'context', context: ctx.memory };

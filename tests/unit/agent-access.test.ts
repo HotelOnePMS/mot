@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { can, roleCan, type Actor } from '@/server/authz';
-import { alertsFor, CAPABILITIES, DEFAULT_ALERTS, parsePolicy, policyFromUpdate } from '@/server/agent/policy';
+import { accessSwitches, alertsFor, CAPABILITIES, DEFAULT_ALERTS, parsePolicy, policyFromUpdate } from '@/server/agent/policy';
 import { alertMessage, isQuietHour, type Notice } from '@/server/agent/watch';
-import { POLICY_ROLES, type AgentAccessUpdate } from '@/lib/agent/access';
+import { draftFrom, POLICY_ROLES, type AgentAccessUpdate, type PolicyRole } from '@/lib/agent/access';
 
 /** Every switch at the role's default. */
 function defaults(): Pick<AgentAccessUpdate, 'capabilities' | 'alerts'> {
@@ -41,6 +41,47 @@ describe('agent access', () => {
       FRONT_DESK: { grant: ['analytics.view'], revoke: ['booking.checkin', 'booking.checkout'] },
       HOUSEKEEPER: { grant: ['agent.use', 'whatsapp.use'] },
     });
+  });
+
+  it('turns booking changes off with look-ups, and grants them only with look-ups', () => {
+    const u = defaults();
+    u.capabilities.MANAGER.agent = false;
+    u.capabilities.FRONT_DESK.lookup = false;
+    u.capabilities.HOUSEKEEPER.agent = true;
+    u.capabilities.HOUSEKEEPER.checkin = true;
+    u.capabilities.HOUSEKEEPER.notes = true;
+    u.capabilities.HOUSEKEEPER.whatsapp = true;
+    expect(policyFromUpdate(u)).toEqual({
+      // WhatsApp needs the agent.
+      MANAGER: { revoke: ['agent.use', 'whatsapp.use'] },
+      FRONT_DESK: { revoke: ['frontdesk.view', 'booking.view', 'booking.checkin', 'booking.checkout', 'booking.assignRoom', 'booking.note', 'booking.confirm', 'booking.cancel', 'booking.noShow'] },
+      HOUSEKEEPER: { grant: ['agent.use', 'whatsapp.use'] },
+    });
+    u.capabilities.HOUSEKEEPER.lookup = true;
+    expect(policyFromUpdate(u).HOUSEKEEPER).toEqual({ grant: ['agent.use', 'whatsapp.use', 'frontdesk.view', 'booking.view', 'booking.checkin', 'booking.checkout', 'booking.note'] });
+  });
+
+  it('locks a switch while what it needs is off, and keeps what is stored', () => {
+    const u = defaults();
+    u.capabilities.FRONT_DESK.lookup = false;
+    const view = accessSwitches(parsePolicy(policyFromUpdate(u)));
+    const cell = (key: string, role: PolicyRole) => view.capabilities.find((c) => c.key === key)!.cells[role];
+    expect(cell('checkin', 'FRONT_DESK')).toEqual({ on: false, byDefault: true, locked: 'Turn on “Look up guests and bookings” for front desk first.' });
+    expect(cell('reservations', 'HOUSEKEEPER')).toEqual({ on: false, byDefault: false, locked: 'Turn on “Look up guests and bookings” for housekeeping first.' });
+    expect(cell('whatsapp', 'HOUSEKEEPER').locked).toBe('Turn on “Use the agent” for housekeeping first.');
+    expect(cell('checkin', 'MANAGER').locked).toBeUndefined();
+    // The front desk alert can't reach front desk without look-ups, but stays on the list.
+    expect(view.alerts.find((a) => a.kind === 'frontdesk')!.cells.FRONT_DESK).toEqual({ on: true, byDefault: true, locked: 'Turn on “Look up guests and bookings” for front desk first.' });
+  });
+
+  it('saves locked switches as they were stored', () => {
+    const u = defaults();
+    u.capabilities.FRONT_DESK.lookup = false;
+    // What the page sends after turning look-ups back on (draftFrom builds its draft).
+    const draft = draftFrom(accessSwitches(parsePolicy(policyFromUpdate(u))));
+    expect(policyFromUpdate(draft)).toEqual(policyFromUpdate(u));
+    draft.capabilities.FRONT_DESK.lookup = true;
+    expect(alertsFor(parsePolicy(policyFromUpdate(draft)), 'FRONT_DESK')).toEqual(DEFAULT_ALERTS.FRONT_DESK);
   });
 
   it('stores alert lists only when they differ from the defaults', () => {
