@@ -1,13 +1,16 @@
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { prisma } from '@/lib/prisma';
 import { addDaysISO } from '@/server/dates';
+import { refreshEvidence } from '@/server/payments/disputes';
 import { recordCashPayment, recordExternalPayment } from '@/server/payments/desk';
-import { checkTransition, getBookingForStaff, transitionBooking } from '@/server/services/bookings';
-import { completeGuidedCheckIn, getCheckInContext, getCheckInRecord, previewRegistration, readGuestIdPhoto, type GuidedCheckInInput } from '@/server/services/checkin';
+import { checkTransition, createReservation, getBookingForStaff, transitionBooking } from '@/server/services/bookings';
+import { completeGuidedCheckIn, getCheckInContext, getCheckInRecord, previewRegistration, purgeExpiredGuestIds, readGuestIdPhoto, type GuidedCheckInInput } from '@/server/services/checkin';
 import { getFolio } from '@/server/services/folio';
 import { toBookingSummary } from '@/server/services/mappers';
 import { createDeskReservation } from '@/server/services/reservations';
-import { actorFor, makeHotel, makeUser } from './fixtures';
+import { actorFor, makeHotel, makeUser, uid } from './fixtures';
 
 // 1×1 PNG, and the start of a JPEG (only the first bytes are checked).
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
@@ -184,4 +187,176 @@ describe('check-out needs the balance at zero', () => {
     await transitionBooking(op, booking.id, 'CHECKED_IN', { roomId: h.rooms[0].id });
     expect((await transitionBooking(op, booking.id, 'CHECKED_OUT')).booking.status).toBe('CHECKED_OUT');
   });
+});
+
+describe('after review', () => {
+  it('a room type of a shared reservation can check out once the reservation is paid, even after another was cancelled', async () => {
+    const h = await makeHotel({ basePrice: 100 });
+    const suite = await prisma.roomType.create({ data: { propertyId: h.property.id, name: 'Suite', capacity: 4, basePrice: 300, totalRooms: 1, amenities: [] } });
+    await prisma.room.create({ data: { propertyId: h.property.id, roomTypeId: suite.id, roomNumber: '301', floor: '3', status: 'CLEAN' } });
+    const desk = await makeUser({ role: 'FRONT_DESK', propertyIds: [h.property.id] });
+    const op = { actor: await actorFor(desk.id), source: 'classic' as const };
+    const guest = await makeUser({ role: 'CUSTOMER' });
+    const rows = await createReservation({
+      userId: guest.id,
+      propertyId: h.property.id,
+      checkIn: h.today,
+      checkOut: addDaysISO(h.today, 2),
+      guests: 3,
+      lines: [
+        { roomTypeId: h.roomType.id, rooms: 1 },
+        { roomTypeId: suite.id, rooms: 1 },
+      ],
+      paymentStatus: 'PAY_AT_PROPERTY',
+    });
+    const queen = rows.find((r) => r.roomTypeId === h.roomType.id)!;
+    const other = rows.find((r) => r.roomTypeId === suite.id)!;
+    // The Suite is cancelled: the reservation now owes the Queen's total.
+    await prisma.booking.update({ where: { id: other.id }, data: { status: 'CANCELLED' } });
+    await transitionBooking(op, queen.id, 'CHECKED_IN', { roomId: h.rooms[0].id });
+    const before = toBookingSummary(await getBookingForStaff(op.actor, queen.id));
+    expect(before.checkOutDue).toBe(Number(queen.totalPrice));
+    await recordCashPayment(op, queen.id, { kind: 'PAYMENT', amount: Number(queen.totalPrice) });
+    const after = toBookingSummary(await getBookingForStaff(op.actor, queen.id));
+    // Its own share still lags (the payment is spread with the cancelled line), but nothing is left to collect.
+    expect(after.checkOutDue).toBe(0);
+    expect((await transitionBooking(op, queen.id, 'CHECKED_OUT')).booking.status).toBe('CHECKED_OUT');
+  });
+
+  it('a reservation marked paid and resubmitted records its payment once', async () => {
+    const h = await makeHotel({ basePrice: 100 });
+    const desk = await makeUser({ role: 'FRONT_DESK', propertyIds: [h.property.id] });
+    const op = { actor: await actorFor(desk.id), source: 'classic' as const };
+    const guest = await makeUser({ role: 'CUSTOMER' });
+    const input = { propertyId: h.property.id, roomTypeId: h.roomType.id, checkIn: h.today, checkOut: addDaysISO(h.today, 1), guests: 1, rooms: 1, guest: { firstName: 'Ana', lastName: 'Ruiz', email: guest.email }, paid: true };
+    const first = await createDeskReservation(op, input);
+    const again = await createDeskReservation(op, input);
+    expect(again.id).toBe(first.id);
+    expect(await prisma.payment.count({ where: { bookingId: first.id } })).toBe(1);
+    expect(toBookingSummary(await getBookingForStaff(op.actor, first.id)).balance).toBe(0);
+  });
+
+  it('the backfill skips security deposits, pays a shared reservation on its lead line, and runs once', async () => {
+    const sql = readFileSync('prisma/migrations/20261026_guided_check_in/migration.sql', 'utf8');
+    const backfill = sql.slice(sql.indexOf('INSERT INTO "payments"'));
+    const h = await makeHotel({ basePrice: 100 });
+    const desk = await makeUser({ role: 'FRONT_DESK', propertyIds: [h.property.id] });
+    const op = { actor: await actorFor(desk.id), source: 'classic' as const };
+    // Paid when booked (before desk payments were recorded), then a cash deposit was taken.
+    const single = await createDeskReservation(op, { propertyId: h.property.id, roomTypeId: h.roomType.id, checkIn: h.today, checkOut: addDaysISO(h.today, 1), guests: 1, rooms: 1, guest: { firstName: 'Old', lastName: `Paid${uid()}` } });
+    await prisma.booking.update({ where: { id: single.id }, data: { paymentStatus: 'PAID' } });
+    await recordCashPayment(op, single.id, { kind: 'SECURITY_DEPOSIT', amount: 50 });
+    // A shared reservation marked paid, nothing recorded.
+    const suite = await prisma.roomType.create({ data: { propertyId: h.property.id, name: 'Suite', capacity: 4, basePrice: 300, totalRooms: 1, amenities: [] } });
+    const guest = await makeUser({ role: 'CUSTOMER' });
+    const rows = await createReservation({
+      userId: guest.id,
+      propertyId: h.property.id,
+      checkIn: addDaysISO(h.today, 3),
+      checkOut: addDaysISO(h.today, 4),
+      guests: 3,
+      lines: [
+        { roomTypeId: h.roomType.id, rooms: 1 },
+        { roomTypeId: suite.id, rooms: 1 },
+      ],
+      paymentStatus: 'PAID',
+    });
+    const lead = rows.find((r) => r.code === r.groupCode)!;
+
+    await prisma.$executeRawUnsafe(backfill);
+    expect(toBookingSummary(await getBookingForStaff(op.actor, single.id)).balance).toBe(0);
+    const leadPayments = await prisma.payment.findMany({ where: { bookingId: lead.id } });
+    expect(leadPayments.length).toBe(2);
+    for (const r of rows) expect(toBookingSummary(await getBookingForStaff(op.actor, r.id)).balance).toBe(0);
+    // Again: nothing more.
+    await prisma.$executeRawUnsafe(backfill).catch(() => undefined);
+    expect(await prisma.payment.count({ where: { bookingId: { in: [single.id, lead.id] }, method: 'OTHER' } })).toBe(3);
+  });
+
+  it('a shared reservation’s open dispute keeps every room type’s ID, and its evidence names them', async () => {
+    const h = await makeHotel({ basePrice: 100 });
+    const suite = await prisma.roomType.create({ data: { propertyId: h.property.id, name: 'Suite', capacity: 4, basePrice: 300, totalRooms: 1, amenities: [] } });
+    const suiteRoom = await prisma.room.create({ data: { propertyId: h.property.id, roomTypeId: suite.id, roomNumber: '301', floor: '3', status: 'CLEAN' } });
+    const desk = await makeUser({ role: 'FRONT_DESK', propertyIds: [h.property.id] });
+    const op = { actor: await actorFor(desk.id), source: 'classic' as const };
+    const guest = await makeUser({ role: 'CUSTOMER' });
+    await prisma.user.update({ where: { id: guest.id }, data: { firstName: 'Mia', lastName: 'Ortiz' } });
+    const rows = await createReservation({
+      userId: guest.id,
+      propertyId: h.property.id,
+      checkIn: h.today,
+      checkOut: addDaysISO(h.today, 1),
+      guests: 3,
+      lines: [
+        { roomTypeId: h.roomType.id, rooms: 1 },
+        { roomTypeId: suite.id, rooms: 1 },
+      ],
+      paymentStatus: 'PAY_AT_PROPERTY',
+    });
+    const lead = rows.find((r) => r.code === r.groupCode)!;
+    const line = rows.find((r) => r.code !== r.groupCode)!;
+    const { input } = await sign(op, line.id, line.roomTypeId === suite.id ? suiteRoom.id : h.rooms[0].id, { kind: 'NONE' });
+    await completeGuidedCheckIn(op, line.id, input, meta);
+    // Staff ticked another checklist item: the recorded ID still counts as "ID matches guest".
+    await prisma.bookingChecklist.create({ data: { bookingId: lead.id, cardShownAt: new Date(), cardShownById: op.actor.userId } });
+    const dispute = await prisma.dispute.create({ data: { stripeDisputeId: `dp_${uid()}`, bookingId: lead.id, propertyId: h.property.id, amount: 100, status: 'needs_response' } });
+
+    const evidence = await refreshEvidence(dispute.id);
+    const text = JSON.stringify(evidence!.summary);
+    expect(text).toContain('Photo ID checked at the desk');
+    expect(text).toContain('number ending 4567');
+    expect(text).not.toMatch(/ID matches guest — not done/);
+    expect(text).not.toMatch(/Registration signed — not done/);
+
+    // Long after check-out, the dispute is still open: the Suite line's photo stays.
+    const later = new Date(Date.now() + 400 * 86_400_000);
+    await purgeExpiredGuestIds(later);
+    const kept = await prisma.guestIdentification.findUniqueOrThrow({ where: { bookingId: line.id }, include: { photo: true } });
+    expect(kept.purgedAt).toBeNull();
+    expect(kept.photo).not.toBeNull();
+    await prisma.dispute.update({ where: { id: dispute.id }, data: { closedAt: new Date() } });
+    await purgeExpiredGuestIds(later);
+    expect((await prisma.guestIdentification.findUniqueOrThrow({ where: { bookingId: line.id } })).purgedAt).not.toBeNull();
+  });
+
+  it('two saves of the same record: one wins, the other gets a 409', async () => {
+    const { h, op, booking } = await setup({ paid: true });
+    await transitionBooking(op, booking.id, 'CHECKED_IN', { roomId: h.rooms[0].id });
+    const { input } = await sign(op, booking.id, null, { kind: 'NONE' });
+    const results = await Promise.allSettled([completeGuidedCheckIn(op, booking.id, input, meta), completeGuidedCheckIn(op, booking.id, input, meta)]);
+    expect(results.filter((r) => r.status === 'fulfilled').length).toBe(1);
+    expect((results.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason).toMatchObject({ status: 409 });
+  });
+
+  it('once someone else checked the guest in, the card names their room and the save goes through', async () => {
+    const { h, op, booking } = await setup({ paid: true });
+    // The screen picked room 101; meanwhile the guest was checked in to 102.
+    await transitionBooking(op, booking.id, 'CHECKED_IN', { roomId: h.rooms[1].id });
+    const { preview, input } = await sign(op, booking.id, h.rooms[0].id, { kind: 'NONE' });
+    expect(preview.text).toContain('room 102');
+    await completeGuidedCheckIn(op, booking.id, input, meta);
+  });
+
+  it('lists each deposit as it was taken, and keeps the exact record its hash covers', async () => {
+    const { h, actor, op, booking } = await setup({ deposit: 'CHARGE', paid: true });
+    await recordCashPayment(op, booking.id, { kind: 'SECURITY_DEPOSIT', amount: 60 });
+    await recordExternalPayment(op, booking.id, { kind: 'SECURITY_DEPOSIT', method: 'EXTERNAL_CARD', amount: 40, cardBrand: 'visa', cardLast4: '4242' });
+    const { preview, input } = await sign(op, booking.id, h.rooms[0].id, { kind: 'HELD' });
+    expect(preview.text).toContain('Security deposits: $60.00 in cash, returned at check-out; $40.00 charged to Visa ending 4242, refunded after check-out; each less any charges.');
+    await completeGuidedCheckIn(op, booking.id, { ...input, registration: { textHash: preview.textHash, signature: { method: 'TYPED', text: 'Mia Ortiz' } } }, meta);
+    const card = await prisma.registrationCard.findUniqueOrThrow({ where: { bookingId: booking.id } });
+    expect(createHash('sha256').update(card.signedRecord).digest('hex')).toBe(card.documentHash);
+    expect(JSON.parse(card.signedRecord)).toMatchObject({ signature: { method: 'TYPED', text: 'Mia Ortiz' }, deposits: [{ kind: 'CASH', amount: 60 }, { kind: 'CARD_CHARGE', amount: 40 }] });
+    expect((await getCheckInRecord(actor, booking.id)).registration?.documentHash).toBe(card.documentHash);
+  });
+
+  it('refuses a full card number typed into an approval code or note', async () => {
+    const { op, booking } = await setup();
+    await expect(recordExternalPayment(op, booking.id, { kind: 'PAYMENT', method: 'OTHER', amount: 10, note: 'card 4242 4242 4242 4242' })).rejects.toMatchObject({ status: 400 });
+    await expect(recordExternalPayment(op, booking.id, { kind: 'PAYMENT', method: 'EXTERNAL_CARD', amount: 10, cardLast4: '4242', reference: '4111111111111111' })).rejects.toMatchObject({ status: 400 });
+    await expect(recordCashPayment(op, booking.id, { kind: 'PAYMENT', amount: 10, note: '5555-5555-5555-4444' })).rejects.toMatchObject({ status: 400 });
+    // An ordinary reference is fine.
+    await recordExternalPayment(op, booking.id, { kind: 'PAYMENT', method: 'EXTERNAL_CARD', amount: 10, cardLast4: '4242', reference: 'A1B2C3' });
+  });
+
 });

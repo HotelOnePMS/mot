@@ -190,6 +190,10 @@ export function FolioSummary({ bookingId }: { bookingId: string }) {
       {data.reservation && (
         <p className="text-xs text-muted-foreground">
           Shows this room type’s share of reservation {data.reservation.code} ({data.reservation.roomTypes} room types paid together).
+          {Math.abs(data.checkOutDue - Math.max(0, t.balance)) > 0.004 &&
+            (data.checkOutDue > 0.004
+              ? ` The reservation still owes ${fmt(data.checkOutDue, currency)}: the guest can check out once that’s paid.`
+              : ' The reservation is paid, so nothing is left to collect before check-out.')}
         </p>
       )}
     </div>
@@ -219,16 +223,21 @@ export function FolioCard({ booking }: { booking: BookingSummary }) {
       <div className="flex min-h-9 items-center justify-between gap-3">
         <h2 className="text-base font-semibold tracking-tight">Folio</h2>
         {data &&
-          (data.settled ? (
+          (!data.settled ? (
+            open && (
+              <Badge variant="warning" dot className="tabular">
+                {fmt(data.checkOutDue, data.currency)} due
+              </Badge>
+            )
+          ) : data.totals.balance < -0.004 ? (
+            // Overpaid, or the stay got shorter after it was paid: the hotel owes the guest.
+            <Badge variant="info" dot className="tabular">
+              Credit {fmt(-data.totals.balance, data.currency)}
+            </Badge>
+          ) : (
             <Badge variant="success" dot>
               Settled
             </Badge>
-          ) : (
-            open && (
-              <Badge variant="warning" dot className="tabular">
-                {fmt(data.totals.balance, data.currency)} due
-              </Badge>
-            )
           ))}
       </div>
       <div className="mt-3">

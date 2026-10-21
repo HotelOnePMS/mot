@@ -74,7 +74,7 @@ export async function buildFolio(b: BookingWithRelations): Promise<FolioView> {
     }
   }
 
-  const depositRows = payments.filter((p) => p.kind === 'SECURITY_DEPOSIT' && ['AUTHORIZED', 'CANCELED', ...COLLECTED].includes(p.status) && (p.status !== 'CANCELED' || p.amountAuthorized !== null));
+  const depositRows = payments.filter((p) => p.kind === 'SECURITY_DEPOSIT' && ['AUTHORIZED', 'CANCELED', ...COLLECTED].includes(p.status) && (p.status !== 'CANCELED' || p.settledAt !== null));
   const deposits: FolioDeposit[] = depositRows.map((p) => {
     const hold = p.status === 'AUTHORIZED' || (p.status === 'CANCELED' && p.amountAuthorized !== null);
     const amount = Number(p.amountAuthorized ?? p.amount);
@@ -106,7 +106,8 @@ export async function buildFolio(b: BookingWithRelations): Promise<FolioView> {
     deposits,
     depositHeld: fromCents(held),
     reservation: shared ? { code: lines[0].code ?? summary.code, roomTypes: lines.length } : null,
-    settled: totals.balance <= 0.004,
+    checkOutDue: summary.checkOutDue,
+    settled: summary.checkOutDue <= 0.004,
   };
 }
 

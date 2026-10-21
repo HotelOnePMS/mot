@@ -9,7 +9,7 @@ import type { BookingSummary } from '@/lib/dto';
 import { api, fetcher } from '@/lib/fetcher';
 import { formatMoney } from '@/lib/format';
 import { CARD_BRANDS, cardBrandLabel } from '@/lib/card-authorization';
-import { cashChangeCents, RECORDED_METHODS, type DeskKind, type DeskMethod, type PaymentMethod } from '@/lib/desk-payments';
+import { CARD_NUMBER_REFUSED, cashChangeCents, containsCardNumber, RECORDED_METHODS, type DeskKind, type DeskMethod, type PaymentMethod } from '@/lib/desk-payments';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -267,6 +267,8 @@ export function CollectPaymentDialog({
   const overBalance = !deposit && data ? value > data.balance + 0.004 : false;
   const recorded = isRecorded(method);
   // A card deposit is held or charged as the desk chooses; the OTA's virtual card follows the hotel's setting.
+  // Card numbers are never stored: a full one typed into a note or the approval code is refused here and on the server.
+  const cardNumberTyped = containsCardNumber(approval) || containsCardNumber(paidHow) || containsCardNumber(note);
   const holdChoice = deposit && (method === 'TERMINAL' || method === 'CARD_ENTRY');
   const holding = holdChoice ? hold === 'HOLD' : method === 'VIRTUAL_CARD' && data?.deposit.mode !== 'CHARGE';
   const valid =
@@ -275,8 +277,9 @@ export function CollectPaymentDialog({
     (method !== 'TERMINAL' || !!readerId) &&
     (method !== 'CASH' || !tendered || change !== null) &&
     (method !== 'VIRTUAL_CARD' || !!vcc?.chargeable) &&
-    (method !== 'EXTERNAL_CARD' || /^\d{4}$/.test(cardLast4)) &&
-    (method !== 'OTHER' || paidHow.trim().length >= 3);
+    (method !== 'EXTERNAL_CARD' || (/^\d{4}$/.test(cardLast4) && /^[A-Za-z0-9-]*$/.test(approval.trim()))) &&
+    (method !== 'OTHER' || paidHow.trim().length >= 3) &&
+    !cardNumberTyped;
   const presets = data ? [...DEPOSIT_PRESETS, ...(data.deposit.amount > 0 && !DEPOSIT_PRESETS.includes(data.deposit.amount) ? [data.deposit.amount] : [])].sort((a, b) => a - b) : [];
   const preset = presets.find((p) => Math.abs(p - value) < 0.004);
 
@@ -361,7 +364,7 @@ export function CollectPaymentDialog({
   const holdText = recorded
     ? 'Taken now and given back at check-out.'
     : holding
-      ? 'The card is authorized now and the hold is released at check-out; only what’s owed is charged.'
+      ? 'The card is authorized now and the hold is released at check-out; only what you keep for incidentals is charged.'
       : 'Charged now and refunded at check-out.';
 
   return (
@@ -539,7 +542,7 @@ export function CollectPaymentDialog({
                 <Field label="Cash received" optional htmlFor="desk-tendered" hint={change !== null && change > 0 ? `Give back ${fmt(change / 100, currency)} in change.` : tendered && change === null ? 'Less than the amount.' : undefined}>
                   <Input id="desk-tendered" inputMode="decimal" value={tendered} onChange={(e) => setTendered(e.target.value)} placeholder={amount} />
                 </Field>
-                <Field label="Note" optional htmlFor="desk-note">
+                <Field label="Note" optional htmlFor="desk-note" error={containsCardNumber(note) ? CARD_NUMBER_REFUSED : undefined}>
                   <Input id="desk-note" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} />
                 </Field>
               </div>
@@ -562,15 +565,21 @@ export function CollectPaymentDialog({
                       ))}
                     </select>
                   </Field>
-                  <Field label="Approval code" optional htmlFor="desk-approval">
-                    <Input id="desk-approval" autoComplete="off" maxLength={40} value={approval} onChange={(e) => setApproval(e.target.value)} />
+                  <Field label="Approval code" optional htmlFor="desk-approval" error={containsCardNumber(approval) ? CARD_NUMBER_REFUSED : undefined}>
+                    <Input id="desk-approval" autoComplete="off" maxLength={20} value={approval} onChange={(e) => setApproval(e.target.value)} />
                   </Field>
                 </div>
               </div>
             )}
 
             {method === 'OTHER' && (
-              <Field label="What it was" required htmlFor="desk-paid-how" hint="For example a bank transfer or a voucher. HotelOne records it; no money moves through Stripe.">
+              <Field
+                label="What it was"
+                required
+                htmlFor="desk-paid-how"
+                hint="For example a bank transfer or a voucher. HotelOne records it; no money moves through Stripe."
+                error={containsCardNumber(paidHow) ? CARD_NUMBER_REFUSED : undefined}
+              >
                 <Input id="desk-paid-how" required value={paidHow} maxLength={200} placeholder="Bank transfer" onChange={(e) => setPaidHow(e.target.value)} />
               </Field>
             )}

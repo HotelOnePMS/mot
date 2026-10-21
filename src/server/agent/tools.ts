@@ -610,15 +610,13 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
       const warnings: string[] = [];
       const due = toISODate(b.checkOut);
       if (due > today) warnings.push(`Early departure — due ${formatDay(due)}. Unused nights go back on sale.`);
-      // The folio balance: room, extras, and everything paid online or at the desk.
-      const balance = toBookingSummary(b).balance;
-      if (balance > 0.004) warnings.push(`Balance ${money(balance, { currency: b.currency })} — ${PAYMENT_STATUS[b.paymentStatus ?? 'UNPAID']?.label ?? 'unpaid'}. Settle before the guest leaves.`);
+      // Anything left to pay already stopped it above (checkTransition): check-out needs the balance at zero.
       // Security deposits sit on the reservation's lead line.
       const lines = await paymentLines(b);
       const held = await prisma.payment.count({
         where: { bookingId: { in: lines.map((l) => l.id) }, kind: 'SECURITY_DEPOSIT', settledAt: null, status: { in: ['AUTHORIZED', 'SUCCEEDED', 'PARTIALLY_REFUNDED'] } },
       });
-      if (held) warnings.push('A security deposit is still held. Return it, or keep what’s owed, from the reservation’s payments.');
+      if (held) warnings.push('A security deposit is still held. Return it, or keep part of it for incidentals, from the reservation’s payments.');
       return {
         steps: [
           {

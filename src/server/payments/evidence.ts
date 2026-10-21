@@ -74,6 +74,14 @@ export interface AuthorizationEvidence {
 }
 
 export interface CheckInEvidence {
+  /** One per room type checked in with the guided check-in (a reservation of several room types can have several). */
+  records: CheckInRecordEvidence[];
+  deposits: string[];
+}
+
+export interface CheckInRecordEvidence {
+  /** The room type, when the reservation has several. */
+  roomType: string | null;
   /** e.g. "Driver’s license issued in United States, number ending 7781, name on ID Jane Sample (matches the booking)". */
   id: string | null;
   idCheckedAt: string | null;
@@ -89,7 +97,6 @@ export interface CheckInEvidence {
     documentHash: string;
     text: string;
   } | null;
-  deposits: string[];
 }
 
 export interface EvidenceSection {
@@ -209,20 +216,26 @@ export function buildEvidenceSummary(i: EvidenceInput): EvidenceSummary {
     ],
   });
 
-  if (i.checkIn && (i.checkIn.id || i.checkIn.registration || i.checkIn.deposits.length)) {
+  if (i.checkIn && (i.checkIn.records.length || i.checkIn.deposits.length)) {
     const c = i.checkIn;
+    const records = c.records.length ? c.records : [{ roomType: null, id: null, idCheckedAt: null, idCheckedBy: null, idPhotoKept: false, registration: null }];
     sections.push({
       title: 'Check-in: photo ID and registration card',
       lines: [
-        ...(c.id ? [`Photo ID checked at the desk: ${c.id}${c.idCheckedAt ? `, on ${when(c.idCheckedAt)}` : ''}${c.idCheckedBy ? ` by ${c.idCheckedBy}` : ''}${c.idPhotoKept ? '; a photo of the ID is kept by the hotel' : ''}`] : ['No photo ID was recorded at check-in.']),
-        ...(c.registration
-          ? [
-              `Registration card signed by the guest on ${when(c.registration.signedAt)} (${c.registration.signatureMethod === 'DRAWN' ? 'signature drawn on screen' : 'typed name adopted as signature'}) at the front desk${c.registration.witnessedBy ? `, with ${c.registration.witnessedBy}` : ''}, from IP ${or(c.registration.ip)}`,
-              `Record SHA-256: ${c.registration.documentHash} (wording version ${c.registration.textVersion}, SHA-256 ${c.registration.textHash})`,
-              'Registration card as signed:',
-              c.registration.text,
-            ]
-          : ['No registration card was signed.']),
+        ...records.flatMap((r) => {
+          const on = r.roomType ? ` (${r.roomType})` : '';
+          return [
+            ...(r.id ? [`Photo ID checked at the desk${on}: ${r.id}${r.idCheckedAt ? `, on ${when(r.idCheckedAt)}` : ''}${r.idCheckedBy ? ` by ${r.idCheckedBy}` : ''}${r.idPhotoKept ? '; a photo of the ID is kept by the hotel' : ''}`] : [`No photo ID was recorded at check-in${on}.`]),
+            ...(r.registration
+              ? [
+                  `Registration card${on} signed by the guest on ${when(r.registration.signedAt)} (${r.registration.signatureMethod === 'DRAWN' ? 'signature drawn on screen' : 'typed name adopted as signature'}) at the front desk${r.registration.witnessedBy ? `, with ${r.registration.witnessedBy}` : ''}, from IP ${or(r.registration.ip)}`,
+                  `Record SHA-256: ${r.registration.documentHash} (wording version ${r.registration.textVersion}, SHA-256 ${r.registration.textHash})`,
+                  'Registration card as signed:',
+                  r.registration.text,
+                ]
+              : [`No registration card was signed${on}.`]),
+          ];
+        }),
         ...c.deposits.map((d) => `Security deposit: ${d}`),
       ],
     });

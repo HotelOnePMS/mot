@@ -5,6 +5,7 @@ import useSWR from 'swr';
 import { BedDouble, LogOut } from 'lucide-react';
 import type { RoomOption } from '@/lib/agent/blocks';
 import type { BookingSummary } from '@/lib/dto';
+import { fetcher } from '@/lib/fetcher';
 import { fmtRange } from '@/lib/format';
 import { money } from '@/lib/status';
 import { Button } from '@/components/ui/button';
@@ -69,15 +70,20 @@ export function AssignRoomDialog({ booking, open, onOpenChange }: { booking: Boo
 }
 
 /** Check-out needs the balance at zero: the guest pays (or the payment is recorded) first. */
-export function CheckOutDialog({ booking, open, onOpenChange, today }: { booking: BookingSummary | null; open: boolean; onOpenChange: (o: boolean) => void; today: string }) {
+export function CheckOutDialog({ booking: given, open, onOpenChange, today }: { booking: BookingSummary | null; open: boolean; onOpenChange: (o: boolean) => void; today: string }) {
   const { transition, pending } = useBookingActions();
   const { can } = useConsole();
-  const { data: desk } = useDeskPayments(open ? booking?.id : null);
+  const { data: desk } = useDeskPayments(open ? given?.id : null);
+  // The booking as it is now: a payment taken from this dialog refreshes it (screens may pass a copy from when it opened).
+  const { data: live } = useSWR<{ booking: BookingSummary }>(open && given ? `/api/admin/bookings/${given.id}` : null, fetcher);
   const [collecting, setCollecting] = React.useState(false);
-  if (!booking) return null;
+  if (!given) return null;
+  const booking = live?.booking.id === given.id ? live.booking : given;
   const early = booking.checkOut > today;
-  // The same balance the server checks: room and extras less everything paid, online or at the desk.
-  const unpaid = booking.balance > 0.004;
+  // The same figure the server checks: room and extras less everything paid, online or at the desk (the reservation's,
+  // for a room type of a shared reservation).
+  const due = booking.checkOutDue;
+  const unpaid = due > 0.004;
   const canCollect = can('payments.collect');
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -103,7 +109,9 @@ export function CheckOutDialog({ booking, open, onOpenChange, today }: { booking
                   ) : undefined
                 }
               >
-                <p className="font-semibold">Balance of {money(booking.balance, { currency: booking.currency })} to pay</p>
+                <p className="font-semibold">
+                  Balance of {money(due, { currency: booking.currency })} to pay{booking.reservationCode && due > booking.balance + 0.004 ? ` on reservation ${booking.reservationCode}` : ''}
+                </p>
                 <p>{canCollect ? 'Take the payment, or record one taken another way, before the guest checks out.' : 'Ask someone who can take payments to settle it before the guest checks out.'}</p>
               </Callout>
             )}
@@ -111,11 +119,11 @@ export function CheckOutDialog({ booking, open, onOpenChange, today }: { booking
         )}
         {desk && desk.deposit.held > 0.004 && (
           <Callout tone="info">
-            {money(desk.deposit.held, { currency: booking.currency })} security deposit still held. Return it (or keep what’s owed) from the{' '}
+            {money(desk.deposit.held, { currency: booking.currency })} security deposit still held. Return it, or keep part of it for incidentals (minibar, damage), from the{' '}
             <a href={`/admin/bookings/${booking.id}`} className="font-medium underline underline-offset-2">
               reservation page
             </a>
-            .
+            . Deposit money doesn’t pay the room balance.
           </Callout>
         )}
         <CollectPaymentDialog booking={booking} kind="PAYMENT" open={collecting} onOpenChange={setCollecting} />

@@ -119,6 +119,11 @@ export interface FolioView {
   depositHeld: number;
   /** Set when one set of payments covers several room types (this folio shows this room type's share). */
   reservation: { code: string; roomTypes: number } | null;
+  /**
+   * What must be paid before check-out (BookingSummary.checkOutDue). For a room type of a shared reservation it's what
+   * the whole reservation still owes, which can differ from this folio's balance (its share of the payments).
+   */
+  checkOutDue: number;
   /** Nothing left to pay: the guest can check out. */
   settled: boolean;
 }

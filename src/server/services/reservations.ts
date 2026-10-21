@@ -103,10 +103,13 @@ export async function createDeskReservation(ctx: OpContext, input: DeskReservati
     throw e;
   });
   if (guest.guestEmail) await prisma.booking.update({ where: { id: booking.id }, data: { guestEmail: guest.guestEmail } });
-  // Paid in full at the desk: record the money, so every screen agrees the balance is settled.
-  if (input.paid) {
-    await prisma.payment.create({
+  // Paid in full at the desk: record the money, so every screen agrees the balance is settled. Once only: a resubmitted
+  // form returns the same booking (duplicate), and the id is fixed per booking.
+  if (input.paid && !booking.duplicate) {
+    await prisma.payment.createMany({
+      skipDuplicates: true,
       data: {
+        id: `desk-paid-${booking.id}`,
         bookingId: booking.id,
         propertyId: booking.propertyId,
         kind: 'PAYMENT',

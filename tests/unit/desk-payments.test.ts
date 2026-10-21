@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cashChangeCents, depositDueCents, depositHeldCents, depositSettlement, deskAmountProblem, type DeskPaymentLike } from '@/lib/desk-payments';
+import { cashChangeCents, containsCardNumber, depositDueCents, depositHeldCents, depositSettlement, deskAmountProblem, type DeskPaymentLike } from '@/lib/desk-payments';
 import { extractPaymentCard, redactCardData, virtualCardWindow } from '@/server/channels/cards';
 import { maskCardNumbers, parseXml } from '@/server/channels/xml';
 
@@ -117,5 +117,21 @@ describe('collecting at the desk', () => {
     expect(deskAmountProblem({ kind: 'PAYMENT', amountCents: 100, balanceCents: 0, currency: 'USD' })).toMatch(/Nothing/);
     expect(deskAmountProblem({ kind: 'SECURITY_DEPOSIT', amountCents: 50000, balanceCents: 0, currency: 'USD' })).toBeNull();
     expect(deskAmountProblem({ kind: 'SECURITY_DEPOSIT', amountCents: 0, balanceCents: 0, currency: 'USD' })).toMatch(/Enter/);
+  });
+});
+
+describe('card numbers typed into notes', () => {
+  it('spots a full card number, with or without spaces and dashes', () => {
+    expect(containsCardNumber('4242424242424242')).toBe(true);
+    expect(containsCardNumber('paid with 4242 4242 4242 4242 at the bar')).toBe(true);
+    expect(containsCardNumber('3782-822463-10005')).toBe(true);
+  });
+  it('leaves approval codes, phone numbers and amounts alone', () => {
+    expect(containsCardNumber('A1B2C3')).toBe(false);
+    expect(containsCardNumber('Bank transfer ref 20261021')).toBe(false);
+    expect(containsCardNumber('+1 831 555 0100')).toBe(false);
+    // 16 digits that fail the Luhn check aren't a card number.
+    expect(containsCardNumber('4242424242424241')).toBe(false);
+    expect(containsCardNumber(null)).toBe(false);
   });
 });

@@ -125,7 +125,7 @@ export function BookingRow({
           </span>
         )}
         <BookingStatusBadge status={b.status} />
-        {variant === 'departures' && b.balance > 0.004 && <Badge variant="warning">{formatMoney(b.balance, b.currency, { cents: true })} due</Badge>}
+        {variant === 'departures' && b.checkOutDue > 0.004 && <Badge variant="warning">{formatMoney(b.checkOutDue, b.currency, { cents: true })} due</Badge>}
         <span className="hidden w-20 text-right text-sm font-medium tabular md:inline">{formatMoney(b.totalPrice, b.currency, { cents: false })}</span>
         {actions && (
           // Above the stretched link, so these stay clickable.

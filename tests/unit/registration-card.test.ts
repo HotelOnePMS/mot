@@ -18,7 +18,7 @@ const card: RegistrationCardInput = {
   stayTotal: 412.5,
   paid: 100,
   balance: 312.5,
-  deposit: { kind: 'CARD_CHARGE', amount: 200, cardBrand: 'visa', cardLast4: '4242' },
+  deposits: [{ kind: 'CARD_CHARGE', amount: 200, cardBrand: 'visa', cardLast4: '4242' }],
   id: { typeLabel: 'Passport', country: 'Spain', last4: '7781' },
   checkOutTime: 'by 11:00 AM',
 };
@@ -43,31 +43,42 @@ test('the card has six paragraphs: hotel, guest, stay, deposit, agreement, signa
 });
 
 test('the same stay always produces the same wording (it is hashed)', () => {
-  assert.equal(registrationCardText(card), registrationCardText({ ...card, deposit: { ...card.deposit! }, id: { ...card.id } }));
+  assert.equal(registrationCardText(card), registrationCardText({ ...card, deposits: card.deposits.map((d) => ({ ...d })), id: { ...card.id } }));
 });
 
 test('a deposit charged to a card names the brand and last four digits', () => {
   assert.equal(paragraphs(card)[3], 'Security deposit: $200.00 charged to Visa ending 4242, refunded after check-out less any charges.');
-  const noDigits = paragraphs({ ...card, deposit: { kind: 'CARD_CHARGE', amount: 200, cardBrand: null, cardLast4: null } })[3];
+  const noDigits = paragraphs({ ...card, deposits: [{ kind: 'CARD_CHARGE', amount: 200, cardBrand: null, cardLast4: null }] })[3];
   assert.equal(noDigits, 'Security deposit: $200.00 charged to card, refunded after check-out less any charges.');
 });
 
 test('a deposit recorded another way is returned at check-out', () => {
-  assert.equal(paragraphs({ ...card, deposit: { kind: 'OTHER', amount: 80, cardBrand: null, cardLast4: null } })[3], 'Security deposit: $80.00, returned at check-out less any charges.');
+  assert.equal(paragraphs({ ...card, deposits: [{ kind: 'OTHER', amount: 80, cardBrand: null, cardLast4: null }] })[3], 'Security deposit: $80.00, returned at check-out less any charges.');
 });
 
 test('a card hold says it is released after check-out', () => {
-  const p = paragraphs({ ...card, deposit: { kind: 'CARD_HOLD', amount: 150, cardBrand: 'amex', cardLast4: '1005' } });
+  const p = paragraphs({ ...card, deposits: [{ kind: 'CARD_HOLD', amount: 150, cardBrand: 'amex', cardLast4: '1005' }] });
   assert.equal(p[3], 'Security deposit: a hold of $150.00 on American Express ending 1005. It is released after check-out, less any charges.');
 });
 
 test('a cash deposit is returned at check-out', () => {
-  const p = paragraphs({ ...card, deposit: { kind: 'CASH', amount: 100, cardBrand: 'visa', cardLast4: '4242' } });
+  const p = paragraphs({ ...card, deposits: [{ kind: 'CASH', amount: 100, cardBrand: 'visa', cardLast4: '4242' }] });
   assert.equal(p[3], 'Security deposit: $100.00 in cash, returned at check-out less any charges.');
 });
 
+test('a deposit taken in parts lists each part as it was taken', () => {
+  const p = paragraphs({
+    ...card,
+    deposits: [
+      { kind: 'CASH', amount: 100, cardBrand: null, cardLast4: null },
+      { kind: 'CARD_HOLD', amount: 50, cardBrand: 'visa', cardLast4: '4242' },
+    ],
+  });
+  assert.equal(p[3], 'Security deposits: $100.00 in cash, returned at check-out; a hold of $50.00 on Visa ending 4242, released after check-out; each less any charges.');
+});
+
 test('no deposit says so', () => {
-  assert.equal(paragraphs({ ...card, deposit: null })[3], 'No security deposit was taken.');
+  assert.equal(paragraphs({ ...card, deposits: [] })[3], 'No security deposit was taken.');
 });
 
 test('the balance reads as due, as a credit, or as settled', () => {
@@ -80,7 +91,7 @@ test('the balance reads as due, as a credit, or as settled', () => {
 });
 
 test('amounts use the hotel’s currency', () => {
-  const p = paragraphs({ ...card, currency: 'JPY', stayTotal: 45000, paid: 45000, balance: 0, deposit: { kind: 'CASH', amount: 10000, cardBrand: null, cardLast4: null } });
+  const p = paragraphs({ ...card, currency: 'JPY', stayTotal: 45000, paid: 45000, balance: 0, deposits: [{ kind: 'CASH', amount: 10000, cardBrand: null, cardLast4: null }] });
   assert.match(p[2], /Room and taxes: ¥45,000\. Paid so far: ¥45,000\./);
   assert.equal(p[3], 'Security deposit: ¥10,000 in cash, returned at check-out less any charges.');
 });

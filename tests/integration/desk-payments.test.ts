@@ -164,6 +164,8 @@ describe('card reader', () => {
     expect((await getBookingForStaff(actor, booking.id)).paymentStatus).toBe('PAID');
     const notes = await prisma.bookingStatusHistory.findMany({ where: { bookingId: booking.id, notes: { contains: 'card reader' } } });
     expect(notes).toHaveLength(1);
+    // The guest reads the history, and whoever paid may not be the guest: the card stays on the payment, for staff.
+    expect(notes[0].notes).not.toMatch(/4242|visa/i);
   });
 
   it('ignores an event from another hotel’s Stripe account', async () => {

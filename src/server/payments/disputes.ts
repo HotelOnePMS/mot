@@ -35,9 +35,6 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
       policyAcceptance: true,
       checklist: true,
       statusHistory: { orderBy: { createdAt: 'asc' } },
-      // The guided check-in: the photo ID checked and the registration card signed.
-      guestIdentification: { select: { idType: true, idCountry: true, idLast4: true, nameOnId: true, nameMatched: true, confirmedById: true, createdAt: true, photo: { select: { guestIdentificationId: true } } } },
-      registrationCard: true,
       // Someone else paid: the cardholder's signed authorizations (the ID photo itself stays with the hotel).
       cardAuthorizations: {
         where: { status: { in: ['SIGNED', 'VERIFIED'] } },
@@ -73,19 +70,36 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
   });
   if (!booking) return null;
   const summary = toBookingSummary(booking);
-  // Security deposits taken at the desk (held, kept or returned), on any line of the reservation.
+  // Security deposits taken at the desk (held, kept, returned or a hold released), on any line of the reservation.
   const deposits = await prisma.payment.findMany({
-    where: { kind: 'SECURITY_DEPOSIT', status: { notIn: ['PENDING', 'FAILED', 'CANCELED'] }, booking: booking.groupCode ? { groupCode: booking.groupCode } : { id: booking.id } },
+    where: {
+      kind: 'SECURITY_DEPOSIT',
+      OR: [{ status: { notIn: ['PENDING', 'FAILED', 'CANCELED'] } }, { status: 'CANCELED', settledAt: { not: null } }],
+      booking: booking.groupCode ? { groupCode: booking.groupCode } : { id: booking.id },
+    },
     orderBy: { createdAt: 'asc' },
     select: { method: true, status: true, amount: true, amountAuthorized: true, amountRefunded: true, currency: true, cardBrand: true, cardLast4: true, settledAt: true, createdAt: true },
   });
-  // One payment covers every room type of a reservation: the evidence describes them all.
+  // One payment covers every room type of a reservation: the evidence describes them all, and each room type is
+  // checked in on its own line (with its own photo ID and registration card).
   const lines = booking.groupCode ? await paymentLines(booking) : null;
+  const lineIds = lines ? lines.map((l) => l.id) : [booking.id];
+  const [guestIds, cards] = await Promise.all([
+    prisma.guestIdentification.findMany({
+      where: { bookingId: { in: lineIds } },
+      select: { bookingId: true, idType: true, idCountry: true, idLast4: true, nameOnId: true, nameMatched: true, confirmedById: true, createdAt: true, photo: { select: { guestIdentificationId: true } } },
+    }),
+    prisma.registrationCard.findMany({ where: { bookingId: { in: lineIds } } }),
+  ]);
+  const recordLines = lineIds.filter((id) => guestIds.some((g) => g.bookingId === id) || cards.some((c) => c.bookingId === id));
+  // The checklist rows: the guided check-in's records count as done, as on the reservation page (checklist.ts).
+  const ownId = guestIds.find((g) => g.bookingId === booking.id) ?? guestIds[0] ?? null;
+  const ownCard = cards.find((c) => c.bookingId === booking.id) ?? cards[0] ?? null;
   const staffIds = [
     ...(booking.checklist ? [booking.checklist.idMatchedById, booking.checklist.cardShownById, booking.checklist.registrationSignedById] : []),
     ...booking.cardAuthorizations.map((a) => a.reviewedById),
-    booking.guestIdentification?.confirmedById,
-    booking.registrationCard?.witnessedById,
+    ...guestIds.map((g) => g.confirmedById),
+    ...cards.map((c) => c.witnessedById),
   ].filter((id): id is string => !!id);
   const staff = staffIds.length ? await prisma.user.findMany({ where: { id: { in: staffIds } }, select: { id: true, firstName: true, lastName: true } }) : [];
   const nameOf = (id: string | null) => {
@@ -139,9 +153,13 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
     stay: { checkedInAt: lastWith('CHECKED_IN'), roomNumber: booking.room?.roomNumber ?? null, checkedOutAt: lastWith('CHECKED_OUT') },
     checklist: c
       ? [
-          { item: CHECKLIST_LABELS.idMatched, at: c.idMatchedAt?.toISOString() ?? null, by: nameOf(c.idMatchedById) },
+          c.idMatchedAt || !ownId
+            ? { item: CHECKLIST_LABELS.idMatched, at: c.idMatchedAt?.toISOString() ?? null, by: nameOf(c.idMatchedById) }
+            : { item: CHECKLIST_LABELS.idMatched, at: ownId.createdAt.toISOString(), by: nameOf(ownId.confirmedById) },
           { item: CHECKLIST_LABELS.cardShown, at: c.cardShownAt?.toISOString() ?? null, by: nameOf(c.cardShownById) },
-          { item: CHECKLIST_LABELS.registrationSigned, at: c.registrationSignedAt?.toISOString() ?? null, by: nameOf(c.registrationSignedById) },
+          c.registrationSignedAt || !ownCard
+            ? { item: CHECKLIST_LABELS.registrationSigned, at: c.registrationSignedAt?.toISOString() ?? null, by: nameOf(c.registrationSignedById) }
+            : { item: CHECKLIST_LABELS.registrationSigned, at: ownCard.signedAt.toISOString(), by: nameOf(ownCard.witnessedById) },
         ]
       : [],
     authorizations: booking.cardAuthorizations.map((a) => {
@@ -169,24 +187,31 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
       };
     }),
     checkIn: {
-      id: booking.guestIdentification
-        ? `${ID_TYPE_LABEL[booking.guestIdentification.idType as IdType] ?? booking.guestIdentification.idType}${booking.guestIdentification.idCountry ? ` issued in ${countryName(booking.guestIdentification.idCountry)}` : ''}, number ending ${booking.guestIdentification.idLast4}, name on ID ${booking.guestIdentification.nameOnId} (${booking.guestIdentification.nameMatched ? 'matches the booking' : 'differs from the booking name; accepted by staff'})`
-        : null,
-      idCheckedAt: booking.guestIdentification?.createdAt.toISOString() ?? null,
-      idCheckedBy: nameOf(booking.guestIdentification?.confirmedById ?? null),
-      idPhotoKept: !!booking.guestIdentification?.photo,
-      registration: booking.registrationCard
-        ? {
-            signedAt: booking.registrationCard.signedAt.toISOString(),
-            signatureMethod: booking.registrationCard.signatureMethod,
-            ip: booking.registrationCard.signedIp,
-            witnessedBy: nameOf(booking.registrationCard.witnessedById),
-            textVersion: booking.registrationCard.textVersion,
-            textHash: booking.registrationCard.textHash,
-            documentHash: booking.registrationCard.documentHash,
-            text: booking.registrationCard.text,
-          }
-        : null,
+      records: recordLines.map((lineId) => {
+        const gid = guestIds.find((g) => g.bookingId === lineId);
+        const card = cards.find((x) => x.bookingId === lineId);
+        return {
+          roomType: lines ? (lines.find((l) => l.id === lineId)?.roomType.name ?? null) : null,
+          id: gid
+            ? `${ID_TYPE_LABEL[gid.idType as IdType] ?? gid.idType}${gid.idCountry ? ` issued in ${countryName(gid.idCountry)}` : ''}, number ending ${gid.idLast4}, name on ID ${gid.nameOnId} (${gid.nameMatched ? 'matches the booking' : 'differs from the booking name; accepted by staff'})`
+            : null,
+          idCheckedAt: gid?.createdAt.toISOString() ?? null,
+          idCheckedBy: nameOf(gid?.confirmedById ?? null),
+          idPhotoKept: !!gid?.photo,
+          registration: card
+            ? {
+                signedAt: card.signedAt.toISOString(),
+                signatureMethod: card.signatureMethod,
+                ip: card.signedIp,
+                witnessedBy: nameOf(card.witnessedById),
+                textVersion: card.textVersion,
+                textHash: card.textHash,
+                documentHash: card.documentHash,
+                text: card.text,
+              }
+            : null,
+        };
+      }),
       deposits: deposits.map((d) => {
         const held = d.status === 'AUTHORIZED' ? 'held on the card' : d.status === 'CANCELED' ? 'released' : d.settledAt ? 'settled' : 'held';
         const kept = d.settledAt && ['SUCCEEDED', 'PARTIALLY_REFUNDED'].includes(d.status) ? Number(d.amount) - Number(d.amountRefunded) : 0;

@@ -60,6 +60,7 @@ export function toBookingSummary(b: BookingWithRelations): BookingSummary {
     amountPaid: fromCents(pay.heldCents),
     // Check-out needs this at zero (bookings.ts checkTransition).
     balance: roundMoney(Number(b.totalPrice) - fromCents(pay.heldCents), b.currency),
+    checkOutDue: checkOutDue(Number(b.totalPrice) - fromCents(pay.heldCents), pay.reservationDueCents, b.currency),
     // Flags describe online payments; pay-at-property bookings have nothing to flag.
     riskFlags: first
       ? computeRiskFlags({
@@ -87,7 +88,7 @@ function reservationPayment(b: BookingWithRelations) {
   const lead = b.reservationLead;
   if (!lead || lead.reservationLines.length < 2) {
     const held = b.payments.reduce((sum, p) => sum + toCents(Number(p.amount)) - toCents(Number(p.amountRefunded)), 0);
-    return { payments: b.payments, heldCents: Math.max(0, held), totalCents: toCents(Number(b.totalPrice)) };
+    return { payments: b.payments, heldCents: Math.max(0, held), totalCents: toCents(Number(b.totalPrice)), reservationDueCents: null };
   }
   const shares = reservationShares({
     paidCents: lead.payments.reduce((sum, p) => sum + toCents(Number(p.amount)), 0),
@@ -95,11 +96,27 @@ function reservationPayment(b: BookingWithRelations) {
     lines: lead.reservationLines.map((l) => ({ dueCents: toCents(Number(l.paymentDue ?? l.totalPrice)), cancelled: ENDED.includes(l.status) })),
   });
   const share = shares[lead.reservationLines.findIndex((l) => l.id === b.id)];
+  // What the reservation still owes, as the desk counts it (server/payments/desk.ts): its room types still going ahead, less
+  // everything paid toward the stay.
+  const active = lead.reservationLines.filter((l) => !ENDED.includes(l.status));
+  const dueCents = (active.length ? active : lead.reservationLines).reduce((sum, l) => sum + toCents(Number(l.totalPrice)), 0);
+  const netCents = lead.payments.reduce((sum, p) => sum + toCents(Number(p.amount)) - toCents(Number(p.amountRefunded)), 0);
   return {
     payments: lead.payments,
     heldCents: share ? share.paidCents - share.refundedCents : 0,
     totalCents: lead.reservationLines.reduce((sum, l) => sum + toCents(Number(l.totalPrice)), 0),
+    reservationDueCents: Math.max(0, dueCents - netCents),
   };
+}
+
+/**
+ * What must be paid before check-out. A line of a shared reservation is clear once its share is covered, or once the
+ * whole reservation is paid (its share can lag behind when a room type was cancelled or prepaid differently);
+ * until then the desk collects the reservation's balance, and a part payment is spread over every room type.
+ */
+function checkOutDue(lineBalance: number, reservationDueCents: number | null, currency: string): number {
+  if (lineBalance <= 0.004) return 0;
+  return reservationDueCents === null ? roundMoney(lineBalance, currency) : fromCents(reservationDueCents);
 }
 
 export function personName(u: { firstName: string; lastName: string }): string {

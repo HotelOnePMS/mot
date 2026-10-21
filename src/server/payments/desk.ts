@@ -21,7 +21,9 @@ import { prisma } from '@/lib/prisma';
 import { getStripe, isStripeConfigured, platformFeePercent } from '@/lib/stripe';
 import { fromCents, platformFeeCents, toCents } from '@/lib/payments';
 import {
+  CARD_NUMBER_REFUSED,
   cashChangeCents,
+  containsCardNumber,
   depositDueCents,
   depositHeldCents,
   depositSettlement,
@@ -323,6 +325,7 @@ export async function recordCashPayment(op: OpContext, bookingId: string, input:
   const tenderedCents = input.tendered === undefined ? amountCents : toCents(input.tendered);
   const change = cashChangeCents(tenderedCents, amountCents);
   if (change === null) throw badRequest('The cash handed over is less than the amount. Enter what the guest gave you.');
+  if (containsCardNumber(input.note)) throw badRequest(CARD_NUMBER_REFUSED);
   const currency = ctx.booking.currency;
   const payment = await prisma.payment.create({
     data: {
@@ -365,6 +368,7 @@ export async function recordExternalPayment(
   if (input.method === 'EXTERNAL_CARD' && last4.length !== 4) throw badRequest('Enter the last four digits of the card the terminal charged.');
   const note = input.note?.replace(/\s+/g, ' ').trim().slice(0, 200) || null;
   if (input.method === 'OTHER' && (!note || note.length < 3)) throw badRequest('Say how it was paid (for example “bank transfer” or “paid to Expedia”).');
+  if (containsCardNumber(note) || containsCardNumber(input.reference)) throw badRequest(CARD_NUMBER_REFUSED);
   const currency = ctx.booking.currency;
   const payment = await prisma.payment.create({
     data: {
@@ -619,13 +623,14 @@ export async function applyDeskIntent(paymentId: string, intent: Stripe.PaymentI
 
   const booking = await prisma.booking.findUnique({ where: { id: payment.bookingId }, select: { id: true, groupCode: true, currency: true } });
   if (!booking) return;
-  const card = details.cardLast4 ? ` (${details.cardBrand ?? 'card'} ending ${details.cardLast4})` : '';
+  // The guest reads these on their booking page, and whoever paid may not be the guest: no card details here (they're on
+  // the payment, for staff).
   const how = METHOD_LABEL[payment.method as keyof typeof METHOD_LABEL]?.toLowerCase() ?? 'card';
   const label = KIND_LABEL[payment.kind] ?? 'Payment';
   const amount = next.status === 'AUTHORIZED' ? toCents(intent.amount_capturable || intent.amount) : intent.amount_received || intent.amount;
   const notes: Record<string, string> = {
-    SUCCEEDED: `${label} of ${money(amount, booking.currency)} paid by ${how}${card}`,
-    AUTHORIZED: `${label} of ${money(amount, booking.currency)} held on the card by ${how}${card}${details.captureBefore ? `, until ${details.captureBefore.toISOString().slice(0, 10)}` : ''}`,
+    SUCCEEDED: `${label} of ${money(amount, booking.currency)} paid by ${how}`,
+    AUTHORIZED: `${label} of ${money(amount, booking.currency)} held on the card by ${how}${details.captureBefore ? `, until ${details.captureBefore.toISOString().slice(0, 10)}` : ''}`,
     FAILED: `${label} by ${how} declined: ${String(next.data.failureMessage ?? 'card declined')}`,
   };
   const note = notes[next.status];

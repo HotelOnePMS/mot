@@ -31,9 +31,20 @@ export function RoomPicker({
   const { data, isLoading } = useSWR<RoomOption[]>(`/api/admin/bookings/${booking.id}/room?${q}`, fetcher);
   const options = (data ?? []).filter((o) => !readyOnly || o.ready || o.room.id === value);
 
-  // Preselect the best match.
+  // Preselect the best match, or report the room already chosen (assigned in advance, say) so the caller knows
+  // whether it's ready.
+  const reported = React.useRef<string | null>(null);
   React.useEffect(() => {
-    if (!value && options[0]) onChange(options[0].room.id, options[0]);
+    if (!value) {
+      if (options[0]) onChange(options[0].room.id, options[0]);
+      return;
+    }
+    if (reported.current === value) return;
+    const current = options.find((o) => o.room.id === value);
+    if (current) {
+      reported.current = value;
+      onChange(value, current);
+    }
   }, [options, value, onChange]);
 
   return (

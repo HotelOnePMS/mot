@@ -117,7 +117,7 @@ export async function nightAuditPreview(actor: Actor, propertyId: string, reques
     closed,
     noShows: noShows.map(toBookingSummary),
     overdueDepartures: overdue.map(toBookingSummary),
-    unpaidInHouse: unpaid.map(toBookingSummary).filter((b) => b.balance > 0.004),
+    unpaidInHouse: unpaid.map(toBookingSummary).filter((b) => b.checkOutDue > 0.004),
     rooms: {
       total: rooms.length,
       occupied: occupied.size,

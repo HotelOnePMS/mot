@@ -5,6 +5,7 @@ import Link from 'next/link';
 import useSWR, { useSWRConfig } from 'swr';
 import { toast } from 'sonner';
 import { CreditCard, RotateCcw, ShieldAlert } from 'lucide-react';
+import { RECORDED_METHODS, type PaymentMethod } from '@/lib/desk-payments';
 import type { BookingSummary } from '@/lib/dto';
 import { api, fetcher } from '@/lib/fetcher';
 import { formatMoney } from '@/lib/format';
@@ -131,6 +132,12 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
           <div className="space-y-4">
+            {(booking.status === 'CHECKED_IN' || booking.status === 'CONFIRMED') && (
+              // Check-out needs the balance at zero, and a refund toward the stay brings the balance back.
+              <Callout tone="warning">
+                {booking.guest.name} hasn’t checked out. A refund now is owed again before they can check out. To refund unused nights or as a goodwill gesture, check them out first, then refund.
+              </Callout>
+            )}
             <Callout tone={info.deadlinePassed ? 'warning' : 'info'}>
               {info.deadlinePassed
                 ? `Free cancellation ended at ${info.deadlineLabel}. The policy doesn’t require a refund now; you can still refund any amount.`
@@ -238,11 +245,12 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
   const { data } = useSWR<PaymentInfo>(can('booking.payment.view') ? `/api/admin/bookings/${b.id}/payment` : null, fetcher);
   const [refundOpen, setRefundOpen] = React.useState(false);
   const closed = b.status === 'CANCELLED' || b.status === 'NO_SHOW';
-  const balance = Math.max(0, b.totalPrice - b.amountPaid);
+  const balance = Math.max(0, b.balance);
   const nightly = b.nights ? b.totalPrice / b.nights / Math.max(1, b.rooms) : b.totalPrice;
   // Online payments are listed here; money taken at the desk is in the desk card (DeskPayments).
   const paid = (data?.payments ?? []).filter((p) => p.method === 'ONLINE' && p.status !== 'FAILED' && p.status !== 'PENDING');
-  const refundable = (data?.payments ?? []).filter((p) => p.method !== 'CASH' && p.kind !== 'SECURITY_DEPOSIT' && (p.status === 'SUCCEEDED' || p.status === 'PARTIALLY_REFUNDED'));
+  // Card payments through Stripe; cash and payments recorded at the desk are handed back from the desk card.
+  const refundable = (data?.payments ?? []).filter((p) => !RECORDED_METHODS.includes(p.method as PaymentMethod) && p.kind !== 'SECURITY_DEPOSIT' && (p.status === 'SUCCEEDED' || p.status === 'PARTIALLY_REFUNDED'));
   const canRefund = can('payments.refund') && refundable.length > 0;
 
   return (

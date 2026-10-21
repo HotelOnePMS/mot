@@ -13,12 +13,13 @@
  * name on it in clear; the full number, date of birth and address sealed with
  * the vault; the front photo sealed in its own table. Both sealed parts are
  * deleted after the retention period (CARD_AUTH_ID_PHOTO_DAYS after
- * check-out, longer while a dispute is open). The registration card keeps its
- * exact wording, hash and signature. Nothing goes into the booking's status
+ * check-out, longer while a dispute is open). The registration card is kept as
+ * signed, like a paper card: its exact wording (the home address printed on it
+ * included), the signature, and the record its hash covers. Nothing goes into the booking's status
  * history beyond "Checked in", because guests read it on their booking page.
  */
 import { randomUUID } from 'crypto';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import type { BookingSummary, ISODate } from '@/lib/dto';
 import { COUNTRY_CODES, ID_TYPES, ID_TYPE_LABEL, countryName, typedSignatureMatches, type IdType } from '@/lib/card-authorization';
@@ -26,14 +27,14 @@ import { depositDueCents, depositHeldCents, type DeskPaymentLike, type SecurityD
 import { formatClock } from '@/lib/format';
 import { fromCents, toCents } from '@/lib/payments';
 import { idLast4Of, idWarnings } from '@/lib/guest-id';
-import { REGISTRATION_VERSION, registrationCardText, type RegistrationCardInput } from '@/lib/registration-card';
+import { REGISTRATION_VERSION, registrationCardText, type RegistrationDeposit } from '@/lib/registration-card';
 import { money } from '@/lib/status';
 import { can, requirePermission, type Actor } from '../authz';
 import { HOTEL_POLICY, runsOnHotelOne } from '../concierge/facts';
 import { atNoonUTC, toISODate } from '../dates';
 import { badRequest, conflict, notFound } from '../errors';
 import { logError } from '../log';
-import { MAX_ID_PHOTO_BYTES, MAX_SIGNATURE_BYTES, idPhotoRetentionDays, parseImageDataUrl } from '../payments/cardAuthorization';
+import { MAX_ID_PHOTO_BYTES, MAX_SIGNATURE_BYTES, idPhotoRetentionDays, idRetentionOver, parseImageDataUrl } from '../payments/cardAuthorization';
 import { paymentLines } from '../payments/record';
 import { hashPolicy } from '../payments/policy';
 import { open, seal, sha256, vaultAvailable } from '../vault';
@@ -241,21 +242,28 @@ async function depositState(booking: BookingWithRelations) {
   }));
   const mode = property.securityDepositMode as SecurityDepositMode;
   const amountCents = toCents(Number(property.securityDepositAmount));
-  // The newest deposit still held describes it on the registration card.
-  const latest = payments.find((p) => !p.settledAt && (p.status === 'AUTHORIZED' || p.status === 'SUCCEEDED' || p.status === 'PARTIALLY_REFUNDED'));
-  return { mode, amount: fromCents(amountCents), held: fromCents(depositHeldCents(likes)), due: fromCents(depositDueCents({ mode, amountCents, payments: likes })), latest };
+  // Each deposit still held, oldest first, with what it holds now: they're listed one by one on the registration card.
+  const stillHeld = payments
+    .filter((p) => !p.settledAt && (p.status === 'AUTHORIZED' || p.status === 'SUCCEEDED' || p.status === 'PARTIALLY_REFUNDED'))
+    .map((p) => ({ payment: p, heldCents: p.status === 'AUTHORIZED' ? toCents(Number(p.amountAuthorized ?? p.amount)) : toCents(Number(p.amount)) - toCents(Number(p.amountRefunded)) }))
+    .filter((d) => d.heldCents > 0)
+    .reverse();
+  return { mode, amount: fromCents(amountCents), held: fromCents(depositHeldCents(likes)), due: fromCents(depositDueCents({ mode, amountCents, payments: likes })), stillHeld };
 }
 
 const CARD_METHODS = ['TERMINAL', 'CARD_ENTRY', 'VIRTUAL_CARD', 'EXTERNAL_CARD'];
 
-/** The deposit as the registration card states it. */
-async function depositForCard(booking: BookingWithRelations, choice: DepositChoice): Promise<RegistrationCardInput['deposit']> {
-  if (choice.kind === 'NONE') return null;
+/** The deposits as the registration card states them. */
+async function depositsForCard(booking: BookingWithRelations, choice: DepositChoice): Promise<RegistrationDeposit[]> {
+  if (choice.kind === 'NONE') return [];
   const state = await depositState(booking);
-  const d = state.latest;
-  if (!d || state.held <= 0) throw badRequest('No security deposit is held yet. Take it first, or choose to check in without one.');
-  const kind = d.status === 'AUTHORIZED' ? 'CARD_HOLD' : d.method === 'CASH' ? 'CASH' : CARD_METHODS.includes(d.method) ? 'CARD_CHARGE' : 'OTHER';
-  return { kind, amount: state.held, cardBrand: d.cardBrand, cardLast4: d.cardLast4 };
+  if (!state.stillHeld.length) throw badRequest('No security deposit is held yet. Take it first, or choose to check in without one.');
+  return state.stillHeld.map(({ payment: d, heldCents }) => ({
+    kind: d.status === 'AUTHORIZED' ? 'CARD_HOLD' : d.method === 'CASH' ? 'CASH' : CARD_METHODS.includes(d.method) ? 'CARD_CHARGE' : 'OTHER',
+    amount: fromCents(heldCents),
+    cardBrand: d.cardBrand,
+    cardLast4: d.cardLast4,
+  }));
 }
 
 async function roomNumberFor(booking: BookingWithRelations, roomId: string | null): Promise<string> {
@@ -268,9 +276,9 @@ async function roomNumberFor(booking: BookingWithRelations, roomId: string | nul
   return room.roomNumber;
 }
 
-async function registrationFor(booking: BookingWithRelations, draft: RegistrationDraft): Promise<{ text: string; textHash: string; deposit: RegistrationCardInput['deposit'] }> {
+async function registrationFor(booking: BookingWithRelations, draft: RegistrationDraft): Promise<{ text: string; textHash: string; deposits: RegistrationDeposit[] }> {
   const s = toBookingSummary(booking);
-  const deposit = await depositForCard(booking, draft.deposit);
+  const deposits = await depositsForCard(booking, draft.deposit);
   const p = await prisma.property.findUnique({ where: { id: booking.propertyId }, select: { name: true, address: true, city: true, state: true, zipCode: true } });
   if (!p) throw notFound('Property');
   const text = registrationCardText({
@@ -289,18 +297,21 @@ async function registrationFor(booking: BookingWithRelations, draft: Registratio
     stayTotal: s.totalPrice,
     paid: s.amountPaid,
     balance: s.balance,
-    deposit,
+    deposits,
     id: { typeLabel: ID_TYPE_LABEL[draft.id.idType] ?? 'Photo ID', country: draft.id.country ? countryName(draft.id.country) || null : null, last4: draft.id.last4 },
     checkOutTime: await checkOutTimeFor(booking.propertyId),
   });
-  return { text, textHash: hashPolicy(REGISTRATION_VERSION, text), deposit };
+  return { text, textHash: hashPolicy(REGISTRATION_VERSION, text), deposits };
 }
 
 /** The registration card the guest is about to sign, exactly as it will be stored. */
 export async function previewRegistration(actor: Actor, bookingId: string, draft: RegistrationDraft): Promise<{ text: string; textHash: string; version: string }> {
   requirePermission(actor, 'booking.checkin');
   const booking = await getBookingForStaff(actor, bookingId);
-  return { ...(await registrationFor(booking, draft)), version: REGISTRATION_VERSION };
+  // Already checked in (by someone else since the screen opened, too): the card names the room the guest is in, as the
+  // check-in itself will (completeGuidedCheckIn), so the two always agree.
+  const forBooking = booking.status === 'CHECKED_IN' ? { ...draft, roomId: null } : draft;
+  return { ...(await registrationFor(booking, forBooking)), version: REGISTRATION_VERSION };
 }
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -362,34 +373,40 @@ export async function completeGuidedCheckIn(
     signatureDigest = sha256(sig.text.trim());
   }
 
+  // Without a deposit where the hotel asks for one: staff say why, and it's logged. A hotel that asks for none needs neither.
+  let waived = false;
   if (input.deposit.kind === 'NONE') {
     const state = await depositState(booking);
-    if (state.due > 0 && state.held <= 0 && (input.deposit.reason?.trim().length ?? 0) < 3) {
+    waived = state.due > 0 && state.held <= 0;
+    if (waived && (input.deposit.reason?.trim().length ?? 0) < 3) {
       throw badRequest(`This hotel takes a security deposit of ${money(state.amount, { currency: booking.currency })}. Take it, or say why this guest checks in without one.`);
     }
   }
   const draft: RegistrationDraft = { roomId: mode === 'CHECK_IN' ? (input.roomId ?? null) : null, guestAddress: input.guestAddress ?? null, id: { idType: input.id.idType, country: id.country, last4: id.last4 }, deposit: input.deposit };
   const card = await registrationFor(booking, draft);
-  if (card.textHash !== input.registration.textHash) throw conflict('Something on the registration card changed (a payment, the room or the deposit). Show the guest the updated card and sign again.');
+  if (card.textHash !== input.registration.textHash) {
+    throw conflict('Something on the registration card changed (a payment, the room or the deposit). Show the guest the updated card and sign again.', { cardChanged: true });
+  }
 
   const gidId = randomUUID();
   const signedAt = new Date();
   const photoDigest = photo ? sha256(photo.bytes.toString('base64')) : null;
-  const documentHash = sha256(
-    JSON.stringify({
-      v: 1,
-      bookingId: booking.id,
-      textVersion: REGISTRATION_VERSION,
-      textHash: card.textHash,
-      guest: summary.guest.name,
-      id: { type: input.id.idType, country: id.country, last4: id.last4, photoSha256: photoDigest },
-      deposit: input.deposit.kind === 'HELD' ? card.deposit : null,
-      signature: { method: sig.method, sha256: signatureDigest },
-      signedAt: signedAt.toISOString(),
-      ip: meta.ip,
-      witnessedById: ctx.actor.userId,
-    }),
-  );
+  // Everything signed, stored as is next to its hash so the hash can be checked later. A typed signature is the guest's
+  // typed name, kept in clear here; a drawn one is stored as the image (signatureImage) and named by its hash.
+  const signedRecord = JSON.stringify({
+    v: 1,
+    bookingId: booking.id,
+    textVersion: REGISTRATION_VERSION,
+    textHash: card.textHash,
+    guest: summary.guest.name,
+    id: { type: input.id.idType, country: id.country, last4: id.last4, photoSha256: photoDigest },
+    deposits: card.deposits,
+    signature: sig.method === 'DRAWN' ? { method: sig.method, sha256: signatureDigest } : { method: sig.method, text: sig.text.trim() },
+    signedAt: signedAt.toISOString(),
+    ip: meta.ip,
+    witnessedById: ctx.actor.userId,
+  });
+  const documentHash = sha256(signedRecord);
   const sealed = photos
     ? seal({ documentNumber: id.number, dateOfBirth: input.id.dateOfBirth ?? null, address: input.id.address ?? null, sex: input.id.sex ?? null, nationality: input.id.nationality ?? null }, detailsAad(gidId))
     : null;
@@ -429,24 +446,31 @@ export async function completeGuidedCheckIn(
         signedUserAgent: meta.userAgent?.slice(0, 400) ?? null,
         witnessedById: ctx.actor.userId,
         documentHash,
+        signedRecord,
       },
     });
   };
 
   let result: { booking: BookingSummary; effects: string[] };
-  if (mode === 'CHECK_IN') {
-    if (!input.roomId) throw badRequest('Choose a room first.');
-    const r = await transitionBooking(ctx, booking.id, 'CHECKED_IN', { roomId: input.roomId, allowDirtyRoom: input.allowDirtyRoom, note: 'Guided check-in', inTransaction: write });
-    result = { booking: r.booking, effects: r.effects };
-  } else {
-    await prisma.$transaction(write);
-    result = { booking: toBookingSummary(await getBookingForStaff(ctx.actor, booking.id)), effects: [] };
+  try {
+    if (mode === 'CHECK_IN') {
+      if (!input.roomId) throw badRequest('Choose a room first.');
+      const r = await transitionBooking(ctx, booking.id, 'CHECKED_IN', { roomId: input.roomId, allowDirtyRoom: input.allowDirtyRoom, note: 'Guided check-in', inTransaction: write });
+      result = { booking: r.booking, effects: r.effects };
+    } else {
+      await prisma.$transaction(write);
+      result = { booking: toBookingSummary(await getBookingForStaff(ctx.actor, booking.id)), effects: [] };
+    }
+  } catch (e) {
+    // Saved a moment ago from another screen (or a retried request): one ID and one registration card per stay.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw conflict('The photo ID and registration card for this stay were just saved from another screen.');
+    throw e;
   }
 
   const idText = `${ID_TYPE_LABEL[input.id.idType] ?? 'ID'} (${id.country}, ending ${id.last4})`;
   await recordAudit(ctx, booking.propertyId, 'GUEST_ID_RECORDED', `Checked ${summary.guest.name}’s ${idText}${id.reason ? ` — accepted: ${id.reason}` : ''}`, { bookingId: booking.id });
   await recordAudit(ctx, booking.propertyId, 'REGISTRATION_SIGNED', `${summary.guest.name} signed the registration card (${sig.method === 'DRAWN' ? 'drawn' : 'typed'} signature)`, { bookingId: booking.id });
-  if (input.deposit.kind === 'NONE') {
+  if (waived && input.deposit.kind === 'NONE') {
     await recordAudit(ctx, booking.propertyId, 'DEPOSIT_WAIVED', `Checked in without a security deposit (${summary.code})${input.deposit.reason?.trim() ? `: ${input.deposit.reason.trim().slice(0, 200)}` : ''}`, { bookingId: booking.id });
   }
   // Old ID photos and sealed details are cleared now and then (and by the hold-release cron).
@@ -488,7 +512,7 @@ export async function readGuestIdPhoto(ctx: OpContext, bookingId: string): Promi
 export async function purgeExpiredGuestIds(now = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - idPhotoRetentionDays() * DAY);
   const due = await prisma.guestIdentification.findMany({
-    where: { purgedAt: null, booking: { checkOut: { lt: cutoff }, disputes: { none: { closedAt: null } } } },
+    where: { purgedAt: null, booking: idRetentionOver(cutoff) },
     select: { id: true },
     take: 500,
   });

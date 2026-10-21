@@ -36,6 +36,12 @@ export interface BookingSummary {
   amountPaid: number;
   /** What the guest still owes: the total less everything paid online or at the desk. Negative = the hotel owes the guest. */
   balance: number;
+  /**
+   * What must be paid before the guest can check out. A single booking: its balance (never negative). A line of a
+   * multi-room-type reservation: nothing once its share is covered, otherwise what the whole reservation still owes,
+   * which is what the desk collects (payments are shared, so a part payment is spread over every room type).
+   */
+  checkOutDue: number;
   /** Reasons for the front desk to look twice (staff only; computed on the server). */
   riskFlags: RiskFlag[];
   notes: string | null;

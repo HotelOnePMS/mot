@@ -26,7 +26,7 @@ const bodySchema = z.discriminatedUnion('method', [
   z.object({ method: z.literal('CARD_ENTRY'), kind, amount, hold }),
   z.object({ method: z.literal('VIRTUAL_CARD'), kind, amount }),
   // Taken outside HotelOne: the hotel's own card terminal, or another way (bank transfer, the OTA, an invoice).
-  z.object({ method: z.literal('EXTERNAL_CARD'), kind, amount, cardBrand: z.string().max(20).nullish(), cardLast4: z.string().regex(/^\d{4}$/), reference: z.string().max(40).nullish(), note: z.string().max(200).nullish() }),
+  z.object({ method: z.literal('EXTERNAL_CARD'), kind, amount, cardBrand: z.string().max(20).nullish(), cardLast4: z.string().regex(/^\d{4}$/), reference: z.string().trim().max(20).regex(/^[A-Za-z0-9-]*$/, 'Enter the approval code as the terminal prints it (letters and digits).').nullish(), note: z.string().max(200).nullish() }),
   z.object({ method: z.literal('OTHER'), kind, amount, note: z.string().trim().min(3).max(200) }),
 ]);
 

@@ -68,6 +68,15 @@ export function idPhotoRetentionDays(): number {
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 180;
 }
 
+/**
+ * Bookings whose ID photos and sealed ID details can be deleted: checked out before `cutoff`, with no open dispute
+ * on the booking or on its reservation's lead line (a reservation of several room types is paid, and so disputed, there).
+ */
+export function idRetentionOver(cutoff: Date): Prisma.BookingWhereInput {
+  const noOpenDispute = { disputes: { none: { closedAt: null } } };
+  return { checkOut: { lt: cutoff }, ...noOpenDispute, OR: [{ reservationLead: { is: null } }, { reservationLead: { is: noOpenDispute } }] };
+}
+
 const tokenHashOf = (token: string) => sha256(`card-auth:${token}`);
 const photoAad = (id: string) => `card-auth-id:${id}`;
 
@@ -478,11 +487,11 @@ export async function verifiedAuthorizationFor(booking: { id: string; groupCode:
   return { signerName: row.signerName ?? '', at: row.reviewedAt, by: names.get(row.reviewedById ?? '') ?? null };
 }
 
-/** Delete ID photos past the retention period (CARD_AUTH_ID_PHOTO_DAYS after check-out), keeping any whose booking has an open dispute. */
+/** Delete ID photos past the retention period (CARD_AUTH_ID_PHOTO_DAYS after check-out), keeping any whose reservation has an open dispute. */
 export async function purgeExpiredIdPhotos(now = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - idPhotoRetentionDays() * DAY);
   const due = await prisma.cardAuthorizationIdPhoto.findMany({
-    where: { authorization: { booking: { checkOut: { lt: cutoff }, disputes: { none: { closedAt: null } } } } },
+    where: { authorization: { booking: idRetentionOver(cutoff) } },
     select: { authorizationId: true },
     take: 500,
   });

@@ -1165,8 +1165,10 @@ model RegistrationCard {
   signedIp        String?
   signedUserAgent String?
   witnessedById   String
-  /// SHA-256 over everything signed (wording, ID summary and photo hash, deposit, signature).
+  /// SHA-256 of signedRecord: everything signed (wording hash, ID summary and photo hash, deposits, signature).
   documentHash    String
+  /// The exact JSON documentHash was computed over, kept so anyone can check it later (after the ID photo is deleted too).
+  signedRecord    String
   createdAt       DateTime @default(now())
   booking         Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   property        Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)

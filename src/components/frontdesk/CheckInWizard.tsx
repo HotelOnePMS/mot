@@ -172,6 +172,8 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
   const [tried, setTried] = React.useState(false);
   const barcodeInput = React.useRef<HTMLInputElement>(null);
   const bodyRef = React.useRef<HTMLDivElement>(null);
+  const scanTimer = React.useRef<number | undefined>(undefined);
+  React.useEffect(() => () => window.clearTimeout(scanTimer.current), []);
 
   // A fresh form every time it opens.
   React.useEffect(() => {
@@ -211,7 +213,8 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
   const warnings = idWarnings({ nameOnId: id.nameOnId, guestName, expiresOn: id.expiresOn || null, dateOfBirth: id.dateOfBirth || null, today: ctx?.today ?? new Date().toISOString().slice(0, 10) });
   const held = (ctx?.deposit.held ?? 0) > 0.004;
   const due = ctx?.deposit.due ?? 0;
-  const deposit = held ? ({ kind: 'HELD' } as const) : noDeposit ? ({ kind: 'NONE', reason: noDepositReason.trim() || null } as const) : null;
+  // A hotel that asks for no deposit checks guests in without one unless staff take one.
+  const deposit = held ? ({ kind: 'HELD' } as const) : noDeposit || due <= 0.004 ? ({ kind: 'NONE', reason: noDepositReason.trim() || null } as const) : null;
   const dirty = option ? !option.ready : false;
 
   const idProblems: Partial<Record<keyof IdForm | 'documentNumber', string>> = {};
@@ -255,19 +258,25 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
       setConsent(false);
       void loadPreview();
     }
-  }, [open, step, loadPreview, folio?.totals.balance]);
+  }, [open, step, loadPreview, folio?.totals.balance, folio?.checkOutDue]);
+  // Whatever the guest signed was for the card on screen then: a new card, or switching how they sign, starts over.
+  React.useEffect(() => {
+    setSigImage(null);
+    setSigText('');
+  }, [preview?.textHash, sigMethod]);
 
   if (!booking) return null;
 
+  // A scan replaces what an earlier one filled in, as read: a number the parser couldn't trust stays empty for staff to type.
   function applyScan(scan: ScannedId) {
     setId((v) => ({
       ...v,
       source: scan.format === 'AAMVA' ? 'SCAN_AAMVA' : 'SCAN_MRZ',
       idType: scan.idType,
-      country: scan.country ?? v.country,
+      country: scan.country ?? '',
       region: scan.region ?? '',
-      nameOnId: scan.fullName || v.nameOnId,
-      documentNumber: scan.documentNumber || v.documentNumber,
+      nameOnId: scan.fullName,
+      documentNumber: scan.documentNumber,
       expiresOn: scan.expiry ?? '',
       dateOfBirth: scan.dateOfBirth ?? '',
       address: scan.address,
@@ -282,11 +291,20 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
     );
   }
 
+  // Desk scanners type the barcode one character at a time: read it once they stop, then clear the box for the next scan.
   function onScanInput(text: string) {
     setScanText(text);
+    window.clearTimeout(scanTimer.current);
     if (text.trim().length < 20) return;
-    const scan = parseIdScan(text);
-    if (scan) applyScan(scan);
+    scanTimer.current = window.setTimeout(() => {
+      const scan = parseIdScan(text);
+      if (scan) {
+        applyScan(scan);
+        setScanText('');
+      } else {
+        setScanNote({ tone: 'warning', text: 'Couldn’t read that scan. Clear the box and scan again, or type the details.' });
+      }
+    }, 300);
   }
 
   async function readBarcodePhoto(file: File) {
@@ -373,8 +391,15 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
       refresh();
       onOpenChange(false);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        // Something on the card changed (a payment, the room, the deposit): show the new card and sign again.
+      const details = e instanceof ApiError && e.status === 409 ? ((e.details ?? {}) as { cardChanged?: boolean; dirty?: boolean }) : null;
+      if (details?.dirty) {
+        // The room isn't ready after all: choose it knowingly (or another) on the room step.
+        setOption(null);
+        go('room');
+      } else if (details) {
+        // Something on the card changed (a payment, the room, the deposit, or someone else checked the guest in):
+        // reload what the screen knows, then show the new card to sign again.
+        await Promise.all([mutate(`/api/admin/bookings/${booking.id}/check-in`), mutate(`/api/admin/bookings/${booking.id}/folio`)]);
         setConsent(false);
         void loadPreview();
       }
@@ -385,11 +410,17 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
   }
 
   const err = (k: keyof typeof idProblems) => (tried ? idProblems[k] : undefined);
+  const touched = !!(id.photo || id.nameOnId.trim() || id.documentNumber.trim() || scanText || sigImage || sigText.trim());
+  function requestClose() {
+    if (busy) return;
+    if (touched && !window.confirm('Leave the check-in? The ID details, photo and signature entered so far will be lost. Payments already taken are kept.')) return;
+    onOpenChange(false);
+  }
   const alreadyDone = mode === 'RECORD' && !!ctx?.recorded.registration;
   const latestNote = booking.notes?.split('\n').slice(-1)[0]?.replace(/^\[[^\]]+\]\s*/, '');
 
   return (
-    <Sheet open={open} onOpenChange={(o) => (!busy || o ? onOpenChange(o) : undefined)}>
+    <Sheet open={open} onOpenChange={(o) => (o ? onOpenChange(true) : requestClose())}>
       <SheetContent className="sm:max-w-2xl" onInteractOutside={(e) => e.preventDefault()}>
         <SheetHeader>
           <SheetTitle>{mode === 'RECORD' ? `Photo ID and registration card for ${booking.guest.name}` : `Check in ${booking.guest.name}`}</SheetTitle>
@@ -477,6 +508,11 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
                         placeholder="Waiting for the scanner…"
                       />
                     </Field>
+                    {scanText && (
+                      <Button type="button" size="sm" variant="ghost" onClick={() => { setScanText(''); setScanNote(null); }}>
+                        Clear
+                      </Button>
+                    )}
                     {barcodeDetector() && (
                       <>
                         <input ref={barcodeInput} type="file" accept="image/*" capture="environment" className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => e.target.files?.[0] && void readBarcodePhoto(e.target.files[0])} />
@@ -618,7 +654,7 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
               {step === 'folio' && (
                 <div className="space-y-4">
                   <FolioSummary bookingId={booking.id} />
-                  {folio && folio.totals.balance > 0.004 && (
+                  {folio && folio.checkOutDue > 0.004 && (
                     <Callout
                       tone="info"
                       action={
@@ -629,7 +665,7 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
                         ) : undefined
                       }
                     >
-                      {fmt(folio.totals.balance, folio.currency)} still to pay. Take it now or any time before check-out; the guest can’t check out until it’s paid.
+                      {fmt(folio.checkOutDue, folio.currency)} still to pay{folio.reservation ? ` on reservation ${folio.reservation.code}` : ''}. Take it now or any time before check-out; the guest can’t check out until it’s paid.
                     </Callout>
                   )}
                 </div>
@@ -652,17 +688,19 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
                         <div className="space-y-2 rounded-xl border p-3">
                           <p className="text-sm font-medium">Take the deposit</p>
                           <p className="text-xs text-muted-foreground">On the card reader, as a hold on the guest’s card online (they can scan a code to pay on their phone), or in cash.</p>
-                          <Button size="sm" disabled={noDeposit} onClick={() => setCollect('SECURITY_DEPOSIT')}>
+                          <Button size="sm" variant={due > 0.004 ? 'default' : 'outline'} disabled={noDeposit} onClick={() => setCollect('SECURITY_DEPOSIT')}>
                             <ShieldCheck aria-hidden /> Take deposit{due > 0.004 ? ` · ${fmt(due, currency)}` : ''}
                           </Button>
                         </div>
                       ) : (
                         <Callout tone="info">Your role can’t take payments. Ask someone who can to take the deposit, or check in without one.</Callout>
                       )}
-                      <Check id="ci-no-deposit" checked={noDeposit} onChange={setNoDeposit}>
-                        Check in without a security deposit
-                      </Check>
-                      {noDeposit && (
+                      {due > 0.004 && (
+                        <Check id="ci-no-deposit" checked={noDeposit} onChange={setNoDeposit}>
+                          Check in without a security deposit
+                        </Check>
+                      )}
+                      {noDeposit && due > 0.004 && (
                         <Field label="Why" optional={due <= 0.004} htmlFor="ci-no-deposit-reason" error={tried && due > 0.004 && noDepositReason.trim().length < 3 ? 'Say why this guest checks in without the deposit.' : undefined}>
                           <Input id="ci-no-deposit-reason" value={noDepositReason} maxLength={200} onChange={(e) => setNoDepositReason(e.target.value)} placeholder="e.g. Corporate account, regular guest" />
                         </Field>
@@ -716,7 +754,7 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
                   />
                   {sigMethod === 'DRAWN' ? (
                     <div className="space-y-1">
-                      <SignaturePad label="Guest signature" onChange={setSigImage} />
+                      <SignaturePad key={preview?.textHash ?? 'none'} label="Guest signature" onChange={setSigImage} />
                       {tried && !sigImage && (
                         <p role="alert" className="text-xs font-medium text-destructive">
                           The guest signs in the box.
@@ -756,7 +794,7 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
                   <ArrowLeft aria-hidden /> Back
                 </Button>
               ) : (
-                <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                <Button variant="ghost" onClick={requestClose}>
                   Cancel
                 </Button>
               )}

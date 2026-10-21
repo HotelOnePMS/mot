@@ -39,14 +39,21 @@ export interface RegistrationCardInput {
   /** Signed: positive = still to pay, negative = credit. */
   balance: number;
   /**
-   * The security deposit held for the stay: a hold on a card (released at check-out), a charge to a card
-   * (refunded at check-out), cash, or recorded another way.
+   * The security deposits held for the stay, each as it was taken: a hold on a card (released at check-out), a charge
+   * to a card (refunded at check-out), cash, or recorded another way. Empty: none.
    */
-  deposit: { kind: 'CARD_HOLD' | 'CARD_CHARGE' | 'CASH' | 'OTHER'; amount: number; cardBrand: string | null; cardLast4: string | null } | null;
+  deposits: RegistrationDeposit[];
   /** Never the full ID number. country is a display name or null. */
   id: { typeLabel: string; country: string | null; last4: string };
   /** As guests are told elsewhere, e.g. 'by 11:00 AM'. */
   checkOutTime: string;
+}
+
+export interface RegistrationDeposit {
+  kind: 'CARD_HOLD' | 'CARD_CHARGE' | 'CASH' | 'OTHER';
+  amount: number;
+  cardBrand: string | null;
+  cardLast4: string | null;
 }
 
 /** Collapses whitespace (newlines included) so free text stays on one line. */
@@ -66,14 +73,27 @@ function cardEnding(last4: string | null): string {
   return d ? ` ending ${d}` : '';
 }
 
-function depositSentence(d: RegistrationCardInput['deposit'], currency: string): string {
-  if (!d) return 'No security deposit was taken.';
-  const amount = money(d.amount, { currency });
-  if (d.kind === 'CASH') return `Security deposit: ${amount} in cash, returned at check-out less any charges.`;
-  if (d.kind === 'OTHER') return `Security deposit: ${amount}, returned at check-out less any charges.`;
-  const card = `${brandName(d.cardBrand)}${cardEnding(d.cardLast4)}`;
-  if (d.kind === 'CARD_HOLD') return `Security deposit: a hold of ${amount} on ${card}. It is released after check-out, less any charges.`;
-  return `Security deposit: ${amount} charged to ${card}, refunded after check-out less any charges.`;
+function depositSentence(deposits: readonly RegistrationDeposit[], currency: string): string {
+  if (!deposits.length) return 'No security deposit was taken.';
+  if (deposits.length === 1) {
+    const d = deposits[0];
+    const amount = money(d.amount, { currency });
+    if (d.kind === 'CASH') return `Security deposit: ${amount} in cash, returned at check-out less any charges.`;
+    if (d.kind === 'OTHER') return `Security deposit: ${amount}, returned at check-out less any charges.`;
+    const card = `${brandName(d.cardBrand)}${cardEnding(d.cardLast4)}`;
+    if (d.kind === 'CARD_HOLD') return `Security deposit: a hold of ${amount} on ${card}. It is released after check-out, less any charges.`;
+    return `Security deposit: ${amount} charged to ${card}, refunded after check-out less any charges.`;
+  }
+  // Taken in parts (some cash and a card, say): each part as it was taken.
+  const parts = deposits.map((d) => {
+    const amount = money(d.amount, { currency });
+    const card = `${brandName(d.cardBrand)}${cardEnding(d.cardLast4)}`;
+    if (d.kind === 'CASH') return `${amount} in cash, returned at check-out`;
+    if (d.kind === 'OTHER') return `${amount}, returned at check-out`;
+    if (d.kind === 'CARD_HOLD') return `a hold of ${amount} on ${card}, released after check-out`;
+    return `${amount} charged to ${card}, refunded after check-out`;
+  });
+  return `Security deposits: ${parts.join('; ')}; each less any charges.`;
 }
 
 function balanceSentence(balance: number, currency: string): string {
@@ -121,7 +141,7 @@ export function registrationCardText(i: RegistrationCardInput): string {
     heading,
     guest,
     stay,
-    depositSentence(i.deposit, currency),
+    depositSentence(i.deposits, currency),
     agreement,
     'The information above is correct. I agree to sign electronically, and my electronic signature has the same effect as my handwritten one.',
   ].join('\n\n');

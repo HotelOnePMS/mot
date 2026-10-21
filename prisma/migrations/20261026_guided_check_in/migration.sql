@@ -48,6 +48,7 @@ CREATE TABLE "registration_cards" (
     "signedUserAgent" TEXT,
     "witnessedById" TEXT NOT NULL,
     "documentHash" TEXT NOT NULL,
+    "signedRecord" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "registration_cards_pkey" PRIMARY KEY ("bookingId")
@@ -80,16 +81,20 @@ ALTER TABLE "registration_cards" ADD CONSTRAINT "registration_cards_propertyId_f
 
 -- Check-out now needs a zero balance, and the balance counts money paid at the desk. Reservations marked paid at
 -- the desk before desk payments were recorded have no payment behind them, so their balance would read as the full
--- total. Record that payment once ("paid another way"). Lines of a reservation whose one payment sits on its lead
--- line are left alone.
+-- total. Record that payment once ("paid another way"), unless money toward the stay was already collected (a
+-- security deposit doesn't count). The ids are derived from the booking, so this can't insert twice.
 INSERT INTO "payments" ("id", "bookingId", "propertyId", "kind", "method", "status", "amount", "currency", "note", "paidAt", "createdAt", "updatedAt")
-SELECT 'pb' || substr(md5(b."id" || 'desk-paid'), 1, 23), b."id", b."propertyId", 'PAYMENT', 'OTHER', 'SUCCEEDED', b."totalPrice", lower(b."currency"),
+SELECT 'pb' || substr(md5(b."id" || 'desk-paid'), 1, 23),
+       -- A reservation of several room types is paid on its lead line (where every screen reads it), one row per line.
+       COALESCE(lead."id", b."id"), b."propertyId", 'PAYMENT', 'OTHER', 'SUCCEEDED', b."totalPrice", lower(b."currency"),
        'Marked as paid when booked, before desk payments were recorded', b."createdAt", CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 FROM "bookings" b
+LEFT JOIN "bookings" lead ON b."groupCode" IS NOT NULL AND lead."code" = b."groupCode"
 WHERE b."paymentStatus" = 'PAID'
   AND b."status" NOT IN ('CANCELLED', 'NO_SHOW')
-  AND NOT EXISTS (SELECT 1 FROM "payments" p WHERE p."bookingId" = b."id" AND p."status" IN ('SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'))
+  -- Money already collected toward the stay (a security deposit doesn't count) on the line or on its reservation's lead.
+  AND NOT EXISTS (SELECT 1 FROM "payments" p WHERE p."bookingId" = b."id" AND p."kind" <> 'SECURITY_DEPOSIT' AND p."status" IN ('SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'))
   AND NOT EXISTS (
-    SELECT 1 FROM "payments" p JOIN "bookings" l ON l."id" = p."bookingId"
-    WHERE b."groupCode" IS NOT NULL AND l."code" = b."groupCode" AND p."status" IN ('SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED')
+    SELECT 1 FROM "payments" p
+    WHERE lead."id" IS NOT NULL AND p."bookingId" = lead."id" AND p."kind" <> 'SECURITY_DEPOSIT' AND p."status" IN ('SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED')
   );

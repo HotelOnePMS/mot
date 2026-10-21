@@ -128,3 +128,22 @@ export function depositSettlement(input: { status: string; amountCents: number; 
   }
   return { error: 'This deposit has already been settled.' };
 }
+
+/**
+ * A full card number typed by mistake into a note or an approval code: 13 to 19 digits (spaces and dashes ignored)
+ * that pass the Luhn check. Card numbers are never stored, so the desk refuses them.
+ */
+export function containsCardNumber(text: string | null | undefined): boolean {
+  const runs = (text ?? '').replace(/[\s-]/g, '').match(/\d{13,19}/g) ?? [];
+  return runs.some((run) => {
+    let sum = 0;
+    for (let i = 0; i < run.length; i++) {
+      let d = Number(run[run.length - 1 - i]);
+      if (i % 2 === 1) d = d * 2 > 9 ? d * 2 - 9 : d * 2;
+      sum += d;
+    }
+    return sum % 10 === 0;
+  });
+}
+
+export const CARD_NUMBER_REFUSED = 'That looks like a full card number. Never type card numbers here: only the last four digits and the terminal’s approval code.';

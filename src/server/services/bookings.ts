@@ -470,8 +470,10 @@ export async function checkTransition(
   }
   // A guest checks out only once nothing is left to pay (online, at the desk, or recorded as paid another way).
   if (to === 'CHECKED_OUT') {
-    const { balance, currency } = toBookingSummary(booking);
-    if (balance > 0.004) return { ok: false, reason: `There’s a balance of ${money(balance, { currency })} to collect before the guest can check out.` };
+    const { checkOutDue, currency, reservationCode } = toBookingSummary(booking);
+    if (checkOutDue > 0.004) {
+      return { ok: false, reason: `There’s a balance of ${money(checkOutDue, { currency })}${reservationCode ? ` on reservation ${reservationCode}` : ''} to collect before the guest can check out.` };
+    }
   }
   return { ok: true };
 }
