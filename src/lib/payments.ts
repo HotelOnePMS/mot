@@ -118,48 +118,24 @@ export function allocateCents(cents: number, weights: readonly number[]): number
 }
 
 /**
- * A room type's weight when a reservation's payments are spread over its lines: what it asked for online (its
- * paymentDue) or, without one, what it costs; less its allowances, in proportion. Shared by the summaries
- * (mappers.ts) and the payment statuses (record.ts), so a cent of rounding lands on the same line.
- */
-export function shareWeightCents(line: { totalCents: number; dueCents: number | null; allowanceCents: number }): number {
-  const owed = Math.max(0, line.totalCents - line.allowanceCents);
-  if (line.dueCents === null || line.totalCents <= 0) return owed;
-  return Math.round((line.dueCents * owed) / line.totalCents);
-}
-
-/**
  * One payment for several room types, shared out per room type: what was
  * charged for each (in proportion to what was due for it) and what was
  * refunded of it. Refunds count against cancelled room types first, up to what
  * was charged for them, then against the rest in proportion, so cancelling and
- * refunding one room type leaves the others fully paid. Anything paid beyond
- * what is due now (an allowance lowered a room type after it was paid) is the
- * credit of the room types whose allowances made it, then of the others still
- * going ahead, never of a cancelled one. Whole cents that add up.
+ * refunding one room type leaves the others fully paid. Whole cents that add up.
+ *
+ * With `owedCents` (what a room type going ahead costs now, after allowances):
+ * no room type holds more than it costs while another still owes. What a room
+ * type holds beyond its cost moves to the room types that still owe, in
+ * proportion to what they owe; only money beyond what the whole reservation
+ * costs stays as credit, with the room types it came from.
  */
 export function reservationShares(input: {
   paidCents: number;
   refundedCents: number;
-  lines: readonly { dueCents: number; cancelled: boolean; allowanceCents?: number }[];
+  lines: readonly { dueCents: number; cancelled: boolean; owedCents?: number }[];
 }): { paidCents: number; refundedCents: number }[] {
-  const total = Math.max(0, input.paidCents);
-  const weights = input.lines.map((l) => l.dueCents);
-  const due = weights.reduce((s, w) => s + (Number.isFinite(w) && w > 0 ? w : 0), 0);
-  const upToDue = due > 0 ? Math.min(total, due) : total;
-  const paid = allocateCents(upToDue, weights);
-  let excess = total - upToDue;
-  const allowed = input.lines.map((l) => (l.cancelled ? 0 : Math.max(0, l.allowanceCents ?? 0)));
-  const allowedSum = allowed.reduce((s, a) => s + a, 0);
-  if (excess > 0 && allowedSum > 0) {
-    const toAllowed = Math.min(excess, allowedSum);
-    allocateCents(toAllowed, allowed).forEach((c, i) => (paid[i] += c));
-    excess -= toAllowed;
-  }
-  if (excess > 0) {
-    const open = input.lines.map((l, i) => (l.cancelled ? 0 : Math.max(1, weights[i])));
-    allocateCents(excess, open.some((w) => w > 0) ? open : weights).forEach((c, i) => (paid[i] += c));
-  }
+  const paid = allocateCents(Math.max(0, input.paidCents), input.lines.map((l) => l.dueCents));
   const refunded = paid.map(() => 0);
   let left = Math.min(Math.max(0, input.refundedCents), Math.max(0, input.paidCents));
   input.lines.forEach((l, i) => {
@@ -169,6 +145,20 @@ export function reservationShares(input: {
     left -= take;
   });
   if (left > 0) allocateCents(left, paid.map((p, i) => p - refunded[i])).forEach((c, i) => (refunded[i] += c));
+
+  const capped = input.lines.map((l) => !l.cancelled && l.owedCents !== undefined);
+  if (capped.some(Boolean)) {
+    const net = paid.map((p, i) => p - refunded[i]);
+    const over = net.map((n, i) => (capped[i] ? Math.max(0, n - Math.max(0, input.lines[i].owedCents!)) : 0));
+    const kept = net.map((n, i) => n - over[i]);
+    const room = kept.map((k, i) => (capped[i] ? Math.max(0, Math.max(0, input.lines[i].owedCents!) - k) : 0));
+    const pool = over.reduce((s, o) => s + o, 0);
+    const moved = Math.min(pool, room.reduce((s, r) => s + r, 0));
+    const toRoom = moved > 0 ? allocateCents(moved, room) : room.map(() => 0);
+    const back = pool - moved > 0 ? allocateCents(pool - moved, over) : over.map(() => 0);
+    // The refunds stay where they were counted; what each room type was paid shifts with what it holds now.
+    kept.forEach((k, i) => (paid[i] += k + toRoom[i] + back[i] - net[i]));
+  }
   return paid.map((p, i) => ({ paidCents: p, refundedCents: refunded[i] }));
 }
 

@@ -56,6 +56,8 @@ interface RefundInfo {
   deadlineLabel: string;
   canRefund: boolean;
   reservation: { code: string; roomTypes: number } | null;
+  /** The stay's balance (the reservation's, when shared); negative: a credit owed back to the guest. */
+  balance: number;
 }
 
 interface ChecklistState {
@@ -109,7 +111,9 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
   const value = Number(amount);
   // Managers can also take the refund off what the stay costs (an allowance), so it isn't owed again: not on a closed stay.
   // Already in credit (an allowance lowered the charges after they were paid): that credit is refunded as it is.
-  const inCredit = booking.balance < -0.004;
+  // The stay's balance (the whole reservation's when shared: a credit on one room type can be owed on another).
+  const stay = info?.balance ?? booking.balance;
+  const inCredit = stay < -0.004;
   const canAllow = can('folio.adjust') && booking.status !== 'CANCELLED' && booking.status !== 'NO_SHOW' && !inCredit;
   const allowing = canAllow && allowance;
   // As the server checks before any money moves: at most the stay's charges less the allowances already given.
@@ -159,13 +163,13 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
           <div className="space-y-4">
-            {(booking.status === 'CHECKED_IN' || booking.status === 'CONFIRMED') && !allowing && !(inCredit && Number.isFinite(value) && value <= -booking.balance + 0.004) && (
+            {(booking.status === 'CHECKED_IN' || booking.status === 'CONFIRMED') && !allowing && !(inCredit && Number.isFinite(value) && value <= -stay + 0.004) && (
               // Check-out needs the balance at zero, and a refund toward the stay brings the balance back (unless the stay
               // also costs that much less: an allowance, or the refund only hands back a credit).
               <Callout tone="warning">
                 {inCredit ? (
                   <>
-                    {booking.guest.name} hasn’t checked out. Only the part above the credit of {formatMoney(-booking.balance, booking.currency, { cents: true })} is owed again before they can check out.
+                    {booking.guest.name} hasn’t checked out. Only the part above the credit of {formatMoney(-stay, booking.currency, { cents: true })} is owed again before they can check out.
                   </>
                 ) : (
                   <>
@@ -203,7 +207,7 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
             </Field>
             {inCredit && can('folio.adjust') && booking.status !== 'CANCELLED' && booking.status !== 'NO_SHOW' && (
               <p className="text-xs text-muted-foreground">
-                The guest has a credit of {formatMoney(-booking.balance, booking.currency, { cents: true })} on this stay. Check the folio, then refund it as it is (no allowance: the charges are already lower than what was paid).
+                The guest has a credit of {formatMoney(-stay, booking.currency, { cents: true })} on this stay{info?.reservation ? ` (reservation ${info.reservation.code})` : ''}. Check the folio, then refund it as it is (no allowance: the charges are already lower than what was paid).
               </p>
             )}
             {canAllow && (

@@ -135,6 +135,13 @@ describe('card numbers typed into notes', () => {
     expect(containsCardNumber('Room 204 4111 1111 1111 1111')).toBe(true);
     expect(containsCardNumber('41111111111111111226')).toBe(true);
   });
+  it('leaves long references and room lists alone', () => {
+    expect(containsCardNumber('WeChat Pay 4200001234202610211234567890')).toBe(false);
+    expect(containsCardNumber('Alipay trade 2026102122001412345678901234')).toBe(false);
+    expect(containsCardNumber('Bank ref 2026102100000012345678')).toBe(false);
+    expect(containsCardNumber('Rooms 101 102 103 104 105 106 107')).toBe(false);
+    expect(containsCardNumber('+44 20 7946 0958 2026-10-21')).toBe(false);
+  });
   it('leaves approval codes, phone numbers and amounts alone', () => {
     expect(containsCardNumber('A1B2C3')).toBe(false);
     expect(containsCardNumber('Bank transfer ref 20261021')).toBe(false);

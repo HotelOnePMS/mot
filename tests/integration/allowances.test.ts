@@ -47,7 +47,7 @@ vi.mock('@/lib/auth', () => ({
 
 import { prisma } from '@/lib/prisma';
 import { addDaysISO } from '@/server/dates';
-import { getDeskPayments, recordCashPayment } from '@/server/payments/desk';
+import { getDeskPayments, recordCashPayment, refundCash } from '@/server/payments/desk';
 import { refreshEvidence } from '@/server/payments/disputes';
 import { listCardAuthorizations } from '@/server/payments/cardAuthorization';
 import { refundPayment } from '@/server/payments/refunds';
@@ -374,11 +374,65 @@ describe('allowances on the folio', () => {
     for (const id of [queen.id, suiteLine.id]) expect(await summaryOf(desk.actor, id)).toMatchObject({ paymentStatus: 'PAID', balance: 0 });
   });
 
-  it('a guest can’t change the dates online of a stay the hotel lowered the price of', async () => {
+  it('a guest can’t shorten online a stay the hotel lowered the price of; extending, or staff, still can', async () => {
     const { manager, booking } = await setup();
     await addAllowance(manager, booking.id, { amount: 120, reason: 'Left early: unused nights' });
     const guest = await actorFor(booking.guest.id);
-    await expect(changeOwnStayDates(guest, booking.id, { newCheckOut: addDaysISO(booking.checkIn, 1) })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/front desk/) });
+    await expect(changeOwnStayDates(guest, booking.id, { newCheckOut: addDaysISO(booking.checkIn, 1) })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/contact the hotel/) });
+    await changeOwnStayDates(guest, booking.id, { newCheckOut: addDaysISO(booking.checkOut, 1) });
+    await changeOwnStayDates(manager.actor, booking.id, { newCheckOut: booking.checkOut });
+  });
+
+  it('refunding an allowance’s credit on a shared reservation settles every room type', async () => {
+    const { desk, manager, queen, suiteLine, total } = await sharedReservation();
+    await recordCashPayment(desk, queen.id, { kind: 'PAYMENT', amount: total });
+    await addAllowance(manager, queen.id, { amount: 50, reason: 'Noise' });
+    const cash = await prisma.payment.findFirstOrThrow({ where: { bookingId: queen.id, method: 'CASH' } });
+    await refundCash(manager, cash.id, { amount: 50 });
+    for (const id of [queen.id, suiteLine.id]) expect(await summaryOf(desk.actor, id)).toMatchObject({ balance: 0, checkOutDue: 0 });
+    expect((await getFolio(desk.actor, queen.id)).reservation?.balance).toBe(0);
+  });
+
+  it('a deposit reservation paid in full after an allowance shows every room type paid', async () => {
+    const { desk, manager, queen, suiteLine } = await sharedReservation();
+    await prisma.booking.update({ where: { id: queen.id }, data: { paymentDue: Number(queen.totalPrice) / 2 } });
+    await prisma.booking.update({ where: { id: suiteLine.id }, data: { paymentDue: Number(suiteLine.totalPrice) / 2 } });
+    const half = (Number(queen.totalPrice) + Number(suiteLine.totalPrice)) / 2;
+    await recordCashPayment(desk, queen.id, { kind: 'PAYMENT', amount: half });
+    await addAllowance(manager, queen.id, { amount: 50, reason: 'Noise' });
+    await recordCashPayment(desk, queen.id, { kind: 'PAYMENT', amount: half - 50 });
+    for (const id of [queen.id, suiteLine.id]) expect(await summaryOf(desk.actor, id)).toMatchObject({ balance: 0, paymentStatus: 'PAID' });
+  });
+
+  it('comping a room type of an online reservation still awaiting payment leaves it awaiting (so the hold expires)', async () => {
+    const h = await makeHotel({ basePrice: 100 });
+    const suite = await prisma.roomType.create({ data: { propertyId: h.property.id, name: 'Suite', capacity: 4, basePrice: 300, totalRooms: 1, amenities: [] } });
+    const manager = { actor: await actorFor((await makeUser({ role: 'MANAGER', propertyIds: [h.property.id] })).id), source: 'classic' as const };
+    const guest = await makeUser({ role: 'CUSTOMER' });
+    const rows = await createReservation({
+      userId: guest.id,
+      propertyId: h.property.id,
+      checkIn: addDaysISO(h.today, 5),
+      checkOut: addDaysISO(h.today, 7),
+      guests: 3,
+      lines: [
+        { roomTypeId: h.roomType.id, rooms: 1 },
+        { roomTypeId: suite.id, rooms: 1 },
+      ],
+      onlinePayment: { policy: 'FULL_PREPAYMENT', depositNights: 1 },
+    });
+    const queen = rows.find((r) => r.roomTypeId === h.roomType.id)!;
+    await addAllowance(manager, queen.id, { amount: Number(queen.totalPrice), reason: 'Comped' });
+    expect((await prisma.booking.findUniqueOrThrow({ where: { id: queen.id } })).paymentStatus).toBe('AWAITING_PAYMENT');
+  });
+
+  it('a stay repriced below its allowances shows no credit on the folio', async () => {
+    const { desk, manager, booking } = await setup();
+    await addAllowance(manager, booking.id, { amount: 240, reason: 'Comped' });
+    await prisma.booking.update({ where: { id: booking.id }, data: { totalPrice: 120, subtotalPrice: 120 } });
+    const folio = await getFolio(desk.actor, booking.id);
+    expect(folio.totals).toMatchObject({ charges: 120, allowances: 120, balance: 0 });
+    expect((await summaryOf(desk.actor, booking.id)).balance).toBe(0);
   });
 
   it('a cardholder authorizes what the stay costs after allowances', async () => {
@@ -623,6 +677,19 @@ describe('refund with an allowance', () => {
     await refundPayment(booking.id, { paymentId: payment.id, amount: 40 });
     expect(stripe.api.refunds.create).toHaveBeenCalledTimes(1);
     expect(await prisma.folioAllowance.count({ where: { bookingId: booking.id } })).toBe(0);
+  });
+
+  it('a credit on one room type of a shared reservation stops another allowance on the other', async () => {
+    const { manager, managerUser, queen, suiteLine, total } = await sharedReservation();
+    const lead = (await prisma.booking.findUniqueOrThrow({ where: { id: queen.id } })).groupCode === queen.code ? queen : suiteLine;
+    const intent = `pi_test_${uid()}`;
+    const payment = await prisma.payment.create({
+      data: { bookingId: lead.id, propertyId: queen.propertyId, method: 'ONLINE', kind: 'FULL', status: 'SUCCEEDED', amount: total, currency: 'usd', stripePaymentIntentId: intent, paidAt: new Date() },
+    });
+    await addAllowance(manager, queen.id, { amount: 100, reason: 'Noise' });
+    session.userId = managerUser.id;
+    await expect(refundPayment(suiteLine.id, { paymentId: payment.id, amount: 100, reason: 'Goodwill', allowance: true })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/credit of 100\.00/) });
+    expect(stripe.api.refunds.create).not.toHaveBeenCalled();
   });
 
   it('the front desk can’t refund, with or without an allowance', async () => {

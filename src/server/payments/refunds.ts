@@ -12,7 +12,7 @@ import { badRequest } from '../errors';
 import { toISODate } from '../dates';
 import { recordAudit } from '../services/audit';
 import { getBookingForStaff } from '../services/bookings';
-import { addAllowance } from '../services/folio';
+import { addAllowance, stayBalance } from '../services/folio';
 import { policyFor } from '../services/guest';
 import { hotelLocale } from '../services/hotels';
 import { toBookingSummary } from '../services/mappers';
@@ -36,6 +36,8 @@ export interface RefundInfo {
   canRefund: boolean;
   /** Set when the payment covers every room type of a reservation booked together. */
   reservation: { code: string; roomTypes: number } | null;
+  /** What the guest still owes for the stay (the reservation's, when shared); negative: a credit owed back to them. */
+  balance: number;
 }
 
 export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
@@ -79,6 +81,7 @@ export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
     deadlineLabel: policy.deadlineLabel,
     canRefund: totalRefundable > 0 && isStripeConfigured(),
     reservation: lines.length > 1 ? { code: lines[0].code ?? booking.code ?? booking.id, roomTypes: lines.length } : null,
+    balance: await stayBalance(booking),
   };
 }
 
@@ -114,10 +117,11 @@ export async function refundPayment(
     if (allowanceReason.length < 3) throw badRequest('Say why the stay costs less (for example “air conditioning broken” or “left a night early”).');
     if (booking.status === 'CANCELLED' || booking.status === 'NO_SHOW') throw badRequest('This reservation is closed, so there’s nothing to take off what it costs. Refund without an allowance.');
     const summary = toBookingSummary(booking);
-    // Already in credit (an allowance lowered the charges after they were paid): refund that credit as it is; another
-    // allowance would take the same money off twice.
-    if (summary.balance < -0.004) {
-      throw badRequest(`The guest already has a credit of ${fromCents(toCents(-summary.balance)).toFixed(2)} ${payment.currency.toUpperCase()} on this stay. Refund it without an allowance.`);
+    // Already in credit (an allowance lowered the charges after they were paid), on this stay or anywhere in its
+    // reservation: refund that credit as it is; another allowance would take the same money off twice.
+    const balance = await stayBalance(booking);
+    if (balance < -0.004) {
+      throw badRequest(`The guest already has a credit of ${fromCents(toCents(-balance)).toFixed(2)} ${payment.currency.toUpperCase()} on this stay. Refund it without an allowance.`);
     }
     const leftCents = toCents(Number(booking.totalPrice)) - toCents(summary.allowances);
     if (cents > leftCents) throw badRequest(`An allowance can take off at most ${fromCents(Math.max(0, leftCents)).toFixed(2)} ${payment.currency.toUpperCase()}. Refund that much, or refund without an allowance.`);

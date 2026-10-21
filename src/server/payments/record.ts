@@ -14,7 +14,7 @@
 import type Stripe from 'stripe';
 import { prisma } from '@/lib/prisma';
 import { getStripe } from '@/lib/stripe';
-import { bookingPaymentStatus, fromCents, reservationShares, shareWeightCents, toCents } from '@/lib/payments';
+import { bookingPaymentStatus, fromCents, reservationShares, toCents } from '@/lib/payments';
 import { toDateString } from '@/lib/date-utils';
 import { sendBookingConfirmation } from '../email';
 import { nightlyInventory } from '../services/inventory';
@@ -78,14 +78,7 @@ async function lineStatuses(lines: Awaited<ReturnType<typeof paymentLines>>): Pr
   const ordered = [...lines].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const shares = reservationShares({
     ...totals,
-    lines: ordered.map((l) => {
-      const allowanceCents = l.allowances.reduce((s, a) => s + toCents(Number(a.amount)), 0);
-      return {
-        dueCents: shareWeightCents({ totalCents: toCents(Number(l.totalPrice)), dueCents: l.paymentDue === null ? null : toCents(Number(l.paymentDue)), allowanceCents }),
-        cancelled: l.status === 'CANCELLED' || l.status === 'NO_SHOW',
-        allowanceCents,
-      };
-    }),
+    lines: ordered.map((l) => ({ dueCents: toCents(Number(l.paymentDue ?? l.totalPrice)), cancelled: l.status === 'CANCELLED' || l.status === 'NO_SHOW', owedCents: owedCents(l) })),
   });
   return new Map(ordered.map((l, i) => [l.id, bookingPaymentStatus({ totalCents: owedCents(l), ...shares[i] })]));
 }
@@ -306,7 +299,8 @@ export async function refreshPaymentStatus(booking: { id: string; groupCode: str
     let paymentStatus = statuses.get(line.id)!;
     if (paidCents <= 0) {
       // Nothing paid yet: only a stay allowances took entirely off is paid; one put back (allowance removed) is to pay at
-      // the hotel again. Others keep their status (pay at property, awaiting an online payment).
+      // the hotel again. Others keep their status, and so does a hold awaiting an online payment, so it still expires.
+      if (line.status === 'PENDING' && line.paymentStatus === 'AWAITING_PAYMENT') continue;
       if (paymentStatus !== 'PAID' && line.paymentStatus === 'PAID') paymentStatus = 'PAY_AT_PROPERTY';
       else if (paymentStatus !== 'PAID') continue;
     }

@@ -148,14 +148,13 @@ export function containsCardNumber(text: string | null | undefined): boolean {
   for (const piece of (text ?? '').split(/[^\d\s-]+/)) {
     const groups = piece.split(/[\s-]+/).filter(Boolean);
     for (let i = 0; i < groups.length; i++) {
-      // A long unbroken run: any 13 to 19 digits inside it.
+      // A card stuck to its expiry (MMYY), as copied from a terminal slip.
       const g = groups[i];
-      if (g.length > 19) {
-        for (let len = 13; len <= 19; len++) for (let at = 0; at + len <= g.length; at++) if (luhn(g.slice(at, at + len))) return true;
-      }
-      // Groups joined from this one on, as long as they fit in a card number.
+      if (g.length > 19 && g.length <= 23 && /^(0[1-9]|1[0-2])\d\d$/.test(g.slice(-4)) && luhn(g.slice(0, -4))) return true;
+      // Groups joined from this one on as cards are printed (groups of four or more digits), as long as they fit.
       let run = '';
       for (let j = i; j < groups.length && run.length + groups[j].length <= 19; j++) {
+        if (j > i && (groups[j].length < 4 || groups[j - 1].length < 4)) break;
         run += groups[j];
         if (run.length >= 13 && luhn(run)) return true;
       }

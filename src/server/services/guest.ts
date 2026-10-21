@@ -145,10 +145,10 @@ export async function changeOwnStayDates(actor: Actor, bookingId: string, input:
     if (!isStaff && policyFor(newIn, timezone).passed) throw badRequest('That new check-in is too soon to change online. Please call the hotel.');
   }
   if (newOut <= today) throw badRequest('Check-out must be after today.');
-  // The hotel lowered what this stay costs (an allowance, for unused nights say): repricing it too would take the same
-  // nights off twice, so the front desk changes the dates.
-  if (await prisma.folioAllowance.count({ where: { bookingId: booking.id, voidedAt: null } })) {
-    throw badRequest('The hotel has adjusted the price of this stay, so its dates can’t be changed online. Please ask the front desk.');
+  // The hotel lowered what this stay costs (an allowance, for unused nights say): a guest shortening it online would
+  // take the same nights off twice, so the hotel does it (staff see the folio). Extensions go ahead.
+  if (!isStaff && (newIn > oldIn || newOut < oldOut) && (await prisma.folioAllowance.count({ where: { bookingId: booking.id, voidedAt: null } }))) {
+    throw badRequest('The hotel has adjusted the price of this stay, so it can’t be shortened online. Please contact the hotel.');
   }
 
   const inv = await nightlyInventory(prisma, booking.roomTypeId, newIn, newOut, { excludeBookingId: booking.id });

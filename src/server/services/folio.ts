@@ -47,6 +47,20 @@ function reservationBalance(
   return roundMoney(fromCents(owed - net), currency);
 }
 
+/**
+ * What the guest still owes for the stay (negative: owed back to them): the booking's balance, or for a room type of a
+ * reservation paid together, the whole reservation's (a credit on one room type may be owed on another).
+ */
+export async function stayBalance(b: BookingWithRelations): Promise<number> {
+  const lines = await paymentLines(b);
+  if (lines.length < 2) return toBookingSummary(b).balance;
+  const toward = await prisma.payment.findMany({
+    where: { bookingId: { in: lines.map((l) => l.id) }, kind: { not: 'SECURITY_DEPOSIT' }, status: { in: COLLECTED } },
+    select: { amount: true, amountRefunded: true },
+  });
+  return reservationBalance(lines, toward, b.currency);
+}
+
 /** Everything on a booking's folio. Front desk can see it (folio.view), unlike Stripe's payment details. */
 export async function getFolio(actor: Actor, bookingId: string): Promise<FolioView> {
   requirePermission(actor, 'folio.view');
@@ -85,6 +99,11 @@ export async function buildFolio(b: BookingWithRelations): Promise<FolioView> {
   });
   for (const a of allowances) {
     folio.push({ key: `allow-${a.id}`, section: 'CHARGES', kind: 'ALLOWANCE', label: 'Allowance', detail: [a.reason, `by ${nameOf(a.createdById) ?? 'a manager'}`].join(' · '), amount: -Number(a.amount), at: a.createdAt.toISOString() });
+  }
+  // The stay was repriced below its allowances since: the part above the charges doesn't count (it costs nothing, never less).
+  const beyondCents = allowances.reduce((s, a) => s + toCents(Number(a.amount)), 0) - toCents(Number(b.totalPrice));
+  if (allowances.length && beyondCents > 0) {
+    folio.push({ key: 'allow-beyond', section: 'CHARGES', kind: 'ALLOWANCE', label: 'Allowances above the charges', detail: 'Not counted: the stay now costs less than the allowances given', amount: fromCents(beyondCents), at: null });
   }
   const toward = payments.filter((p) => p.kind !== 'SECURITY_DEPOSIT' && COLLECTED.includes(p.status));
   if (shared) {

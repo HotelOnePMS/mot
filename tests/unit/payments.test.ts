@@ -118,14 +118,23 @@ test('refunds come off a cancelled room type first, so the rooms kept stay paid'
     { paidCents: 30000, refundedCents: 6000 },
     { paidCents: 20000, refundedCents: 20000 },
   ]);
-  // Paid beyond what's due now (an allowance lowered the room type kept): the credit is the kept room type's.
+  // Paid beyond what's owed now (an allowance lowered the room type kept): the credit is the kept room type's.
   assert.deepEqual(
-    reservationShares({ paidCents: 80000, refundedCents: 60000, lines: [{ dueCents: 15000, cancelled: false }, { dueCents: 60000, cancelled: true }] }),
+    reservationShares({ paidCents: 80000, refundedCents: 60000, lines: [{ dueCents: 20000, owedCents: 15000, cancelled: false }, { dueCents: 60000, cancelled: true }] }),
     [
       { paidCents: 20000, refundedCents: 0 },
       { paidCents: 60000, refundedCents: 60000 },
     ],
   );
+  // What a room type holds beyond what it costs now moves to the ones that still owe; only a real overpayment stays
+  // as credit, on the room type it came from.
+  const shares = (paidCents: number, refundedCents: number, owed: [number, number], due: [number, number] = [20000, 60000]) =>
+    reservationShares({ paidCents, refundedCents, lines: [{ dueCents: due[0], owedCents: owed[0], cancelled: false }, { dueCents: due[1], owedCents: owed[1], cancelled: false }] }).map((s) => s.paidCents - s.refundedCents);
+  assert.deepEqual(shares(80000, 0, [10000, 60000]), [20000, 60000]); // 100 off the Queen, all paid: the Queen holds the credit
+  assert.deepEqual(shares(80000, 5000, [15000, 60000]), [15000, 60000]); // and refunding it settles both
+  assert.deepEqual(shares(75000, 0, [15000, 60000], [10000, 30000]), [15000, 60000]); // deposits, then the rest: both paid
+  assert.deepEqual(shares(40000, 0, [10000, 60000], [10000, 30000]), [10000, 30000]); // deposits paid, 100 off the Queen
+  assert.deepEqual(shares(60000, 0, [0, 60000]), [0, 60000]); // a comped Queen: the payment is the Suite's
   // Nothing cancelled: in proportion, never more than was paid.
   assert.deepEqual(reservationShares({ paidCents: 1000, refundedCents: 5000, lines: [{ dueCents: 1, cancelled: false }, { dueCents: 1, cancelled: false }] }), [
     { paidCents: 500, refundedCents: 500 },
