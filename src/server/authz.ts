@@ -61,6 +61,10 @@ export const PERMISSIONS = {
   'guestId.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   // The folio (charges, payments, deposits, balance): front desk runs check-in and check-out with it.
   'folio.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // Lower what a stay costs with an allowance (service recovery, unused nights), with a reason.
+  'folio.adjust': ['ADMIN', 'OWNER', 'MANAGER'],
+  // Check a guest out while money is still owed (billed to a company, paying later), with a reason.
+  'booking.checkoutWithBalance': ['ADMIN', 'OWNER', 'MANAGER'],
   'room.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
   'room.status': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
   'room.outOfOrder': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],

@@ -14,11 +14,17 @@ const collected = {
   orderBy: { createdAt: 'asc' },
 } satisfies Prisma.Booking$paymentsArgs;
 
+// Allowances in force: they lower what the stay costs (a removed one stays on record, voided).
+const activeAllowances = { where: { voidedAt: null }, select: { amount: true } } satisfies Prisma.Booking$allowancesArgs;
+
 export const bookingInclude = {
   user: { select: { id: true, firstName: true, lastName: true, email: true, phone: true, country: true } },
   payments: collected,
+  allowances: activeAllowances,
   // Several room types booked together share one payment, recorded on the lead line.
-  reservationLead: { select: { payments: collected, reservationLines: { select: { id: true, status: true, paymentDue: true, totalPrice: true }, orderBy: { id: 'asc' } } } },
+  reservationLead: {
+    select: { payments: collected, reservationLines: { select: { id: true, status: true, paymentDue: true, totalPrice: true, allowances: activeAllowances }, orderBy: { id: 'asc' } } },
+  },
   roomType: { select: { id: true, name: true } },
   room: { select: { id: true, roomNumber: true, floor: true } },
   property: { select: { id: true, name: true } },
@@ -31,6 +37,9 @@ export function toBookingSummary(b: BookingWithRelations): BookingSummary {
   const checkOut = toISODate(b.checkOut);
   const guestName = `${b.user.firstName} ${b.user.lastName}`.trim();
   const pay = reservationPayment(b);
+  const allowances = fromCents(allowanceCents(b.allowances));
+  // What the stay costs after allowances, less what was paid toward it.
+  const lineBalance = roundMoney(Number(b.totalPrice) - allowances - fromCents(pay.heldCents), b.currency);
   // The first online payment carries the card details the flags are about; desk payments are taken in person.
   const first = pay.payments.find((p) => p.method === 'ONLINE');
   return {
@@ -58,9 +67,10 @@ export function toBookingSummary(b: BookingWithRelations): BookingSummary {
     currency: b.currency,
     paymentStatus: b.paymentStatus ?? 'UNPAID',
     amountPaid: fromCents(pay.heldCents),
+    allowances,
     // Check-out needs this at zero (bookings.ts checkTransition).
-    balance: roundMoney(Number(b.totalPrice) - fromCents(pay.heldCents), b.currency),
-    checkOutDue: checkOutDue(Number(b.totalPrice) - fromCents(pay.heldCents), pay.reservationDueCents, b.currency),
+    balance: lineBalance,
+    checkOutDue: checkOutDue(lineBalance, pay.reservationDueCents, b.currency),
     // Flags describe online payments; pay-at-property bookings have nothing to flag.
     riskFlags: first
       ? computeRiskFlags({
@@ -96,10 +106,10 @@ function reservationPayment(b: BookingWithRelations) {
     lines: lead.reservationLines.map((l) => ({ dueCents: toCents(Number(l.paymentDue ?? l.totalPrice)), cancelled: ENDED.includes(l.status) })),
   });
   const share = shares[lead.reservationLines.findIndex((l) => l.id === b.id)];
-  // What the reservation still owes, as the desk counts it (server/payments/desk.ts): its room types still going ahead, less
-  // everything paid toward the stay.
+  // What the reservation still owes, as the desk counts it (server/payments/desk.ts): its room types still going ahead
+  // (after their allowances), less everything paid toward the stay.
   const active = lead.reservationLines.filter((l) => !ENDED.includes(l.status));
-  const dueCents = (active.length ? active : lead.reservationLines).reduce((sum, l) => sum + toCents(Number(l.totalPrice)), 0);
+  const dueCents = (active.length ? active : lead.reservationLines).reduce((sum, l) => sum + toCents(Number(l.totalPrice)) - allowanceCents(l.allowances), 0);
   const netCents = lead.payments.reduce((sum, p) => sum + toCents(Number(p.amount)) - toCents(Number(p.amountRefunded)), 0);
   return {
     payments: lead.payments,
@@ -117,6 +127,11 @@ function reservationPayment(b: BookingWithRelations) {
 function checkOutDue(lineBalance: number, reservationDueCents: number | null, currency: string): number {
   if (lineBalance <= 0.004) return 0;
   return reservationDueCents === null ? roundMoney(lineBalance, currency) : fromCents(reservationDueCents);
+}
+
+/** The allowances in force on a booking, in cents. */
+export function allowanceCents(rows: readonly { amount: unknown }[]): number {
+  return rows.reduce((sum, a) => sum + toCents(Number(a.amount)), 0);
 }
 
 export function personName(u: { firstName: string; lastName: string }): string {

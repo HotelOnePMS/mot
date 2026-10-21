@@ -114,6 +114,8 @@ model Property {
   cardAuthorizations       CardAuthorization[]
   guestIdentifications     GuestIdentification[]
   registrationCards        RegistrationCard[]
+  folioAllowances          FolioAllowance[]
+  checkoutOverrides        CheckoutOverride[]
   photos                   PropertyPhoto[]
   roomTypes                RoomType[]
   rooms                    Room[]
@@ -261,6 +263,8 @@ model Booking {
   // Guided check-in: the guest's photo ID and the signed registration card.
   guestIdentification     GuestIdentification?
   registrationCard        RegistrationCard?
+  allowances              FolioAllowance[]
+  checkoutOverride        CheckoutOverride?
   statusHistory           BookingStatusHistory[]
   channelReservation      ChannelReservation?
   property                Property                 @relation(fields: [propertyId], references: [id])
@@ -1175,6 +1179,45 @@ model RegistrationCard {
 
   @@index([propertyId, signedAt])
   @@map("registration_cards")
+}
+
+/// Lowers what a stay costs, with a reason (service recovery, unused nights, a rate correction): an allowance a manager
+/// adds on the folio. Removing one keeps it on record (voidedAt).
+model FolioAllowance {
+  id          String    @id @default(cuid())
+  bookingId   String
+  propertyId  String
+  amount      Decimal   @db.Decimal(10, 2)
+  currency    String
+  reason      String
+  createdById String
+  createdAt   DateTime  @default(now())
+  voidedAt    DateTime?
+  voidedById  String?
+  booking     Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  property    Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([propertyId, createdAt])
+  @@map("folio_allowances")
+}
+
+/// A guest checked out while money was still owed, with a manager's reason (billed to a company, paying later). The
+/// balance stays on the folio and can be collected afterwards.
+model CheckoutOverride {
+  bookingId    String   @id
+  propertyId   String
+  /// What was owed at check-out (the reservation's, for a room type of a shared reservation).
+  amount       Decimal  @db.Decimal(10, 2)
+  currency     String
+  reason       String
+  approvedById String
+  createdAt    DateTime @default(now())
+  booking      Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, createdAt])
+  @@map("checkout_overrides")
 }
 
 /// Stripe webhook events already handled, so redeliveries are ignored (idempotency).

@@ -36,6 +36,8 @@ const patchSchema = z.object({
   notes: z.string().max(500).optional(),
   roomId: z.string().optional(),
   allowDirtyRoom: z.boolean().optional(),
+  /** Check out with money still owed (managers), saying why. */
+  balanceOverride: z.object({ reason: z.string().trim().min(3).max(200) }).optional(),
 });
 
 /** PATCH — move the reservation through its lifecycle (check in, check out, ...). */
@@ -47,6 +49,7 @@ export const PATCH = handleRoute(async (request: NextRequest, { params }: Params
     note: body.notes,
     roomId: body.roomId,
     allowDirtyRoom: body.allowDirtyRoom,
+    balanceOverride: body.balanceOverride,
   });
   return json({ ...result, message: `Reservation ${result.booking.code} updated.` });
 });

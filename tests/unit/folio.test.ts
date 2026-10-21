@@ -145,8 +145,14 @@ test('totals split charges, payments and refunds; overpaying leaves a credit', (
     paymentLine('cash', 'PAYMENT', -60.5),
     paymentLine('change', 'REFUND', 3),
   ];
-  assert.deepEqual(folioTotals(lines, 'USD'), { charges: 200, paid: 210.5, refunded: 3, balance: -7.5 });
-  assert.deepEqual(folioTotals([], 'USD'), { charges: 0, paid: 0, refunded: 0, balance: 0 });
+  assert.deepEqual(folioTotals(lines, 'USD'), { charges: 200, allowances: 0, paid: 210.5, refunded: 3, balance: -7.5 });
+  assert.deepEqual(folioTotals([], 'USD'), { charges: 0, allowances: 0, paid: 0, refunded: 0, balance: 0 });
+});
+
+test('an allowance lowers the balance without changing the charges', () => {
+  const allowance = { key: 'allow-1', section: 'CHARGES' as const, kind: 'ALLOWANCE' as const, label: 'Allowance', detail: 'Air conditioning broken', amount: -25, at: null };
+  const lines = [...stayLines({ ...stay, totalPrice: 200, subtotalPrice: 180, charges: [{ name: 'Sales tax', amount: 20 }] }), allowance, paymentLine('cash', 'PAYMENT', -175)];
+  assert.deepEqual(folioTotals(lines, 'USD'), { charges: 200, allowances: 25, paid: 175, refunded: 0, balance: 0 });
 });
 
 test('a balance in a currency without decimals stays whole', () => {

@@ -84,12 +84,13 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
   // checked in on its own line (with its own photo ID and registration card).
   const lines = booking.groupCode ? await paymentLines(booking) : null;
   const lineIds = lines ? lines.map((l) => l.id) : [booking.id];
-  const [guestIds, cards] = await Promise.all([
+  const [guestIds, cards, allowances] = await Promise.all([
     prisma.guestIdentification.findMany({
       where: { bookingId: { in: lineIds } },
       select: { bookingId: true, idType: true, idCountry: true, idLast4: true, nameOnId: true, nameMatched: true, confirmedById: true, createdAt: true, photo: { select: { guestIdentificationId: true } } },
     }),
     prisma.registrationCard.findMany({ where: { bookingId: { in: lineIds } } }),
+    prisma.folioAllowance.findMany({ where: { bookingId: { in: lineIds }, voidedAt: null }, orderBy: { createdAt: 'asc' } }),
   ]);
   const recordLines = lineIds.filter((id) => guestIds.some((g) => g.bookingId === id) || cards.some((c) => c.bookingId === id));
   // The checklist rows: the guided check-in's records count as done, as on the reservation page (checklist.ts).
@@ -123,6 +124,7 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
       guests: lines ? lines.reduce((n, l) => n + l.guests, 0) : booking.guests,
       roomType: lines ? lines.map((l) => `${l.rooms} × ${l.roomType.name}`).join(', ') : summary.roomType.name,
       totalPrice: lines ? fromCents(lines.reduce((n, l) => n + toCents(Number(l.totalPrice)), 0)) : summary.totalPrice,
+      allowances: allowances.map((a) => `${Number(a.amount).toFixed(2)} ${a.currency.toUpperCase()} off, ${a.createdAt.toISOString().slice(0, 10)}: ${a.reason}`),
       createdAt: booking.createdAt.toISOString(),
       notes: booking.notes,
     },

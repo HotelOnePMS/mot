@@ -34,7 +34,9 @@ export interface BookingSummary {
   paymentStatus: string;
   /** Collected online and not refunded, in the booking's currency. */
   amountPaid: number;
-  /** What the guest still owes: the total less everything paid online or at the desk. Negative = the hotel owes the guest. */
+  /** Allowances lowering what the stay costs (a manager's, with a reason), positive. */
+  allowances: number;
+  /** What the guest still owes: the total less allowances and everything paid online or at the desk. Negative = the hotel owes the guest. */
   balance: number;
   /**
    * What must be paid before the guest can check out. A single booking: its balance (never negative). A line of a

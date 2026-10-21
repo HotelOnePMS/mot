@@ -7,18 +7,24 @@
  * reader, typed-in or OTA virtual card, cash, the hotel's own terminal, or
  * recorded another way), with their refunds. Security deposits are listed
  * apart: they are held against incidentals, not paid toward the stay, so they
- * never move the balance. This is the read-only account for the check-in
- * screen and the reservation page; money is taken through the desk payments
- * flow (server/payments/desk.ts). Check-out needs the balance at zero.
+ * never move the balance. Allowances lower the charges: a manager takes an
+ * amount off with a reason (service recovery, unused nights), and can remove
+ * it again (it stays on record). Money is taken through the desk payments flow
+ * (server/payments/desk.ts). Check-out needs the balance at zero, unless a
+ * manager checks the guest out with it owing (bookings.ts).
  */
 import { prisma } from '@/lib/prisma';
+import { roundMoney } from '@/lib/currency';
 import { cardBrandLabel } from '@/lib/card-authorization';
-import { METHOD_LABEL, depositHeldCents, type PaymentMethod } from '@/lib/desk-payments';
+import { CARD_NUMBER_REFUSED, METHOD_LABEL, containsCardNumber, depositHeldCents, type PaymentMethod } from '@/lib/desk-payments';
 import { folioTotals, stayLines, type FolioDeposit, type FolioLine, type FolioView } from '@/lib/folio';
 import { fromCents, toCents } from '@/lib/payments';
+import { money } from '@/lib/status';
 import { requirePermission, type Actor } from '../authz';
 import { diffDays, toISODate } from '../dates';
-import { paymentLines } from '../payments/record';
+import { badRequest, conflict, notFound } from '../errors';
+import { paymentLines, refreshPaymentStatus } from '../payments/record';
+import { recordAudit, type OpContext } from './audit';
 import { getBookingForStaff } from './bookings';
 import { personName, toBookingSummary, type BookingWithRelations } from './mappers';
 
@@ -41,8 +47,15 @@ export async function buildFolio(b: BookingWithRelations): Promise<FolioView> {
   const lines = await paymentLines(b);
   const shared = lines.length > 1;
   // Payments and deposits sit on the reservation's lead line.
-  const payments = await prisma.payment.findMany({ where: { bookingId: { in: lines.map((l) => l.id) } }, orderBy: { createdAt: 'asc' } });
-  const recorders = [...new Set(payments.map((p) => p.recordedById).filter((id): id is string => !!id))];
+  const [payments, allowances, override] = await Promise.all([
+    prisma.payment.findMany({ where: { bookingId: { in: lines.map((l) => l.id) } }, orderBy: { createdAt: 'asc' } }),
+    // Allowances are this room type's own (each line is priced on its own).
+    prisma.folioAllowance.findMany({ where: { bookingId: b.id, voidedAt: null }, orderBy: { createdAt: 'asc' } }),
+    prisma.checkoutOverride.findUnique({ where: { bookingId: b.id } }),
+  ]);
+  const recorders = [
+    ...new Set([...payments.map((p) => p.recordedById), ...allowances.map((a) => a.createdById), override?.approvedById].filter((id): id is string => !!id)),
+  ];
   const staff = recorders.length ? await prisma.user.findMany({ where: { id: { in: recorders } }, select: { id: true, firstName: true, lastName: true } }) : [];
   const nameOf = (id: string | null) => {
     const u = staff.find((x) => x.id === id);
@@ -58,6 +71,9 @@ export async function buildFolio(b: BookingWithRelations): Promise<FolioView> {
     rooms: b.rooms,
     currency: b.currency,
   });
+  for (const a of allowances) {
+    folio.push({ key: `allow-${a.id}`, section: 'CHARGES', kind: 'ALLOWANCE', label: 'Allowance', detail: [a.reason, `by ${nameOf(a.createdById) ?? 'a manager'}`].join(' · '), amount: -Number(a.amount), at: a.createdAt.toISOString() });
+  }
   const toward = payments.filter((p) => p.kind !== 'SECURITY_DEPOSIT' && COLLECTED.includes(p.status));
   if (shared) {
     // One set of payments for every room type: this line's share, as the balance counts it.
@@ -108,6 +124,49 @@ export async function buildFolio(b: BookingWithRelations): Promise<FolioView> {
     reservation: shared ? { code: lines[0].code ?? summary.code, roomTypes: lines.length } : null,
     checkOutDue: summary.checkOutDue,
     settled: summary.checkOutDue <= 0.004,
+    allowances: allowances.map((a) => ({ id: a.id, amount: Number(a.amount), reason: a.reason, by: nameOf(a.createdById), at: a.createdAt.toISOString() })),
+    maxAllowance: Math.max(0, roundMoney(Number(b.totalPrice) - summary.allowances, b.currency)),
+    checkoutOverride: override ? { amount: Number(override.amount), reason: override.reason, by: nameOf(override.approvedById), at: override.createdAt.toISOString() } : null,
   };
 }
 
+
+/**
+ * Lower what the stay costs: an allowance with a reason (service recovery, unused nights, a rate correction). Managers
+ * only (folio.adjust). At most the stay's charges less the allowances already given; it lowers the balance and, when
+ * that is now covered, marks the stay paid.
+ */
+export async function addAllowance(op: OpContext, bookingId: string, input: { amount: number; reason: string }): Promise<FolioView> {
+  requirePermission(op.actor, 'folio.adjust');
+  const booking = await getBookingForStaff(op.actor, bookingId);
+  if (booking.status === 'CANCELLED' || booking.status === 'NO_SHOW') throw badRequest('This reservation is closed. Reinstate it before changing what it costs.');
+  const reason = input.reason.replace(/\s+/g, ' ').trim().slice(0, 200);
+  if (reason.length < 3) throw badRequest('Say why the stay costs less (for example “air conditioning broken” or “left a night early”).');
+  if (containsCardNumber(reason)) throw badRequest(CARD_NUMBER_REFUSED);
+  const cents = toCents(input.amount);
+  if (!Number.isFinite(cents) || cents <= 0) throw badRequest('Enter the amount to take off.');
+  await prisma.$transaction(async (tx) => {
+    // One at a time per booking, so two allowances at once can't together take off more than the stay costs.
+    await tx.$queryRaw`SELECT "id" FROM "bookings" WHERE "id" = ${booking.id} FOR UPDATE`;
+    const given = await tx.folioAllowance.aggregate({ where: { bookingId: booking.id, voidedAt: null }, _sum: { amount: true } });
+    const leftCents = toCents(Number(booking.totalPrice)) - toCents(Number(given._sum.amount ?? 0));
+    if (cents > leftCents) throw badRequest(`At most ${money(fromCents(Math.max(0, leftCents)), { currency: booking.currency })} can be taken off: what’s left of the stay’s charges.`);
+    await tx.folioAllowance.create({ data: { bookingId: booking.id, propertyId: booking.propertyId, amount: fromCents(cents), currency: booking.currency, reason, createdById: op.actor.userId } });
+  });
+  await refreshPaymentStatus(booking);
+  await recordAudit(op, booking.propertyId, 'FOLIO_ALLOWANCE', `Allowance of ${money(fromCents(cents), { currency: booking.currency })} on ${booking.code ?? booking.id}: ${reason}`, { bookingId: booking.id });
+  return buildFolio(await getBookingForStaff(op.actor, booking.id));
+}
+
+/** Remove an allowance: the stay costs what it did before. It stays on record (who removed it, and when). */
+export async function voidAllowance(op: OpContext, bookingId: string, allowanceId: string): Promise<FolioView> {
+  requirePermission(op.actor, 'folio.adjust');
+  const booking = await getBookingForStaff(op.actor, bookingId);
+  const allowance = await prisma.folioAllowance.findFirst({ where: { id: allowanceId, bookingId: booking.id } });
+  if (!allowance) throw notFound('Allowance');
+  const voided = await prisma.folioAllowance.updateMany({ where: { id: allowance.id, voidedAt: null }, data: { voidedAt: new Date(), voidedById: op.actor.userId } });
+  if (!voided.count) throw conflict('This allowance was already removed.');
+  await refreshPaymentStatus(booking);
+  await recordAudit(op, booking.propertyId, 'FOLIO_ALLOWANCE_REMOVED', `Removed the allowance of ${money(Number(allowance.amount), { currency: booking.currency })} on ${booking.code ?? booking.id} (${allowance.reason})`, { bookingId: booking.id });
+  return buildFolio(await getBookingForStaff(op.actor, booking.id));
+}

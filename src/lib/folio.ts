@@ -17,12 +17,13 @@ export interface FolioLine {
   /** Stable React key. */
   key: string;
   section: 'CHARGES' | 'PAYMENTS';
-  kind: 'ROOM' | 'TAX' | 'PAYMENT' | 'REFUND';
+  /** ALLOWANCE: lowers the charges (a manager's, with a reason). */
+  kind: 'ROOM' | 'TAX' | 'ALLOWANCE' | 'PAYMENT' | 'REFUND';
   label: string;
   detail: string | null;
   /** Signed effect on the balance: charges and refunds to the guest positive, payments negative. */
   amount: number;
-  /** ISO timestamp, payment lines only. */
+  /** ISO timestamp, payment and allowance lines only. */
   at: string | null;
 }
 
@@ -83,10 +84,22 @@ export function stayLines(input: {
 }
 
 export interface FolioTotals {
+  /** Room, taxes and fees, before allowances. */
   charges: number;
+  /** Allowances, positive: what the charges were lowered by. */
+  allowances: number;
   paid: number;
   refunded: number;
   balance: number;
+}
+
+/** An allowance on the folio, for staff who can remove it. */
+export interface FolioAllowance {
+  id: string;
+  amount: number;
+  reason: string;
+  by: string | null;
+  at: string;
 }
 
 /** A security deposit on the folio: listed apart, never part of the balance. */
@@ -126,11 +139,18 @@ export interface FolioView {
   checkOutDue: number;
   /** Nothing left to pay: the guest can check out. */
   settled: boolean;
+  /** The allowances lowering the charges (also among the lines), oldest first. */
+  allowances: FolioAllowance[];
+  /** At most this much more can be allowed: the charges less the allowances already given. */
+  maxAllowance: number;
+  /** Checked out while money was still owed, with a manager's reason. */
+  checkoutOverride: { amount: number; reason: string; by: string | null; at: string } | null;
 }
 
 /** Sums lines in the currency's precision: charges = ROOM+TAX, paid = PAYMENT (positive), refunded = REFUND (positive), balance = sum of signed amounts (negative = the hotel owes the guest). */
 export function folioTotals(lines: readonly FolioLine[], currency: string): FolioTotals {
   let charges = 0;
+  let allowances = 0;
   let paid = 0;
   let refunded = 0;
   let balance = 0;
@@ -138,8 +158,15 @@ export function folioTotals(lines: readonly FolioLine[], currency: string): Foli
     const minor = toMinorUnits(line.amount, currency);
     balance += minor;
     if (line.kind === 'ROOM' || line.kind === 'TAX') charges += minor;
+    else if (line.kind === 'ALLOWANCE') allowances -= minor;
     else if (line.kind === 'PAYMENT') paid -= minor;
     else refunded += minor;
   }
-  return { charges: fromMinor(charges, currency), paid: fromMinor(paid, currency), refunded: fromMinor(refunded, currency), balance: fromMinor(balance, currency) };
+  return {
+    charges: fromMinor(charges, currency),
+    allowances: fromMinor(allowances, currency),
+    paid: fromMinor(paid, currency),
+    refunded: fromMinor(refunded, currency),
+    balance: fromMinor(balance, currency),
+  };
 }

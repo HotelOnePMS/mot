@@ -6,13 +6,15 @@
 import { prisma } from '@/lib/prisma';
 import { getStripe, isStripeConfigured } from '@/lib/stripe';
 import { fromCents, refundableCents, suggestedRefundCents, toCents } from '@/lib/payments';
-import { requireStaff } from '../authz';
+import { requirePermission, requireStaff } from '../authz';
 import { badRequest } from '../errors';
 import { toISODate } from '../dates';
 import { recordAudit } from '../services/audit';
 import { getBookingForStaff } from '../services/bookings';
+import { addAllowance } from '../services/folio';
 import { policyFor } from '../services/guest';
 import { hotelLocale } from '../services/hotels';
+import { toBookingSummary } from '../services/mappers';
 import { applyRefundState, paymentLines } from './record';
 
 /**
@@ -80,7 +82,10 @@ export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
 }
 
 /** Refund part or all of one payment. `amount` is in the payment's currency; omit it to refund what is left. */
-export async function refundPayment(bookingId: string, input: { paymentId: string; amount?: number; reason?: string }): Promise<{ refunded: number; remaining: number }> {
+export async function refundPayment(
+  bookingId: string,
+  input: { paymentId: string; amount?: number; reason?: string; allowance?: boolean },
+): Promise<{ refunded: number; remaining: number }> {
   const actor = await requireStaff('payments.refund');
   const booking = await getBookingForStaff(actor, bookingId);
   if (!isStripeConfigured()) throw badRequest('Online payments aren’t enabled on this deployment.');
@@ -98,6 +103,15 @@ export async function refundPayment(bookingId: string, input: { paymentId: strin
   const cents = input.amount === undefined ? left : toCents(input.amount);
   if (!Number.isFinite(cents) || cents <= 0) throw badRequest('Enter an amount to refund.');
   if (cents > left) throw badRequest(`Only ${fromCents(left).toFixed(2)} ${payment.currency.toUpperCase()} is left to refund on this payment.`);
+  // Goodwill or unused nights: the stay also costs that much less (an allowance), so the refund isn't owed again.
+  // Checked before any money moves.
+  const allowanceReason = input.reason?.replace(/\s+/g, ' ').trim() || 'Refunded to the card';
+  if (input.allowance) {
+    requirePermission(actor, 'folio.adjust');
+    if (booking.status === 'CANCELLED' || booking.status === 'NO_SHOW') throw badRequest('This reservation is closed, so there’s nothing to take off what it costs. Refund without an allowance.');
+    const leftCents = toCents(Number(booking.totalPrice)) - toCents(toBookingSummary(booking).allowances);
+    if (cents > leftCents) throw badRequest(`An allowance can take off at most ${fromCents(Math.max(0, leftCents)).toFixed(2)} ${payment.currency.toUpperCase()}. Refund that much, or refund without an allowance.`);
+  }
 
   const stripe = getStripe();
   const account = payment.property.stripeAccountId ? { stripeAccount: payment.property.stripeAccountId } : undefined;
@@ -122,5 +136,6 @@ export async function refundPayment(bookingId: string, input: { paymentId: strin
     bookingId: booking.id,
     paymentId: payment.id,
   });
+  if (input.allowance) await addAllowance({ actor, source: 'classic' }, booking.id, { amount: fromCents(cents), reason: allowanceReason });
   return { refunded: fromCents(cents), remaining: fromCents(refundableCents(paid, total)) };
 }

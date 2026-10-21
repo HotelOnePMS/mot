@@ -206,7 +206,8 @@ async function loadContext(actor: Actor, bookingId: string) {
   });
   const payments = await prisma.payment.findMany({ where: { bookingId: { in: lines.map((l) => l.id) } }, orderBy: { createdAt: 'asc' } });
   const active = lines.filter((l) => l.status !== 'CANCELLED' && l.status !== 'NO_SHOW');
-  const totalCents = (active.length ? active : lines).reduce((s, l) => s + toCents(Number(l.totalPrice)), 0);
+  // What the reservation costs: its room types still going ahead, after their allowances.
+  const totalCents = (active.length ? active : lines).reduce((s, l) => s + toCents(Number(l.totalPrice)) - l.allowances.reduce((a, x) => a + toCents(Number(x.amount)), 0), 0);
   const toward = payments.filter((p) => p.kind !== 'SECURITY_DEPOSIT' && PAID.includes(p.status));
   const paidCents = toward.reduce((s, p) => s + toCents(Number(p.amount)) - toCents(Number(p.amountRefunded)), 0);
   return { booking, lines, lead, property, payments, totalCents, paidCents, balanceCents: Math.max(0, totalCents - paidCents) };

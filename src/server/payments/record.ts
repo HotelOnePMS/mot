@@ -49,6 +49,8 @@ const lineSelect = {
   checkIn: true,
   checkOut: true,
   roomType: { select: { name: true } },
+  // Allowances in force lower what the line costs (folio allowances; a removed one is voided).
+  allowances: { where: { voidedAt: null }, select: { amount: true } },
 } as const;
 
 /**
@@ -61,6 +63,8 @@ export async function paymentLines(booking: { id: string; groupCode: string | nu
 }
 
 const sumCents = (rows: { totalPrice: unknown }[]) => rows.reduce((s, r) => s + toCents(Number(r.totalPrice)), 0);
+/** What a line costs after its allowances, in cents. */
+const owedCents = (l: { totalPrice: unknown; allowances: { amount: unknown }[] }) => toCents(Number(l.totalPrice)) - l.allowances.reduce((s, a) => s + toCents(Number(a.amount)), 0);
 
 /**
  * Each line's payment status from its share of the reservation's payments
@@ -69,14 +73,14 @@ const sumCents = (rows: { totalPrice: unknown }[]) => rows.reduce((s, r) => s + 
  */
 async function lineStatuses(lines: Awaited<ReturnType<typeof paymentLines>>): Promise<Map<string, string>> {
   const totals = await totalsFor(lines.map((l) => l.id));
-  if (lines.length < 2) return new Map(lines.map((l) => [l.id, bookingPaymentStatus({ totalCents: sumCents(lines), ...totals })]));
+  if (lines.length < 2) return new Map(lines.map((l) => [l.id, bookingPaymentStatus({ totalCents: owedCents(l), ...totals })]));
   // The same order as the per-line amounts shown to staff (mappers.ts), so a cent of rounding lands on the same line.
   const ordered = [...lines].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const shares = reservationShares({
     ...totals,
     lines: ordered.map((l) => ({ dueCents: toCents(Number(l.paymentDue ?? l.totalPrice)), cancelled: l.status === 'CANCELLED' || l.status === 'NO_SHOW' })),
   });
-  return new Map(ordered.map((l, i) => [l.id, bookingPaymentStatus({ totalCents: toCents(Number(l.totalPrice)), ...shares[i] })]));
+  return new Map(ordered.map((l, i) => [l.id, bookingPaymentStatus({ totalCents: owedCents(l), ...shares[i] })]));
 }
 
 function cardDetails(charge: Stripe.Charge | null) {

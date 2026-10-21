@@ -20,6 +20,8 @@ export interface EvidenceInput {
     guests: number;
     roomType: string;
     totalPrice: number;
+    /** Allowances the hotel gave (lowering what the stay cost), e.g. "25.00 off: air conditioning broken". */
+    allowances?: string[];
     createdAt: string;
     notes: string | null;
   };
@@ -144,6 +146,7 @@ export function buildEvidenceSummary(i: EvidenceInput): EvidenceSummary {
       `Stay: ${i.booking.checkIn} to ${i.booking.checkOut} (${i.booking.nights} ${i.booking.nights === 1 ? 'night' : 'nights'}), ${i.booking.rooms} ${i.booking.rooms === 1 ? 'room' : 'rooms'}, ${i.booking.guests} ${i.booking.guests === 1 ? 'guest' : 'guests'}`,
       `Room type: ${i.booking.roomType}`,
       `Booking total: ${i.booking.totalPrice.toFixed(2)}`,
+      ...(i.booking.allowances ?? []).map((a) => `Allowance given by the hotel: ${a}`),
       `Booking status: ${i.booking.status}`,
       ...(i.booking.notes ? [`Notes on the booking: ${i.booking.notes.replace(/\s*\n\s*/g, ' | ')}`] : []),
     ],

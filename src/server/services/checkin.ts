@@ -295,6 +295,7 @@ async function registrationFor(booking: BookingWithRelations, draft: Registratio
     roomTypeName: s.roomType.name,
     currency: s.currency,
     stayTotal: s.totalPrice,
+    allowances: s.allowances,
     paid: s.amountPaid,
     balance: s.balance,
     deposits,

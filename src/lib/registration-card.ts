@@ -34,6 +34,8 @@ export interface RegistrationCardInput {
   currency: string;
   /** Room and taxes for the stay. */
   stayTotal: number;
+  /** Allowances lowering it (a manager's), positive; 0 or left out for none. */
+  allowances?: number;
   /** Paid so far (online and at the desk), positive. */
   paid: number;
   /** Signed: positive = still to pay, negative = credit. */
@@ -126,7 +128,7 @@ export function registrationCardText(i: RegistrationCardInput): string {
 
   const stay = [
     `${line(i.checkIn)} to ${line(i.checkOut)} (${plural(i.nights, 'night', 'nights')}), room ${line(i.roomNumber)} (${line(i.roomTypeName)}), ${plural(i.guests, 'guest', 'guests')}.`,
-    `Room and taxes: ${money(i.stayTotal, { currency })}. Paid so far: ${money(i.paid, { currency })}.`,
+    `Room and taxes: ${money(i.stayTotal, { currency })}.${(i.allowances ?? 0) > 0 ? ` Allowances: ${money(i.allowances!, { currency })} off.` : ''} Paid so far: ${money(i.paid, { currency })}.`,
     balanceSentence(i.balance, currency),
   ].join(' ');
 

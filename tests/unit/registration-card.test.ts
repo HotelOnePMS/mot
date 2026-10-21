@@ -81,6 +81,11 @@ test('no deposit says so', () => {
   assert.equal(paragraphs({ ...card, deposits: [] })[3], 'No security deposit was taken.');
 });
 
+test('allowances show between the charges and what was paid', () => {
+  assert.match(paragraphs({ ...card, allowances: 50, balance: 262.5 })[2], /Room and taxes: \$412\.50\. Allowances: \$50\.00 off\. Paid so far: \$100\.00\. Balance to pay: \$262\.50\.$/);
+  assert.doesNotMatch(paragraphs({ ...card, allowances: 0 })[2], /Allowances/);
+});
+
 test('the balance reads as due, as a credit, or as settled', () => {
   assert.match(paragraphs(card)[2], /Balance to pay: \$312\.50\.$/);
   assert.match(paragraphs({ ...card, paid: 450, balance: -37.5 })[2], /Paid so far: \$450\.00\. Credit of \$37\.50\.$/);
