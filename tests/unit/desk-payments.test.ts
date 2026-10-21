@@ -126,6 +126,15 @@ describe('card numbers typed into notes', () => {
     expect(containsCardNumber('paid with 4242 4242 4242 4242 at the bar')).toBe(true);
     expect(containsCardNumber('3782-822463-10005')).toBe(true);
   });
+  it('spots one next to other digits: an expiry, a reference, a room number', () => {
+    expect(containsCardNumber('Guest pays later, card 4111 1111 1111 1111 12 26')).toBe(true);
+    expect(containsCardNumber('4111 1111 1111 1111 12/26')).toBe(true);
+    expect(containsCardNumber('Wrong card 4111 1111 1111 1111 1226 charged')).toBe(true);
+    expect(containsCardNumber('Comp, PO 1234 4111 1111 1111 1111')).toBe(true);
+    expect(containsCardNumber('2 4111111111111111')).toBe(true);
+    expect(containsCardNumber('Room 204 4111 1111 1111 1111')).toBe(true);
+    expect(containsCardNumber('41111111111111111226')).toBe(true);
+  });
   it('leaves approval codes, phone numbers and amounts alone', () => {
     expect(containsCardNumber('A1B2C3')).toBe(false);
     expect(containsCardNumber('Bank transfer ref 20261021')).toBe(false);

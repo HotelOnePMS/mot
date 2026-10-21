@@ -38,8 +38,9 @@ export function toBookingSummary(b: BookingWithRelations): BookingSummary {
   const guestName = `${b.user.firstName} ${b.user.lastName}`.trim();
   const pay = reservationPayment(b);
   const allowances = fromCents(allowanceCents(b.allowances));
-  // What the stay costs after allowances, less what was paid toward it.
-  const lineBalance = roundMoney(Number(b.totalPrice) - allowances - fromCents(pay.heldCents), b.currency);
+  // What the stay costs after allowances (never below nothing, even if the stay was repriced lower since), less what was
+  // paid toward it.
+  const lineBalance = roundMoney(fromCents(owedAfterAllowances(b.totalPrice, b.allowances)) - fromCents(pay.heldCents), b.currency);
   // The first online payment carries the card details the flags are about; desk payments are taken in person.
   const first = pay.payments.find((p) => p.method === 'ONLINE');
   return {
@@ -106,13 +107,14 @@ function reservationPayment(b: BookingWithRelations) {
     lines: lead.reservationLines.map((l) => ({
       dueCents: shareWeightCents({ totalCents: toCents(Number(l.totalPrice)), dueCents: l.paymentDue === null ? null : toCents(Number(l.paymentDue)), allowanceCents: allowanceCents(l.allowances) }),
       cancelled: ENDED.includes(l.status),
+      allowanceCents: allowanceCents(l.allowances),
     })),
   });
   const share = shares[lead.reservationLines.findIndex((l) => l.id === b.id)];
   // What the reservation still owes, as the desk counts it (server/payments/desk.ts): its room types still going ahead
   // (after their allowances), less everything paid toward the stay.
   const active = lead.reservationLines.filter((l) => !ENDED.includes(l.status));
-  const dueCents = (active.length ? active : lead.reservationLines).reduce((sum, l) => sum + toCents(Number(l.totalPrice)) - allowanceCents(l.allowances), 0);
+  const dueCents = (active.length ? active : lead.reservationLines).reduce((sum, l) => sum + owedAfterAllowances(l.totalPrice, l.allowances), 0);
   const netCents = lead.payments.reduce((sum, p) => sum + toCents(Number(p.amount)) - toCents(Number(p.amountRefunded)), 0);
   return {
     payments: lead.payments,
@@ -135,6 +137,11 @@ function checkOutDue(lineBalance: number, reservationDueCents: number | null, cu
 /** The allowances in force on a booking, in cents. */
 export function allowanceCents(rows: readonly { amount: unknown }[]): number {
   return rows.reduce((sum, a) => sum + toCents(Number(a.amount)), 0);
+}
+
+/** What a booking costs after its allowances, in cents: never below nothing (a stay repriced lower keeps its allowances). */
+export function owedAfterAllowances(totalPrice: unknown, allowances: readonly { amount: unknown }[]): number {
+  return Math.max(0, toCents(Number(totalPrice)) - allowanceCents(allowances));
 }
 
 export function personName(u: { firstName: string; lastName: string }): string {

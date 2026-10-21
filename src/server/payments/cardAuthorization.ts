@@ -49,7 +49,7 @@ import { logError } from '../log';
 import { publicSiteUrl } from '../public-url';
 import { recordAudit, type OpContext } from '../services/audit';
 import { getBookingForStaff } from '../services/bookings';
-import { personName, toBookingSummary } from '../services/mappers';
+import { owedAfterAllowances, personName, toBookingSummary } from '../services/mappers';
 import { open, randomToken, seal, sha256, vaultAvailable } from '../vault';
 import { hashPolicy } from './policy';
 import { paymentLines } from './record';
@@ -91,7 +91,8 @@ async function reservationOf(booking: { id: string; groupCode: string | null }) 
   const lines = await paymentLines(booking);
   const lead = lines[0];
   const live = lines.filter((l) => !ENDED.includes(l.status));
-  const totalCents = (live.length ? live : lines).reduce((s, l) => s + toCents(Number(l.totalPrice)), 0);
+  // What the stay costs after any allowances, as the desk and the folio count it.
+  const totalCents = (live.length ? live : lines).reduce((s, l) => s + owedAfterAllowances(l.totalPrice, l.allowances), 0);
   return { lead, lines, amount: fromCents(totalCents) };
 }
 

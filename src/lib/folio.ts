@@ -130,8 +130,12 @@ export interface FolioView {
   deposits: FolioDeposit[];
   /** Security deposit still held for the stay (not part of the balance). */
   depositHeld: number;
-  /** Set when one set of payments covers several room types (this folio shows this room type's share). */
-  reservation: { code: string; roomTypes: number } | null;
+  /**
+   * Set when one set of payments covers several room types (this folio shows this room type's share). balance: what the
+   * whole reservation still owes (negative: owed back to the guest), its room types going ahead after their allowances,
+   * less everything paid toward it.
+   */
+  reservation: { code: string; roomTypes: number; balance: number } | null;
   /**
    * What must be paid before check-out (BookingSummary.checkOutDue). For a room type of a shared reservation it's what
    * the whole reservation still owes, which can differ from this folio's balance (its share of the payments).

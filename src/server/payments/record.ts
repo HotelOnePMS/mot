@@ -64,7 +64,7 @@ export async function paymentLines(booking: { id: string; groupCode: string | nu
 
 const sumCents = (rows: { totalPrice: unknown }[]) => rows.reduce((s, r) => s + toCents(Number(r.totalPrice)), 0);
 /** What a line costs after its allowances, in cents. */
-const owedCents = (l: { totalPrice: unknown; allowances: { amount: unknown }[] }) => toCents(Number(l.totalPrice)) - l.allowances.reduce((s, a) => s + toCents(Number(a.amount)), 0);
+const owedCents = (l: { totalPrice: unknown; allowances: { amount: unknown }[] }) => Math.max(0, toCents(Number(l.totalPrice)) - l.allowances.reduce((s, a) => s + toCents(Number(a.amount)), 0));
 
 /**
  * Each line's payment status from its share of the reservation's payments
@@ -78,10 +78,14 @@ async function lineStatuses(lines: Awaited<ReturnType<typeof paymentLines>>): Pr
   const ordered = [...lines].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const shares = reservationShares({
     ...totals,
-    lines: ordered.map((l) => ({
-      dueCents: shareWeightCents({ totalCents: toCents(Number(l.totalPrice)), dueCents: l.paymentDue === null ? null : toCents(Number(l.paymentDue)), allowanceCents: toCents(Number(l.totalPrice)) - owedCents(l) }),
-      cancelled: l.status === 'CANCELLED' || l.status === 'NO_SHOW',
-    })),
+    lines: ordered.map((l) => {
+      const allowanceCents = l.allowances.reduce((s, a) => s + toCents(Number(a.amount)), 0);
+      return {
+        dueCents: shareWeightCents({ totalCents: toCents(Number(l.totalPrice)), dueCents: l.paymentDue === null ? null : toCents(Number(l.paymentDue)), allowanceCents }),
+        cancelled: l.status === 'CANCELLED' || l.status === 'NO_SHOW',
+        allowanceCents,
+      };
+    }),
   });
   return new Map(ordered.map((l, i) => [l.id, bookingPaymentStatus({ totalCents: owedCents(l), ...shares[i] })]));
 }
@@ -297,10 +301,15 @@ export async function restorePaymentStatus(bookingId: string, lost: boolean): Pr
 export async function refreshPaymentStatus(booking: { id: string; groupCode: string | null }, note?: string): Promise<void> {
   const lines = await paymentLines(booking);
   const { paidCents } = await totalsFor(lines.map((l) => l.id));
-  if (paidCents <= 0) return;
   const statuses = await lineStatuses(lines);
   for (const line of lines) {
-    const paymentStatus = statuses.get(line.id)!;
+    let paymentStatus = statuses.get(line.id)!;
+    if (paidCents <= 0) {
+      // Nothing paid yet: only a stay allowances took entirely off is paid; one put back (allowance removed) is to pay at
+      // the hotel again. Others keep their status (pay at property, awaiting an online payment).
+      if (paymentStatus !== 'PAID' && line.paymentStatus === 'PAID') paymentStatus = 'PAY_AT_PROPERTY';
+      else if (paymentStatus !== 'PAID') continue;
+    }
     if (paymentStatus === line.paymentStatus || line.paymentStatus === 'DISPUTED') continue;
     await prisma.booking.update({ where: { id: line.id }, data: { paymentStatus, ...(note ? { statusHistory: { create: { status: line.status, notes: note } } } : {}) } });
   }

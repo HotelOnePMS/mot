@@ -129,21 +129,39 @@ export function depositSettlement(input: { status: string; amountCents: number; 
   return { error: 'This deposit has already been settled.' };
 }
 
+function luhn(digits: string): boolean {
+  let sum = 0;
+  for (let i = 0; i < digits.length; i++) {
+    let d = Number(digits[digits.length - 1 - i]);
+    if (i % 2 === 1) d = d * 2 > 9 ? d * 2 - 9 : d * 2;
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
 /**
- * A full card number typed by mistake into a note or an approval code: 13 to 19 digits (spaces and dashes ignored)
- * that pass the Luhn check. Card numbers are never stored, so the desk refuses them.
+ * A full card number typed by mistake into a note or an approval code: 13 to 19 digits, whole or in groups split by
+ * spaces or dashes, that pass the Luhn check, even next to other digits (an expiry, a reference). Card numbers are
+ * never stored, so the desk refuses them.
  */
 export function containsCardNumber(text: string | null | undefined): boolean {
-  const runs = (text ?? '').replace(/[\s-]/g, '').match(/\d{13,19}/g) ?? [];
-  return runs.some((run) => {
-    let sum = 0;
-    for (let i = 0; i < run.length; i++) {
-      let d = Number(run[run.length - 1 - i]);
-      if (i % 2 === 1) d = d * 2 > 9 ? d * 2 - 9 : d * 2;
-      sum += d;
+  for (const piece of (text ?? '').split(/[^\d\s-]+/)) {
+    const groups = piece.split(/[\s-]+/).filter(Boolean);
+    for (let i = 0; i < groups.length; i++) {
+      // A long unbroken run: any 13 to 19 digits inside it.
+      const g = groups[i];
+      if (g.length > 19) {
+        for (let len = 13; len <= 19; len++) for (let at = 0; at + len <= g.length; at++) if (luhn(g.slice(at, at + len))) return true;
+      }
+      // Groups joined from this one on, as long as they fit in a card number.
+      let run = '';
+      for (let j = i; j < groups.length && run.length + groups[j].length <= 19; j++) {
+        run += groups[j];
+        if (run.length >= 13 && luhn(run)) return true;
+      }
     }
-    return sum % 10 === 0;
-  });
+  }
+  return false;
 }
 
 export const CARD_NUMBER_REFUSED = 'That looks like a full card number. Never type card numbers here: only the last four digits and the terminal’s approval code.';

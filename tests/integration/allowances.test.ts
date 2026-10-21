@@ -49,11 +49,13 @@ import { prisma } from '@/lib/prisma';
 import { addDaysISO } from '@/server/dates';
 import { getDeskPayments, recordCashPayment } from '@/server/payments/desk';
 import { refreshEvidence } from '@/server/payments/disputes';
+import { listCardAuthorizations } from '@/server/payments/cardAuthorization';
 import { refundPayment } from '@/server/payments/refunds';
 import { checkTransition, createReservation, getBookingForStaff, transitionBooking } from '@/server/services/bookings';
 import { previewRegistration } from '@/server/services/checkin';
 import { addAllowance, getFolio, voidAllowance } from '@/server/services/folio';
 import { toBookingSummary } from '@/server/services/mappers';
+import { changeOwnStayDates } from '@/server/services/guest';
 import { createDeskReservation } from '@/server/services/reservations';
 import type { Actor } from '@/server/authz';
 import { actorFor, makeHotel, makeUser, uid } from './fixtures';
@@ -322,6 +324,67 @@ describe('allowances on the folio', () => {
     await addAllowance(manager, queen.id, { amount: 50, reason: 'Noise' });
     expect(await summaryOf(desk.actor, queen.id)).toMatchObject({ allowances: 50, balance: -50, checkOutDue: 0 });
     expect((await getFolio(desk.actor, queen.id)).totals.balance).toBe(-50);
+  });
+
+  it('on a shared reservation paid in full, the allowance’s credit is the room type it was given on', async () => {
+    const { desk, manager, queen, suiteLine, total } = await sharedReservation();
+    await recordCashPayment(desk, queen.id, { kind: 'PAYMENT', amount: total });
+    const folio = await addAllowance(manager, queen.id, { amount: 100, reason: 'Noise' });
+    expect(folio.reservation?.balance).toBe(-100);
+    expect(await summaryOf(desk.actor, queen.id)).toMatchObject({ balance: -100, checkOutDue: 0 });
+    expect(await summaryOf(desk.actor, suiteLine.id)).toMatchObject({ balance: 0, checkOutDue: 0 });
+  });
+
+  it('on a shared reservation with deposits paid, the allowance lowers its own room type’s balance only', async () => {
+    const { desk, manager, queen, suiteLine } = await sharedReservation();
+    // Online deposit policy: half of each room type due up front, 400 paid.
+    await prisma.booking.update({ where: { id: queen.id }, data: { paymentDue: Number(queen.totalPrice) / 2 } });
+    await prisma.booking.update({ where: { id: suiteLine.id }, data: { paymentDue: Number(suiteLine.totalPrice) / 2 } });
+    await recordCashPayment(desk, queen.id, { kind: 'PAYMENT', amount: (Number(queen.totalPrice) + Number(suiteLine.totalPrice)) / 2 });
+    expect((await summaryOf(desk.actor, queen.id)).balance).toBe(100);
+    await addAllowance(manager, queen.id, { amount: 100, reason: 'Noise' });
+    expect((await summaryOf(desk.actor, queen.id)).balance).toBe(0);
+    expect((await summaryOf(desk.actor, suiteLine.id)).balance).toBe(300);
+    expect((await getFolio(desk.actor, queen.id)).reservation?.balance).toBe(300);
+  });
+
+  it('a stay repriced below its allowances costs nothing, never less, and doesn’t lower what other room types owe', async () => {
+    const { desk, manager, queen, suiteLine } = await sharedReservation();
+    await addAllowance(manager, queen.id, { amount: Number(queen.totalPrice), reason: 'Comped' });
+    // Shortened since (an OTA modification, say): the room type now costs half, the allowance stays.
+    await prisma.booking.update({ where: { id: queen.id }, data: { totalPrice: Number(queen.totalPrice) / 2 } });
+    expect(await summaryOf(desk.actor, queen.id)).toMatchObject({ balance: 0 });
+    expect((await summaryOf(desk.actor, suiteLine.id)).checkOutDue).toBe(Number(suiteLine.totalPrice));
+    expect((await getDeskPayments(desk.actor, suiteLine.id)).balance).toBe(Number(suiteLine.totalPrice));
+    expect((await getFolio(desk.actor, queen.id)).maxAllowance).toBe(0);
+  });
+
+  it('a stay allowances took entirely off is paid, and to pay at the hotel again once the allowance is removed', async () => {
+    const { desk, manager, booking } = await setup();
+    const folio = await addAllowance(manager, booking.id, { amount: 240, reason: 'Comped: VIP' });
+    expect((await summaryOf(desk.actor, booking.id)).paymentStatus).toBe('PAID');
+    await voidAllowance(manager, booking.id, folio.allowances[0].id);
+    expect(await summaryOf(desk.actor, booking.id)).toMatchObject({ paymentStatus: 'PAY_AT_PROPERTY', balance: 240 });
+  });
+
+  it('a comped room type of a shared reservation shows paid once the rest is paid', async () => {
+    const { desk, manager, queen, suiteLine } = await sharedReservation();
+    await addAllowance(manager, queen.id, { amount: Number(queen.totalPrice), reason: 'Comped' });
+    await recordCashPayment(desk, suiteLine.id, { kind: 'PAYMENT', amount: Number(suiteLine.totalPrice) });
+    for (const id of [queen.id, suiteLine.id]) expect(await summaryOf(desk.actor, id)).toMatchObject({ paymentStatus: 'PAID', balance: 0 });
+  });
+
+  it('a guest can’t change the dates online of a stay the hotel lowered the price of', async () => {
+    const { manager, booking } = await setup();
+    await addAllowance(manager, booking.id, { amount: 120, reason: 'Left early: unused nights' });
+    const guest = await actorFor(booking.guest.id);
+    await expect(changeOwnStayDates(guest, booking.id, { newCheckOut: addDaysISO(booking.checkIn, 1) })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/front desk/) });
+  });
+
+  it('a cardholder authorizes what the stay costs after allowances', async () => {
+    const { manager, booking } = await setup();
+    await addAllowance(manager, booking.id, { amount: 40, reason: 'Noise' });
+    expect((await listCardAuthorizations(manager.actor, booking.id)).defaults.amount).toBe(200);
   });
 
   it('prints the allowance on the registration card', async () => {

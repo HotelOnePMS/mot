@@ -167,15 +167,18 @@ function AllowanceDialog({
   const [reason, setReason] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
+  // The folio as it was when the dialog opened: after saving, the refreshed one already counts this allowance.
+  const [base, setBase] = React.useState(folio);
   React.useEffect(() => {
     if (open) {
       setAmount('');
       setReason('');
       setError('');
+      setBase(folio);
     }
-  }, [open]);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { currency, maxAllowance } = folio;
+  const { currency, maxAllowance } = base;
   const value = toNumber(amount);
   const typed = amount.trim() !== '';
   // As the server checks: more than zero, and at most the stay's charges less the allowances already given.
@@ -189,8 +192,10 @@ function AllowanceDialog({
   const why = reason.replace(/\s+/g, ' ').trim();
   const cardNumber = containsCardNumber(why);
   const valid = typed && !amountError && why.length >= 3 && !cardNumber;
-  // The folio's balance with this allowance; below zero, the guest has paid more than the stay now costs.
-  const after = typed && !amountError ? Math.round((folio.totals.balance - value) * 100) / 100 : null;
+  // The balance with this allowance (below zero: the guest has paid more than the stay now costs). For a shared
+  // reservation, the whole reservation's: payments are spread over its room types again.
+  const before = base.reservation ? base.reservation.balance : base.totals.balance;
+  const after = typed && !amountError ? Math.round((before - value) * 100) / 100 : null;
 
   async function save() {
     setBusy(true);
@@ -198,8 +203,8 @@ function AllowanceDialog({
     try {
       const next = await api<FolioView>(`${key(bookingId)}/allowances`, { method: 'POST', json: { amount: Math.round(value * 100) / 100, reason: why } });
       toast.success(`Took ${fmt(value, currency)} off the stay`);
-      await onSaved(next).catch(() => undefined);
       onOpenChange(false);
+      void onSaved(next).catch(() => undefined);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -229,11 +234,11 @@ function AllowanceDialog({
               placeholder="e.g. Air conditioning broken the first night"
             />
           </Field>
-          {folio.reservation && <p className="text-xs text-muted-foreground">Comes off this room type’s charges in reservation {folio.reservation.code}.</p>}
+          {base.reservation && <p className="text-xs text-muted-foreground">Comes off this room type’s charges in reservation {base.reservation.code}.</p>}
           <div aria-live="polite" className="text-sm">
             {after !== null && (
               <p>
-                Balance after: <span className="font-semibold tabular">{signed(after, currency)}</span>
+                {base.reservation ? `Reservation ${base.reservation.code} balance after` : 'Balance after'}: <span className="font-semibold tabular">{signed(after, currency)}</span>
                 {after < -0.004 ? ' · the guest has paid more than the stay now costs, so refund them the difference.' : after <= 0.004 ? ' · settled' : ''}
               </p>
             )}

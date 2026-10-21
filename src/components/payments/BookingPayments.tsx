@@ -159,14 +159,22 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
           <div className="space-y-4">
-            {(booking.status === 'CHECKED_IN' || booking.status === 'CONFIRMED') && !allowing && (
+            {(booking.status === 'CHECKED_IN' || booking.status === 'CONFIRMED') && !allowing && !(inCredit && Number.isFinite(value) && value <= -booking.balance + 0.004) && (
               // Check-out needs the balance at zero, and a refund toward the stay brings the balance back (unless the stay
-              // also costs that much less: an allowance).
+              // also costs that much less: an allowance, or the refund only hands back a credit).
               <Callout tone="warning">
-                {booking.guest.name} hasn’t checked out. A refund on its own is owed again before they can check out.{' '}
-                {canAllow
-                  ? 'To refund unused nights or as a goodwill gesture, also take the amount off what the stay costs (below).'
-                  : 'To refund unused nights or as a goodwill gesture, check them out first, then refund.'}
+                {inCredit ? (
+                  <>
+                    {booking.guest.name} hasn’t checked out. Only the part above the credit of {formatMoney(-booking.balance, booking.currency, { cents: true })} is owed again before they can check out.
+                  </>
+                ) : (
+                  <>
+                    {booking.guest.name} hasn’t checked out. A refund on its own is owed again before they can check out.{' '}
+                    {canAllow
+                      ? 'To refund unused nights or as a goodwill gesture, also take the amount off what the stay costs (below).'
+                      : 'To refund unused nights or as a goodwill gesture, check them out first, then refund.'}
+                  </>
+                )}
               </Callout>
             )}
             <Callout tone={info.deadlinePassed ? 'warning' : 'info'}>
@@ -195,7 +203,7 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
             </Field>
             {inCredit && can('folio.adjust') && booking.status !== 'CANCELLED' && booking.status !== 'NO_SHOW' && (
               <p className="text-xs text-muted-foreground">
-                The guest has a credit of {formatMoney(-booking.balance, booking.currency, { cents: true })} on this stay (an allowance already lowered the charges). Refund it as it is.
+                The guest has a credit of {formatMoney(-booking.balance, booking.currency, { cents: true })} on this stay. Check the folio, then refund it as it is (no allowance: the charges are already lower than what was paid).
               </p>
             )}
             {canAllow && (

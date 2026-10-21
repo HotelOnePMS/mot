@@ -134,23 +134,31 @@ export function shareWeightCents(line: { totalCents: number; dueCents: number | 
  * refunded of it. Refunds count against cancelled room types first, up to what
  * was charged for them, then against the rest in proportion, so cancelling and
  * refunding one room type leaves the others fully paid. Anything paid beyond
- * what was due (an allowance lowered a room type afterwards) is the credit of
- * the room types still going ahead, not of a cancelled one. Whole cents that
- * add up.
+ * what is due now (an allowance lowered a room type after it was paid) is the
+ * credit of the room types whose allowances made it, then of the others still
+ * going ahead, never of a cancelled one. Whole cents that add up.
  */
 export function reservationShares(input: {
   paidCents: number;
   refundedCents: number;
-  lines: readonly { dueCents: number; cancelled: boolean }[];
+  lines: readonly { dueCents: number; cancelled: boolean; allowanceCents?: number }[];
 }): { paidCents: number; refundedCents: number }[] {
   const total = Math.max(0, input.paidCents);
   const weights = input.lines.map((l) => l.dueCents);
   const due = weights.reduce((s, w) => s + (Number.isFinite(w) && w > 0 ? w : 0), 0);
   const upToDue = due > 0 ? Math.min(total, due) : total;
   const paid = allocateCents(upToDue, weights);
-  if (total > upToDue) {
+  let excess = total - upToDue;
+  const allowed = input.lines.map((l) => (l.cancelled ? 0 : Math.max(0, l.allowanceCents ?? 0)));
+  const allowedSum = allowed.reduce((s, a) => s + a, 0);
+  if (excess > 0 && allowedSum > 0) {
+    const toAllowed = Math.min(excess, allowedSum);
+    allocateCents(toAllowed, allowed).forEach((c, i) => (paid[i] += c));
+    excess -= toAllowed;
+  }
+  if (excess > 0) {
     const open = input.lines.map((l, i) => (l.cancelled ? 0 : Math.max(1, weights[i])));
-    allocateCents(total - upToDue, open.some((w) => w > 0) ? open : weights).forEach((c, i) => (paid[i] += c));
+    allocateCents(excess, open.some((w) => w > 0) ? open : weights).forEach((c, i) => (paid[i] += c));
   }
   const refunded = paid.map(() => 0);
   let left = Math.min(Math.max(0, input.refundedCents), Math.max(0, input.paidCents));
@@ -167,6 +175,8 @@ export function reservationShares(input: {
 /** Booking payment status once the money moves: PAID, DEPOSIT_PAID, or the refund states. */
 export function bookingPaymentStatus(input: { totalCents: number; paidCents: number; refundedCents: number }): string {
   const { totalCents, paidCents, refundedCents } = input;
+  // Nothing to pay (allowances took the whole stay off): paid.
+  if (totalCents <= 0 && refundedCents <= 0) return 'PAID';
   if (paidCents <= 0) return 'AWAITING_PAYMENT';
   if (refundedCents >= paidCents) return 'REFUNDED';
   if (refundedCents > 0) return 'PARTIALLY_REFUNDED';

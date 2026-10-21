@@ -26,7 +26,7 @@ import { badRequest, conflict, notFound } from '../errors';
 import { paymentLines, refreshPaymentStatus } from '../payments/record';
 import { recordAudit, type OpContext } from './audit';
 import { getBookingForStaff } from './bookings';
-import { personName, toBookingSummary, type BookingWithRelations } from './mappers';
+import { owedAfterAllowances, personName, toBookingSummary, type BookingWithRelations } from './mappers';
 
 // The shapes live in lib/folio so client components can use them without server code.
 export type { FolioDeposit, FolioView } from '@/lib/folio';
@@ -34,6 +34,18 @@ export type { FolioDeposit, FolioView } from '@/lib/folio';
 const COLLECTED = ['SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'];
 
 const cardOf = (p: { cardBrand: string | null; cardLast4: string | null }) => (p.cardLast4 ? `${cardBrandLabel(p.cardBrand)} ending ${p.cardLast4}` : null);
+
+/** What a reservation of several room types still owes (signed), as the desk counts it: room types going ahead, after allowances. */
+function reservationBalance(
+  lines: { status: string; totalPrice: unknown; allowances: { amount: unknown }[] }[],
+  toward: { amount: unknown; amountRefunded: unknown }[],
+  currency: string,
+): number {
+  const active = lines.filter((l) => l.status !== 'CANCELLED' && l.status !== 'NO_SHOW');
+  const owed = (active.length ? active : lines).reduce((s, l) => s + owedAfterAllowances(l.totalPrice, l.allowances), 0);
+  const net = toward.reduce((s, p) => s + toCents(Number(p.amount)) - toCents(Number(p.amountRefunded)), 0);
+  return roundMoney(fromCents(owed - net), currency);
+}
 
 /** Everything on a booking's folio. Front desk can see it (folio.view), unlike Stripe's payment details. */
 export async function getFolio(actor: Actor, bookingId: string): Promise<FolioView> {
@@ -121,11 +133,11 @@ export async function buildFolio(b: BookingWithRelations): Promise<FolioView> {
     totals,
     deposits,
     depositHeld: fromCents(held),
-    reservation: shared ? { code: lines[0].code ?? summary.code, roomTypes: lines.length } : null,
+    reservation: shared ? { code: lines[0].code ?? summary.code, roomTypes: lines.length, balance: reservationBalance(lines, toward, b.currency) } : null,
     checkOutDue: summary.checkOutDue,
     settled: summary.checkOutDue <= 0.004,
     allowances: allowances.map((a) => ({ id: a.id, amount: Number(a.amount), reason: a.reason, by: nameOf(a.createdById), at: a.createdAt.toISOString() })),
-    maxAllowance: Math.max(0, roundMoney(Number(b.totalPrice) - summary.allowances, b.currency)),
+    maxAllowance: Math.max(0, roundMoney(fromCents(owedAfterAllowances(b.totalPrice, b.allowances)), b.currency)),
     checkoutOverride: override ? { amount: Number(override.amount), reason: override.reason, by: nameOf(override.approvedById), at: override.createdAt.toISOString() } : null,
   };
 }
