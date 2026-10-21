@@ -14,7 +14,7 @@
 import type Stripe from 'stripe';
 import { prisma } from '@/lib/prisma';
 import { getStripe } from '@/lib/stripe';
-import { bookingPaymentStatus, fromCents, reservationShares, toCents } from '@/lib/payments';
+import { bookingPaymentStatus, fromCents, reservationShares, shareWeightCents, toCents } from '@/lib/payments';
 import { toDateString } from '@/lib/date-utils';
 import { sendBookingConfirmation } from '../email';
 import { nightlyInventory } from '../services/inventory';
@@ -78,7 +78,10 @@ async function lineStatuses(lines: Awaited<ReturnType<typeof paymentLines>>): Pr
   const ordered = [...lines].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const shares = reservationShares({
     ...totals,
-    lines: ordered.map((l) => ({ dueCents: toCents(Number(l.paymentDue ?? l.totalPrice)), cancelled: l.status === 'CANCELLED' || l.status === 'NO_SHOW' })),
+    lines: ordered.map((l) => ({
+      dueCents: shareWeightCents({ totalCents: toCents(Number(l.totalPrice)), dueCents: l.paymentDue === null ? null : toCents(Number(l.paymentDue)), allowanceCents: toCents(Number(l.totalPrice)) - owedCents(l) }),
+      cancelled: l.status === 'CANCELLED' || l.status === 'NO_SHOW',
+    })),
   });
   return new Map(ordered.map((l, i) => [l.id, bookingPaymentStatus({ totalCents: owedCents(l), ...shares[i] })]));
 }

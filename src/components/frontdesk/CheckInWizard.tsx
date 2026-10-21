@@ -665,7 +665,7 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
                         ) : undefined
                       }
                     >
-                      {fmt(folio.checkOutDue, folio.currency)} still to pay{folio.reservation ? ` on reservation ${folio.reservation.code}` : ''}. Take it now or any time before check-out; the guest can’t check out until it’s paid.
+                      {fmt(folio.checkOutDue, folio.currency)} still to pay{folio.reservation ? ` on reservation ${folio.reservation.code}` : ''}. Take it now or any time before check-out.
                     </Callout>
                   )}
                 </div>

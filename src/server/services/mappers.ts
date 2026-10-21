@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 import type { BookingStatus, BookingSummary } from '@/lib/dto';
 import { computeRiskFlags } from '@/lib/risk';
 import { roundMoney } from '@/lib/currency';
-import { fromCents, reservationShares, toCents } from '@/lib/payments';
+import { fromCents, reservationShares, shareWeightCents, toCents } from '@/lib/payments';
 import { highAmountThreshold } from '../payments/config';
 import { diffDays, toISODate } from '../dates';
 
@@ -103,7 +103,10 @@ function reservationPayment(b: BookingWithRelations) {
   const shares = reservationShares({
     paidCents: lead.payments.reduce((sum, p) => sum + toCents(Number(p.amount)), 0),
     refundedCents: lead.payments.reduce((sum, p) => sum + toCents(Number(p.amountRefunded)), 0),
-    lines: lead.reservationLines.map((l) => ({ dueCents: toCents(Number(l.paymentDue ?? l.totalPrice)), cancelled: ENDED.includes(l.status) })),
+    lines: lead.reservationLines.map((l) => ({
+      dueCents: shareWeightCents({ totalCents: toCents(Number(l.totalPrice)), dueCents: l.paymentDue === null ? null : toCents(Number(l.paymentDue)), allowanceCents: allowanceCents(l.allowances) }),
+      cancelled: ENDED.includes(l.status),
+    })),
   });
   const share = shares[lead.reservationLines.findIndex((l) => l.id === b.id)];
   // What the reservation still owes, as the desk counts it (server/payments/desk.ts): its room types still going ahead

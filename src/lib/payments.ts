@@ -124,6 +124,17 @@ export function allocateCents(cents: number, weights: readonly number[]): number
  * was charged for them, then against the rest in proportion, so cancelling and
  * refunding one room type leaves the others fully paid. Whole cents that add up.
  */
+/**
+ * A room type's weight when a reservation's payments are spread over its lines: what it asked for online (its
+ * paymentDue) or, without one, what it costs; less its allowances, in proportion. Shared by the summaries
+ * (mappers.ts) and the payment statuses (record.ts), so a cent of rounding lands on the same line.
+ */
+export function shareWeightCents(line: { totalCents: number; dueCents: number | null; allowanceCents: number }): number {
+  const owed = Math.max(0, line.totalCents - line.allowanceCents);
+  if (line.dueCents === null || line.totalCents <= 0) return owed;
+  return Math.round((line.dueCents * owed) / line.totalCents);
+}
+
 export function reservationShares(input: {
   paidCents: number;
   refundedCents: number;

@@ -5,6 +5,7 @@
  */
 import { prisma } from '@/lib/prisma';
 import { getStripe, isStripeConfigured } from '@/lib/stripe';
+import { CARD_NUMBER_REFUSED, containsCardNumber } from '@/lib/desk-payments';
 import { fromCents, refundableCents, suggestedRefundCents, toCents } from '@/lib/payments';
 import { requirePermission, requireStaff } from '../authz';
 import { badRequest } from '../errors';
@@ -105,9 +106,12 @@ export async function refundPayment(
   if (cents > left) throw badRequest(`Only ${fromCents(left).toFixed(2)} ${payment.currency.toUpperCase()} is left to refund on this payment.`);
   // Goodwill or unused nights: the stay also costs that much less (an allowance), so the refund isn't owed again.
   // Checked before any money moves.
-  const allowanceReason = input.reason?.replace(/\s+/g, ' ').trim() || 'Refunded to the card';
+  const allowanceReason = input.reason?.replace(/\s+/g, ' ').trim().slice(0, 200) || 'Refunded to the card';
+  // The note goes to Stripe and the activity log: never a card number.
+  if (containsCardNumber(input.reason)) throw badRequest(CARD_NUMBER_REFUSED);
   if (input.allowance) {
     requirePermission(actor, 'folio.adjust');
+    if (allowanceReason.length < 3) throw badRequest('Say why the stay costs less (for example “air conditioning broken” or “left a night early”).');
     if (booking.status === 'CANCELLED' || booking.status === 'NO_SHOW') throw badRequest('This reservation is closed, so there’s nothing to take off what it costs. Refund without an allowance.');
     const leftCents = toCents(Number(booking.totalPrice)) - toCents(toBookingSummary(booking).allowances);
     if (cents > leftCents) throw badRequest(`An allowance can take off at most ${fromCents(Math.max(0, leftCents)).toFixed(2)} ${payment.currency.toUpperCase()}. Refund that much, or refund without an allowance.`);

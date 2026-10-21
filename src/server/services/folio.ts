@@ -162,6 +162,7 @@ export async function addAllowance(op: OpContext, bookingId: string, input: { am
 export async function voidAllowance(op: OpContext, bookingId: string, allowanceId: string): Promise<FolioView> {
   requirePermission(op.actor, 'folio.adjust');
   const booking = await getBookingForStaff(op.actor, bookingId);
+  if (booking.status === 'CANCELLED' || booking.status === 'NO_SHOW') throw badRequest('This reservation is closed. Reinstate it before changing what it costs.');
   const allowance = await prisma.folioAllowance.findFirst({ where: { id: allowanceId, bookingId: booking.id } });
   if (!allowance) throw notFound('Allowance');
   const voided = await prisma.folioAllowance.updateMany({ where: { id: allowance.id, voidedAt: null }, data: { voidedAt: new Date(), voidedById: op.actor.userId } });
