@@ -15,6 +15,7 @@ const { startLink, linkStatus } = await import('@/server/whatsapp/link');
 const { runWatch } = await import('@/server/agent/watch');
 const { saveAccess } = await import('@/server/agent/policy');
 const { whatsAppConfig } = await import('@/server/whatsapp/cloud');
+const { recordDispute } = await import('@/server/payments/disputes');
 
 /** What we sent through the Cloud API, newest last. */
 let sent: { to: string; text?: string; template?: string; params?: string[] }[] = [];
@@ -252,6 +253,44 @@ describe('the always-on agent', () => {
     expect(t?.params?.[1]).toContain('Booking request from Kai Moana');
     // The template's "Show me" button (or any reply) gets the full alert.
     expect(await say(number, 'Show me')).toContain('Booking request: 2 nights from Friday');
+  });
+
+  it('tells the owner about a card dispute at night, with evidence that keeps the real stay', async () => {
+    const h = await makeHotel({ timezone: 'America/Los_Angeles' });
+    const owner = await makeUser({ role: 'OWNER', propertyIds: [h.property.id] });
+    const manager = await makeUser({ role: 'MANAGER', propertyIds: [h.property.id] });
+    const b = await createDeskReservation(
+      { actor: await actorFor(owner.id), source: 'classic' },
+      { propertyId: h.property.id, roomTypeId: h.roomType.id, checkIn: h.today, checkOut: addDaysISO(h.today, 2), guests: 1, rooms: 1, guest: { firstName: `Alex${uid()}`, lastName: 'Rivera' } },
+    );
+    // A stay that is long over: booked, checked in, checked out.
+    await prisma.bookingStatusHistory.updateMany({ where: { bookingId: b.id }, data: { createdAt: new Date('2026-01-01T12:00:00Z') } });
+    await prisma.bookingStatusHistory.createMany({
+      data: [
+        { bookingId: b.id, status: 'CHECKED_IN', notes: 'Checked in', createdAt: new Date('2026-01-10T23:30:00Z') },
+        { bookingId: b.id, status: 'CHECKED_OUT', notes: 'Checked out', createdAt: new Date('2026-01-12T18:30:00Z') },
+      ],
+    });
+    await prisma.booking.update({ where: { id: b.id }, data: { status: 'CHECKED_OUT', paymentStatus: 'PAID' } });
+    const charge = `ch_${uid()}${uid()}`;
+    await prisma.payment.create({ data: { bookingId: b.id, propertyId: h.property.id, stripePaymentIntentId: `pi_${uid()}${uid()}`, stripeChargeId: charge, status: 'SUCCEEDED', amount: 378, paidAt: new Date('2026-01-01T12:00:00Z') } });
+    const ownerNumber = await linked(owner.id);
+    const managerNumber = await linked(manager.id);
+    sent = [];
+
+    await recordDispute({ id: `dp_${uid()}${uid()}`, charge, payment_intent: null, amount: 37800, currency: 'usd', reason: 'fraudulent', status: 'needs_response', evidence_details: { due_by: Math.floor(Date.now() / 1000) + 9 * 86400 } } as unknown as Parameters<typeof recordDispute>[0]);
+    const dispute = await prisma.dispute.findFirstOrThrow({ where: { bookingId: b.id } });
+    expect((await prisma.booking.findUniqueOrThrow({ where: { id: b.id } })).paymentStatus).toBe('DISPUTED');
+    // The dispute adds a note to the history; the evidence still has the real check-out.
+    const stay = (dispute.evidenceSummary as { sections: { title: string; lines: string[] }[] }).sections.find((s) => s.title === 'Stay and check-in');
+    expect(stay?.lines).toContain('Checked out: 2026-01-12 18:30 UTC');
+    expect(stay?.lines[0]).toBe('Checked in: 2026-01-10 23:30 UTC');
+
+    // Card disputes are urgent: they come through at night. Managers don't get them by default.
+    await runWatch({ propertyId: h.property.id, now: at(h.today, 23) });
+    const alert = sent.find((m) => m.to === ownerNumber && m.text?.includes('Card dispute: $378 (fraudulent)'));
+    expect(alert?.text).toContain(`/admin/disputes?dispute=${dispute.id}`);
+    expect(sent.filter((m) => m.to === managerNumber)).toEqual([]);
   });
 
   it('stays quiet for people who turned alerts off', async () => {
