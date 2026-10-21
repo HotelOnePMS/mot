@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { purgeExpiredIdPhotos } from '@/server/payments/cardAuthorization';
 import { releaseExpiredHolds } from '@/server/payments/expiry';
 
 /**
- * GET — releases unpaid online bookings whose hold has run out. Optional: the
- * same sweep also runs whenever someone books that room type. Protected by
+ * GET — releases unpaid online bookings whose hold has run out, and deletes
+ * card-authorization ID photos past their retention period. Optional: the
+ * same sweeps also run now and then during normal use. Protected by
  * CRON_SECRET (Vercel Cron sends it as a bearer token); disabled without one.
  */
 export async function GET(request: NextRequest) {
@@ -12,5 +14,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const released = await releaseExpiredHolds();
-  return NextResponse.json({ released });
+  const idPhotosPurged = await purgeExpiredIdPhotos();
+  return NextResponse.json({ released, idPhotosPurged });
 }

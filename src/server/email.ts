@@ -491,3 +491,151 @@ export async function sendDisputeAlert(data: DisputeAlertData): Promise<boolean>
     return false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Card authorization (someone else pays for the stay): the link, and a copy once signed
+// ---------------------------------------------------------------------------
+
+export interface CardAuthorizationRequestData {
+  to: string;
+  cardholderName: string;
+  propertyName: string;
+  bookingCode: string;
+  guestNames: string;
+  /** Calendar days, YYYY-MM-DD. */
+  checkIn: string;
+  checkOut: string;
+  /** "$412.50" */
+  amount: string;
+  /** Absolute link with the one-time token. */
+  url: string;
+  /** When the link stops working, readable. */
+  expires: string;
+}
+
+function simpleEmailHtml(c: { title: string; brand: string; heading: string; greeting: string; paragraphs: string[]; facts: [string, string][]; action?: { label: string; url: string }; footer: string[] }): string {
+  const e = escapeHtml;
+  const facts = c.facts
+    .map(([k, v], i) => `<tr><td style="padding: 10px 0; ${i ? `border-top: 1px solid ${C.border};` : ''} color: ${C.muted}; font-size: 14px; width: 40%; vertical-align: top;">${e(k)}</td><td style="padding: 10px 0; ${i ? `border-top: 1px solid ${C.border};` : ''} font-size: 14px; font-weight: 600; text-align: right; vertical-align: top;">${e(v)}</td></tr>`)
+    .join('');
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>${e(c.title)}</title>
+  </head>
+  <body style="margin: 0; padding: 0; background: ${C.page}; font-family: ${FONT}; color: ${C.ink};">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background: ${C.page};">
+      <tr>
+        <td align="center" style="padding: 32px 16px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 540px; background: ${C.card}; border: 1px solid ${C.border}; border-radius: 16px;">
+            <tr>
+              <td style="padding: 28px;">
+                <p style="margin: 0 0 16px; font-size: 15px; font-weight: 700; color: ${C.primary};">${e(c.brand)}</p>
+                <h1 style="margin: 0 0 12px; font-size: 22px; line-height: 30px; font-weight: 700;">${e(c.heading)}</h1>
+                <p style="margin: 0 0 8px; font-size: 15px; line-height: 24px;">${e(c.greeting)}</p>
+                ${c.paragraphs.map((p) => `<p style="margin: 0 0 16px; font-size: 15px; line-height: 24px;">${e(p)}</p>`).join('')}
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin: 4px 0 20px;">${facts}</table>
+                ${c.action ? `<a href="${e(c.action.url)}" style="display: inline-block; background: ${C.primary}; color: #ffffff; text-decoration: none; font-size: 15px; font-weight: 600; padding: 12px 20px; border-radius: 10px;">${e(c.action.label)}</a>
+                <p style="margin: 20px 0 0; font-size: 13px; line-height: 20px; color: ${C.muted};">Or paste this link into your browser:<br><span style="word-break: break-all;">${e(c.action.url)}</span></p>` : ''}
+                ${c.footer.map((f) => `<p style="margin: 16px 0 0; font-size: 13px; line-height: 20px; color: ${C.muted};">${e(f)}</p>`).join('')}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+/**
+ * Ask a cardholder to authorize a stay they pay for. Skips (logs the link in
+ * development only) without Resend, so staff can still copy it.
+ */
+export async function sendCardAuthorizationRequest(data: CardAuthorizationRequestData): Promise<boolean> {
+  const subject = `Please authorize your card for ${subjectText(data.guestNames, 40)}’s stay — ${subjectText(data.propertyName)}`;
+  if (!resend) {
+    if (process.env.NODE_ENV !== 'production') console.log(`[email] ${subject} for ${data.to}: ${data.url}`);
+    else console.warn('[email] Skipping card authorization request (RESEND_API_KEY not configured)');
+    return false;
+  }
+  const facts: [string, string][] = [
+    ['Guests', data.guestNames],
+    ['Stay', `${formatDay(data.checkIn)} to ${formatDay(data.checkOut)}`],
+    ['Reservation', data.bookingCode],
+    ['Amount', data.amount],
+  ];
+  const intro = `${data.propertyName} has a reservation paid with your card, for guests who will check in without you. To confirm you agree, please fill in a short form: your details, the last four digits of the card, a photo of your ID and your signature. It takes about two minutes.`;
+  const footer = [`The link works until ${data.expires}. Never send a photo of your card or its full number: the hotel doesn’t need them.`, 'Didn’t expect this? Don’t fill it in, and contact the hotel.'];
+  try {
+    await resend.emails.send({
+      from: fromAddress,
+      to: data.to,
+      subject,
+      html: simpleEmailHtml({ title: 'Authorize your card', brand: data.propertyName, heading: 'Authorize your card for this stay', greeting: `Hi ${data.cardholderName},`, paragraphs: [intro], facts, action: { label: 'Review and sign', url: data.url }, footer }),
+      text: ['Authorize your card for this stay', '', `Hi ${data.cardholderName},`, '', intro, '', ...facts.map(([k, v]) => `${k}: ${v}`), '', `Review and sign: ${data.url}`, '', ...footer].join('\n'),
+    });
+    return true;
+  } catch (error) {
+    logError('email', 'Failed to send card authorization request:', error);
+    return false;
+  }
+}
+
+export interface CardAuthorizationReceiptData {
+  to: string;
+  signerName: string;
+  propertyName: string;
+  bookingCode: string;
+  guestNames: string;
+  checkIn: string;
+  checkOut: string;
+  /** "Visa ending 4242" */
+  card: string;
+  /** The wording they signed. */
+  text: string;
+  /** When they signed, readable. */
+  signedAt: string;
+  documentHash: string;
+}
+
+/** The cardholder's copy of what they signed. Skips (logs) without Resend. */
+export async function sendCardAuthorizationReceipt(data: CardAuthorizationReceiptData): Promise<boolean> {
+  if (!resend) {
+    console.log(`[email] Skipping card authorization copy to ${data.to} (RESEND_API_KEY not configured)`);
+    return false;
+  }
+  const subject = `Your card authorization for ${subjectText(data.propertyName)} (${subjectText(data.bookingCode, 20)})`;
+  const facts: [string, string][] = [
+    ['Guests', data.guestNames],
+    ['Stay', `${formatDay(data.checkIn)} to ${formatDay(data.checkOut)}`],
+    ['Reservation', data.bookingCode],
+    ['Card', data.card],
+    ['Signed', data.signedAt],
+  ];
+  const footer = [`Record reference (SHA-256): ${data.documentHash}`, 'Didn’t sign this? Contact the hotel straight away.'];
+  try {
+    await resend.emails.send({
+      from: fromAddress,
+      to: data.to,
+      subject,
+      html: simpleEmailHtml({
+        title: 'Your card authorization',
+        brand: data.propertyName,
+        heading: 'Thanks, your authorization is signed',
+        greeting: `Hi ${data.signerName},`,
+        paragraphs: [`${data.propertyName} has your signed authorization. This is your copy. What you agreed to:`, data.text],
+        facts,
+        footer,
+      }),
+      text: ['Thanks, your authorization is signed', '', `Hi ${data.signerName},`, '', `${data.propertyName} has your signed authorization. This is your copy. What you agreed to:`, '', data.text, '', ...facts.map(([k, v]) => `${k}: ${v}`), '', ...footer].join('\n'),
+    });
+    return true;
+  } catch (error) {
+    logError('email', 'Failed to send card authorization copy:', error);
+    return false;
+  }
+}

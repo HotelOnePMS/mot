@@ -13,6 +13,18 @@ Hotels can take card payments through their own Stripe account. Everything is op
 - **Refunds** (full or partial) from the booking page, with a suggested amount from the cancellation policy. The `charge.refunded` webhook is the source of truth for status.
 - **Disputes:** on `charge.dispute.created` we create a `Dispute` record, email the hotel's owner(s) through Resend, and assemble an evidence summary (booking details, policy acceptance, 3DS result, check-in time, checklist, guest emails). View and download it in *Admin → Disputes*. **Nothing is sent to Stripe automatically**: *Submit evidence* calls Stripe's disputes API only when an admin with `disputes.manage` clicks it. Evidence is text only (no file uploads); the hotel can add documents in its Stripe Dashboard.
 
+## Someone else pays: cardholder authorization
+
+When the person paying isn't the guest checking in (a parent, a company, a friend), or isn't there at all, staff ask the cardholder to sign an authorization from the reservation page (*Cardholder authorization → Ask the cardholder to sign*). It works for card payments made online and for cards charged at the desk.
+
+- **Sending it.** Staff enter the cardholder's name (prefilled from Stripe when the card is in another name), optionally their email, the guests the card pays for, and whether it covers incidentals (optionally up to a limit). They get a one-time link to email, copy into a text or WhatsApp, show as a QR code for the cardholder's own phone, or open on the desk's device. Only a hash of the link's token is stored; a link works for 7 days, a newer link replaces it, and staff can cancel it.
+- **What the cardholder fills in** (`/authorize/<token>`, no account): full name, email, phone (optional), billing address, the card's **last four digits** (and its type when no card was charged online), their photo ID's type, issuing country and last four characters, a **photo of the ID**, and a signature, drawn on screen or typed (keyboard and screen-reader users type). They agree to the wording shown; we store it with its version and SHA-256, the IP address and device, and a SHA-256 over everything signed (`documentHash`). They get a copy by email.
+- **Matching.** When the stay was paid online, the last four digits must match that card. After 5 wrong tries the link locks and staff are told. The name, billing country and email are compared with what Stripe reported, and the name with whom staff asked; mismatches are shown to staff, never auto-rejected.
+- **Review.** Staff look at the ID photo (served from an authenticated endpoint, never cached, every view logged) and **Verify** it or **Reject** it with a reason. A verified authorization covers "Card used to pay was shown" on the check-in checklist, and every signed authorization goes into the dispute evidence (*Cardholder authorization* section and Stripe's `uncategorized_text`).
+- **Privacy.** Card numbers are never collected: last four digits only, and the form tells people not to send a photo of their card (PCI SAQ A is unchanged). ID photos are sealed with the vault (`HOTELONE_VAULT_KEY`; without it, the form asks for ID details without a photo) and deleted `CARD_AUTH_ID_PHOTO_DAYS` (default 180) after check-out unless a dispute is open, by `/api/cron/expire-bookings` and now and then during normal use. Nothing about the payer is written to the booking's status history, which guests see on their booking page; staff actions and the signing are in the activity log.
+- **Permission:** `booking.cardAuth` (admin, owner, manager, front desk). Staff only reach their own hotels' authorizations.
+- The authorization wording in `src/lib/card-authorization.ts` is a **draft**, like the cancellation policy: have it reviewed for your markets, and bump `CARD_AUTH_VERSION` when it changes.
+
 ## Setup
 
 1. **Stripe Dashboard → Connect → Settings:** enable Connect, choose Express accounts, and add your platform branding. In test mode, use `sk_test_…`.
@@ -26,7 +38,8 @@ Hotels can take card payments through their own Stripe account. Everything is op
    | `STRIPE_PLATFORM_FEE_PERCENT` | Optional fee, e.g. `1.5`. |
    | `STRIPE_CONNECT_DEFAULT_COUNTRY` | Optional default country for new Express accounts. |
    | `PAYMENTS_HIGH_AMOUNT_THRESHOLD` | Optional, default `1000`. |
-   | `CRON_SECRET` | Optional, enables the hold-release cron route. |
+   | `CARD_AUTH_ID_PHOTO_DAYS` | Optional, default `180`: days after check-out a card authorization's ID photo is kept (longer while a dispute is open). |
+   | `CRON_SECRET` | Optional, enables the hold-release cron route (which also deletes expired ID photos). |
    | `NEXT_PUBLIC_SITE_URL` | Used for Checkout and onboarding return URLs. |
    | `RESEND_API_KEY`, `EMAIL_FROM` | Dispute alerts and booking emails. |
 
@@ -50,4 +63,4 @@ Card details are entered only on Stripe-hosted Checkout, so HotelOne qualifies f
 - Bookings made through the concierge/voice agent API create pay-at-property bookings and do not go through the policy checkbox or Checkout.
 - Cancelling a booking does not refund automatically; refund from the booking page.
 - Online payments are in USD (`PAYMENT_CURRENCY`).
-- Tests for the pure logic (risk flags, deposit and refund maths, evidence summary): `npm test` (Node's built-in runner, no extra dependencies).
+- Tests for the pure logic (risk flags, deposit and refund maths, evidence summary, card authorization wording and matching): `npm test`. The card authorization flow end to end (signing, locking, review, retention, evidence) is in `tests/integration/card-authorization.test.ts`.

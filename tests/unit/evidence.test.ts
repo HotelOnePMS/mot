@@ -64,3 +64,40 @@ test('very long fields are clipped', () => {
   const fields = stripeEvidenceFields(long, buildEvidenceSummary(long));
   assert.ok(fields.uncategorized_text.length <= 19_000);
 });
+
+test('a signed cardholder authorization goes into the summary and Stripe’s free-text field', () => {
+  const withAuth: EvidenceInput = {
+    ...input,
+    authorizations: [
+      {
+        signedAt: '2026-10-09T18:00:00.000Z',
+        signerName: 'Pat Jones',
+        email: 'pat@example.com',
+        phone: null,
+        billingAddress: '9 Elm St, Boston 02110, United States',
+        card: 'Visa ending 4242',
+        cardMatchesPayment: true,
+        idDocument: 'Driver’s license issued in United States, number ending 7781',
+        idPhotoKept: true,
+        signatureMethod: 'DRAWN',
+        guestNames: ['Jamie Smith'],
+        checks: [{ label: 'Card digits', result: 'MATCH' }],
+        ip: '198.51.100.4',
+        userAgent: 'Mozilla/5.0 (iPhone)',
+        review: 'ID checked and verified by Sam Lee on 2026-10-10 20:10 UTC',
+        textVersion: '2026-10-v1',
+        textHash: 'f00d',
+        documentHash: 'beef',
+        text: 'I am the holder of the Visa card used to pay for this reservation…',
+      },
+    ],
+  };
+  const summary = buildEvidenceSummary(withAuth);
+  const text = renderEvidenceText(summary);
+  for (const expected of ['CARDHOLDER AUTHORIZATION', 'Signed by the cardholder Pat Jones', '198.51.100.4', 'match the card that paid', 'number ending 7781', 'drawn by hand', 'Guests the cardholder authorized: Jamie Smith', 'Card digits: match', 'verified by Sam Lee', 'Record SHA-256: beef', 'I am the holder']) {
+    assert.ok(text.includes(expected), `missing ${expected}`);
+  }
+  assert.ok(stripeEvidenceFields(withAuth, summary).uncategorized_text.includes('Signed by the cardholder Pat Jones'));
+  // Without one, the section isn't there.
+  assert.ok(!renderEvidenceText(buildEvidenceSummary(input)).includes('CARDHOLDER AUTHORIZATION'));
+});
