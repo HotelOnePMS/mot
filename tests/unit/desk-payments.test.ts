@@ -135,6 +135,13 @@ describe('card numbers typed into notes', () => {
     expect(containsCardNumber('Room 204 4111 1111 1111 1111')).toBe(true);
     expect(containsCardNumber('41111111111111111226')).toBe(true);
   });
+  it('spots cards printed with a short last group, and an Amex stuck to its expiry', () => {
+    expect(containsCardNumber('UnionPay 6222 0212 3456 7890 128')).toBe(true);
+    expect(containsCardNumber('Visa 4000 0000 0000 0000 006')).toBe(true);
+    expect(containsCardNumber('Amex 3782 8224 6310 005')).toBe(true);
+    expect(containsCardNumber('4222 2222 2222 2')).toBe(true);
+    expect(containsCardNumber('3782822463100051226')).toBe(true);
+  });
   it('leaves long references and room lists alone', () => {
     expect(containsCardNumber('WeChat Pay 4200001234202610211234567890')).toBe(false);
     expect(containsCardNumber('Alipay trade 2026102122001412345678901234')).toBe(false);

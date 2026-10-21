@@ -150,11 +150,12 @@ export function containsCardNumber(text: string | null | undefined): boolean {
     for (let i = 0; i < groups.length; i++) {
       // A card stuck to its expiry (MMYY), as copied from a terminal slip.
       const g = groups[i];
-      if (g.length > 19 && g.length <= 23 && /^(0[1-9]|1[0-2])\d\d$/.test(g.slice(-4)) && luhn(g.slice(0, -4))) return true;
-      // Groups joined from this one on as cards are printed (groups of four or more digits), as long as they fit.
+      if (g.length >= 17 && g.length <= 23 && /^(0[1-9]|1[0-2])\d\d$/.test(g.slice(-4)) && luhn(g.slice(0, -4))) return true;
+      // Groups joined from this one on as cards are printed (groups of four or more, a shorter one only last), as long
+      // as they fit.
       let run = '';
       for (let j = i; j < groups.length && run.length + groups[j].length <= 19; j++) {
-        if (j > i && (groups[j].length < 4 || groups[j - 1].length < 4)) break;
+        if (j > i && groups[j - 1].length < 4) break;
         run += groups[j];
         if (run.length >= 13 && luhn(run)) return true;
       }

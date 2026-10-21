@@ -135,6 +135,21 @@ test('refunds come off a cancelled room type first, so the rooms kept stay paid'
   assert.deepEqual(shares(75000, 0, [15000, 60000], [10000, 30000]), [15000, 60000]); // deposits, then the rest: both paid
   assert.deepEqual(shares(40000, 0, [10000, 60000], [10000, 30000]), [10000, 30000]); // deposits paid, 100 off the Queen
   assert.deepEqual(shares(60000, 0, [0, 60000]), [0, 60000]); // a comped Queen: the payment is the Suite's
+  // ...and handing back some of the Suite's cash leaves the comped Queen untouched (paid, nothing refunded).
+  assert.deepEqual(reservationShares({ paidCents: 60000, refundedCents: 10000, lines: [{ dueCents: 20000, owedCents: 0, cancelled: false }, { dueCents: 60000, owedCents: 60000, cancelled: false }] }), [
+    { paidCents: 0, refundedCents: 0 },
+    { paidCents: 60000, refundedCents: 10000 },
+  ]);
+  // Deposits, a room type cancelled and refunded, then the rest paid at the desk: the room type kept is paid in full and
+  // the cancelled one stays refunded (money beyond the deposits never goes to a cancelled room type).
+  assert.deepEqual(reservationShares({ paidCents: 50000, refundedCents: 30000, lines: [{ dueCents: 10000, owedCents: 20000, cancelled: false }, { dueCents: 30000, cancelled: true }] }), [
+    { paidCents: 20000, refundedCents: 0 },
+    { paidCents: 30000, refundedCents: 30000 },
+  ]);
+  assert.deepEqual(reservationShares({ paidCents: 50000, refundedCents: 30000, lines: [{ dueCents: 10000, cancelled: false }, { dueCents: 30000, cancelled: true }] }), [
+    { paidCents: 20000, refundedCents: 0 },
+    { paidCents: 30000, refundedCents: 30000 },
+  ]);
   // Nothing cancelled: in proportion, never more than was paid.
   assert.deepEqual(reservationShares({ paidCents: 1000, refundedCents: 5000, lines: [{ dueCents: 1, cancelled: false }, { dueCents: 1, cancelled: false }] }), [
     { paidCents: 500, refundedCents: 500 },

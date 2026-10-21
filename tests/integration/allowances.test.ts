@@ -367,11 +367,15 @@ describe('allowances on the folio', () => {
     expect(await summaryOf(desk.actor, booking.id)).toMatchObject({ paymentStatus: 'PAY_AT_PROPERTY', balance: 240 });
   });
 
-  it('a comped room type of a shared reservation shows paid once the rest is paid', async () => {
+  it('a comped room type of a shared reservation shows paid once the rest is paid, even after cash is handed back', async () => {
     const { desk, manager, queen, suiteLine } = await sharedReservation();
     await addAllowance(manager, queen.id, { amount: Number(queen.totalPrice), reason: 'Comped' });
     await recordCashPayment(desk, suiteLine.id, { kind: 'PAYMENT', amount: Number(suiteLine.totalPrice) });
     for (const id of [queen.id, suiteLine.id]) expect(await summaryOf(desk.actor, id)).toMatchObject({ paymentStatus: 'PAID', balance: 0 });
+    const cash = await prisma.payment.findFirstOrThrow({ where: { bookingId: { in: [queen.id, suiteLine.id] }, method: 'CASH' } });
+    await refundCash(manager, cash.id, { amount: 100 });
+    expect(await summaryOf(desk.actor, queen.id)).toMatchObject({ paymentStatus: 'PAID', balance: 0 });
+    expect((await summaryOf(desk.actor, suiteLine.id)).balance).toBe(100);
   });
 
   it('a guest can’t shorten online a stay the hotel lowered the price of; extending, or staff, still can', async () => {
@@ -690,6 +694,25 @@ describe('refund with an allowance', () => {
     session.userId = managerUser.id;
     await expect(refundPayment(suiteLine.id, { paymentId: payment.id, amount: 100, reason: 'Goodwill', allowance: true })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/credit of 100\.00/) });
     expect(stripe.api.refunds.create).not.toHaveBeenCalled();
+  });
+
+  it('deposits paid, a room type cancelled and refunded, the rest paid at the desk: the room type kept is paid', async () => {
+    const { desk, managerUser, queen, suiteLine } = await sharedReservation();
+    const lead = queen.code === queen.groupCode ? queen : suiteLine;
+    for (const l of [queen, suiteLine]) await prisma.booking.update({ where: { id: l.id }, data: { paymentDue: Number(l.totalPrice) / 2 } });
+    const deposit = (Number(queen.totalPrice) + Number(suiteLine.totalPrice)) / 2;
+    const intent = `pi_test_${uid()}`;
+    const payment = await prisma.payment.create({
+      data: { bookingId: lead.id, propertyId: queen.propertyId, method: 'ONLINE', kind: 'DEPOSIT', status: 'SUCCEEDED', amount: deposit, currency: 'usd', stripePaymentIntentId: intent, paidAt: new Date() },
+    });
+    await transitionBooking(desk, suiteLine.id, 'CANCELLED');
+    session.userId = managerUser.id;
+    await refundPayment(suiteLine.id, { paymentId: payment.id, amount: Number(suiteLine.totalPrice) / 2 });
+    const due = (await getDeskPayments(desk.actor, queen.id)).balance;
+    expect(due).toBe(Number(queen.totalPrice) / 2);
+    await recordCashPayment(desk, queen.id, { kind: 'PAYMENT', amount: due });
+    expect(await summaryOf(desk.actor, queen.id)).toMatchObject({ balance: 0, paymentStatus: 'PAID' });
+    expect((await prisma.booking.findUniqueOrThrow({ where: { id: suiteLine.id } })).paymentStatus).toBe('REFUNDED');
   });
 
   it('the front desk can’t refund, with or without an allowance', async () => {
