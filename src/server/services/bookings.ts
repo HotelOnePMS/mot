@@ -6,7 +6,7 @@ import { Prisma } from '@prisma/client';
 import { randomInt } from 'crypto';
 import { prisma } from '@/lib/prisma';
 import type { BookingStatus, BookingSummary, ISODate } from '@/lib/dto';
-import { BOOKING_STATUS } from '@/lib/status';
+import { BOOKING_STATUS, money } from '@/lib/status';
 import { MAX_RESERVATION_LINES, MAX_RESERVATION_ROOMS, normalizeLines, splitParty, totalRooms, type BookingLine } from '@/lib/booking-lines';
 import { paymentAmountDue, toCents, fromCents, type PaymentPolicy } from '@/lib/payments';
 import { HOLD_MINUTES } from '../payments/config';
@@ -429,6 +429,11 @@ export interface TransitionOptions {
   roomId?: string;
   /** Allow check-in to a room that is not yet clean (front desk override). */
   allowDirtyRoom?: boolean;
+  /**
+   * Extra writes that must commit or fail together with the transition (the guided check-in's ID,
+   * registration card and deposit). Runs inside the same transaction, after the booking is updated.
+   */
+  inTransaction?: (tx: Prisma.TransactionClient, booking: BookingWithRelations) => Promise<void>;
 }
 
 export interface TransitionResult {
@@ -462,6 +467,11 @@ export async function checkTransition(
   }
   if (to === 'NO_SHOW' && today < checkIn) {
     return { ok: false, reason: `The guest isn't due until ${formatDay(checkIn, 'weekday')}.` };
+  }
+  // A guest checks out only once nothing is left to pay (online, at the desk, or recorded as paid another way).
+  if (to === 'CHECKED_OUT') {
+    const { balance, currency } = toBookingSummary(booking);
+    if (balance > 0.004) return { ok: false, reason: `There’s a balance of ${money(balance, { currency })} to collect before the guest can check out.` };
   }
   return { ok: true };
 }
@@ -515,7 +525,11 @@ export async function transitionBooking(
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    const b = await tx.booking.update({ where: { id: booking.id }, data, include: bookingInclude });
+    // Only from the status we checked: a double tap or an agent plan running at the same moment can't apply it twice.
+    const b = await tx.booking.update({ where: { id: booking.id, status: from }, data, include: bookingInclude }).catch((e: unknown) => {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') throw conflict('This reservation was just changed by someone else. Reload and try again.');
+      throw e;
+    });
     await tx.bookingStatusHistory.create({
       data: {
         bookingId: booking.id,
@@ -525,6 +539,7 @@ export async function transitionBooking(
           .join(' · '),
       },
     });
+    if (opts.inTransaction) await opts.inTransaction(tx, b);
     if (to === 'CHECKED_OUT' && b.roomId) {
       await tx.room.update({ where: { id: b.roomId }, data: { status: 'DIRTY' } });
       const open = await tx.roomHousekeeping.findFirst({ where: { roomId: b.roomId, status: { in: ['PENDING', 'IN_PROGRESS'] } } });

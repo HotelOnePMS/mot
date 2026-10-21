@@ -28,8 +28,10 @@ import {
   deskAmountProblem,
   KIND_LABEL,
   METHOD_LABEL,
+  RECORDED_METHODS,
   type DeskKind,
   type DeskPaymentLike,
+  type PaymentMethod,
   type SecurityDepositMode,
 } from '@/lib/desk-payments';
 import { assertPropertyAccess, can, requirePermission, type Actor } from '../authz';
@@ -330,6 +332,50 @@ export async function recordCashPayment(op: OpContext, bookingId: string, input:
   if (input.kind === 'PAYMENT') await refreshPaymentStatus(ctx.lead, note);
   else await historyNote(ctx.lines, note);
   await recordAudit(op, ctx.property.id, 'PAYMENT_CASH', `${note} · ${ctx.lead.code ?? ctx.booking.id}`, { bookingId: ctx.booking.id, paymentId: payment.id });
+  return toRow(payment, new Map([[op.actor.userId, op.actor.name]]));
+}
+
+/**
+ * Record money taken outside HotelOne: a card on the hotel's own terminal (last four digits and the approval code
+ * as the terminal shows them), or another way (bank transfer, paid to the OTA, an invoice), with a note saying how.
+ */
+export async function recordExternalPayment(
+  op: OpContext,
+  bookingId: string,
+  input: { kind: DeskKind; method: 'EXTERNAL_CARD' | 'OTHER'; amount: number; cardBrand?: string | null; cardLast4?: string | null; reference?: string | null; note?: string | null },
+): Promise<DeskPaymentRow> {
+  requirePermission(op.actor, 'payments.collect');
+  const ctx = await loadContext(op.actor, bookingId);
+  const amountCents = toCents(input.amount);
+  assertCanCollect(ctx, input.kind, amountCents);
+  const last4 = (input.cardLast4 ?? '').replace(/\D/g, '');
+  if (input.method === 'EXTERNAL_CARD' && last4.length !== 4) throw badRequest('Enter the last four digits of the card the terminal charged.');
+  const note = input.note?.replace(/\s+/g, ' ').trim().slice(0, 200) || null;
+  if (input.method === 'OTHER' && (!note || note.length < 3)) throw badRequest('Say how it was paid (for example “bank transfer” or “paid to Expedia”).');
+  const currency = ctx.booking.currency;
+  const payment = await prisma.payment.create({
+    data: {
+      bookingId: ctx.lead.id,
+      propertyId: ctx.property.id,
+      method: input.method,
+      kind: input.kind,
+      status: 'SUCCEEDED',
+      amount: fromCents(amountCents),
+      currency: currency.toLowerCase(),
+      cardBrand: input.method === 'EXTERNAL_CARD' ? input.cardBrand?.trim().toLowerCase() || null : null,
+      cardLast4: input.method === 'EXTERNAL_CARD' ? last4 : null,
+      // Kept where the card's details go; the terminal's approval code goes in the note with any text.
+      note: [input.reference?.trim() ? `Approval ${input.reference.trim().slice(0, 40)}` : null, note].filter(Boolean).join(' · ') || null,
+      recordedById: op.actor.userId,
+      paidAt: new Date(),
+    },
+    select: rowSelect,
+  });
+  const label = input.kind === 'SECURITY_DEPOSIT' ? 'Security deposit' : 'Payment';
+  const how = input.method === 'EXTERNAL_CARD' ? `on the hotel’s own terminal (card ending ${last4})` : `another way (${note})`;
+  const text = `${label} of ${money(amountCents, currency)} taken ${how}, recorded by ${op.actor.name}`;
+  if (input.kind === 'PAYMENT') await refreshPaymentStatus(ctx.lead);
+  await recordAudit(op, ctx.property.id, input.method === 'EXTERNAL_CARD' ? 'PAYMENT_EXTERNAL_CARD' : 'PAYMENT_OTHER', `${text} · ${ctx.lead.code ?? ctx.booking.id}`, { bookingId: ctx.booking.id, paymentId: payment.id });
   return toRow(payment, new Map([[op.actor.userId, op.actor.name]]));
 }
 
@@ -673,7 +719,8 @@ export async function settleDeposit(op: OpContext, paymentId: string, input: { k
   const plan = depositSettlement({ ...like(payment), status: payment.status, keepCents: toCents(input.keep) });
   if ('error' in plan) throw badRequest(plan.error);
   const currency = payment.currency;
-  const stripe = payment.method === 'CASH' ? null : getStripe();
+  const recorded = RECORDED_METHODS.includes(payment.method as PaymentMethod);
+  const stripe = recorded ? null : getStripe();
   const opts = accountOpts(payment.property);
   const reason = input.note?.trim().slice(0, 200) || null;
 
@@ -685,7 +732,8 @@ export async function settleDeposit(op: OpContext, paymentId: string, input: { k
         : await stripe.paymentIntents.cancel(payment.stripePaymentIntentId, { expand: ['latest_charge'] }, { ...opts, idempotencyKey: `desk-release-${payment.id}` });
     await applyDeskIntent(payment.id, intent, null);
   } else if (plan.action === 'refund') {
-    if (payment.method === 'CASH') {
+    if (recorded) {
+      // Cash handed back, or refunded on the hotel's own terminal: HotelOne records it.
       await prisma.payment.update({ where: { id: payment.id }, data: { amountRefunded: { increment: fromCents(plan.refundCents) }, status: toCents(input.keep) > 0 ? 'PARTIALLY_REFUNDED' : 'REFUNDED' } });
     } else {
       if (!stripe || !payment.stripePaymentIntentId) throw badRequest('This deposit isn’t on a card.');
@@ -700,7 +748,18 @@ export async function settleDeposit(op: OpContext, paymentId: string, input: { k
   await prisma.payment.update({ where: { id: payment.id }, data: { settledAt: new Date(), ...(reason ? { note: reason } : {}) } });
 
   const keepText = toCents(input.keep) > 0 ? `kept ${money(toCents(input.keep), currency)} for incidentals` : 'returned in full';
-  const how = plan.action === 'release' ? 'hold released' : plan.action === 'capture' ? 'hold captured' : payment.method === 'CASH' ? 'cash handed back' : plan.action === 'refund' ? 'refunded to the card' : 'kept';
+  const how =
+    plan.action === 'release'
+      ? 'hold released'
+      : plan.action === 'capture'
+        ? 'hold captured'
+        : payment.method === 'CASH'
+          ? 'cash handed back'
+          : recorded && plan.action === 'refund'
+            ? 'returned outside HotelOne'
+            : plan.action === 'refund'
+              ? 'refunded to the card'
+              : 'kept';
   const note = `Security deposit settled by ${op.actor.name}: ${keepText} (${how})${reason ? ` · ${reason}` : ''}`;
   const booking = await prisma.booking.findUniqueOrThrow({ where: { id: payment.bookingId }, select: { id: true, groupCode: true } });
   await historyNote(await paymentLines(booking), note);
@@ -712,7 +771,9 @@ export async function settleDeposit(op: OpContext, paymentId: string, input: { k
 export async function refundCash(op: OpContext, paymentId: string, input: { amount?: number; note?: string }): Promise<DeskPaymentRow> {
   requirePermission(op.actor, 'payments.refund');
   const payment = await loadDeskPayment(op.actor, paymentId);
-  if (payment.method !== 'CASH' || payment.kind !== 'PAYMENT' || !['SUCCEEDED', 'PARTIALLY_REFUNDED'].includes(payment.status)) throw badRequest('Only a cash payment can be handed back here. Refund cards from the Payment card.');
+  if (!RECORDED_METHODS.includes(payment.method as PaymentMethod) || payment.kind !== 'PAYMENT' || !['SUCCEEDED', 'PARTIALLY_REFUNDED'].includes(payment.status)) {
+    throw badRequest('Only cash and payments recorded at the desk can be handed back here. Refund cards from the Payment card.');
+  }
   const left = toCents(Number(payment.amount)) - toCents(Number(payment.amountRefunded));
   const cents = input.amount === undefined ? left : toCents(input.amount);
   if (!(cents > 0) || cents > left) throw badRequest(`Hand back between 0.01 and ${fromCents(left).toFixed(2)} ${payment.currency.toUpperCase()}.`);
@@ -723,7 +784,7 @@ export async function refundCash(op: OpContext, paymentId: string, input: { amou
   });
   if (!moved.count) throw conflict('This payment just changed. Reload and try again.');
   const booking = await prisma.booking.findUniqueOrThrow({ where: { id: payment.bookingId }, select: { id: true, groupCode: true, code: true } });
-  const note = `${money(cents, payment.currency)} cash handed back by ${op.actor.name}${input.note?.trim() ? ` · ${input.note.trim().slice(0, 120)}` : ''}`;
+  const note = `${money(cents, payment.currency)} ${payment.method === 'CASH' ? 'cash handed back' : 'given back outside HotelOne'} by ${op.actor.name}${input.note?.trim() ? ` · ${input.note.trim().slice(0, 120)}` : ''}`;
   await refreshPaymentStatus(booking, note);
   await recordAudit(op, payment.propertyId, 'PAYMENT_REFUND', `${note} · ${booking.code ?? booking.id}`, { bookingId: booking.id, paymentId: payment.id });
   return refreshDeskPayment(op.actor, payment.id);

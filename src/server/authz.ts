@@ -57,6 +57,10 @@ export const PERMISSIONS = {
   'disputes.manage': ['ADMIN', 'OWNER'],
   // Third-party payment: send the cardholder an authorization form, see what they signed (ID photo included), verify it.
   'booking.cardAuth': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // Guided check-in records: see the guest's stored ID photo and full details (every view is logged).
+  'guestId.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // The folio (charges, payments, deposits, balance): front desk runs check-in and check-out with it.
+  'folio.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'room.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
   'room.status': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
   'room.outOfOrder': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],

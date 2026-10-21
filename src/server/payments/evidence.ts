@@ -43,6 +43,8 @@ export interface EvidenceInput {
   checklist: { item: string; at: string | null; by: string | null }[];
   /** Signed cardholder authorizations (someone else paid for the stay). */
   authorizations?: AuthorizationEvidence[];
+  /** What the guided check-in recorded: the photo ID checked, the registration card signed, deposits taken. */
+  checkIn?: CheckInEvidence | null;
   riskFlags: string[];
   history: { status: string; notes: string | null; at: string }[];
   dispute: { stripeId: string; reason: string | null; amount: number; currency: string };
@@ -69,6 +71,25 @@ export interface AuthorizationEvidence {
   textHash: string | null;
   documentHash: string | null;
   text: string | null;
+}
+
+export interface CheckInEvidence {
+  /** e.g. "Driver’s license issued in United States, number ending 7781, name on ID Jane Sample (matches the booking)". */
+  id: string | null;
+  idCheckedAt: string | null;
+  idCheckedBy: string | null;
+  idPhotoKept: boolean;
+  registration: {
+    signedAt: string;
+    signatureMethod: string;
+    ip: string | null;
+    witnessedBy: string | null;
+    textVersion: string;
+    textHash: string;
+    documentHash: string;
+    text: string;
+  } | null;
+  deposits: string[];
 }
 
 export interface EvidenceSection {
@@ -187,6 +208,25 @@ export function buildEvidenceSummary(i: EvidenceInput): EvidenceSummary {
         : []),
     ],
   });
+
+  if (i.checkIn && (i.checkIn.id || i.checkIn.registration || i.checkIn.deposits.length)) {
+    const c = i.checkIn;
+    sections.push({
+      title: 'Check-in: photo ID and registration card',
+      lines: [
+        ...(c.id ? [`Photo ID checked at the desk: ${c.id}${c.idCheckedAt ? `, on ${when(c.idCheckedAt)}` : ''}${c.idCheckedBy ? ` by ${c.idCheckedBy}` : ''}${c.idPhotoKept ? '; a photo of the ID is kept by the hotel' : ''}`] : ['No photo ID was recorded at check-in.']),
+        ...(c.registration
+          ? [
+              `Registration card signed by the guest on ${when(c.registration.signedAt)} (${c.registration.signatureMethod === 'DRAWN' ? 'signature drawn on screen' : 'typed name adopted as signature'}) at the front desk${c.registration.witnessedBy ? `, with ${c.registration.witnessedBy}` : ''}, from IP ${or(c.registration.ip)}`,
+              `Record SHA-256: ${c.registration.documentHash} (wording version ${c.registration.textVersion}, SHA-256 ${c.registration.textHash})`,
+              'Registration card as signed:',
+              c.registration.text,
+            ]
+          : ['No registration card was signed.']),
+        ...c.deposits.map((d) => `Security deposit: ${d}`),
+      ],
+    });
+  }
 
   sections.push({
     title: 'Booking history',

@@ -112,6 +112,8 @@ model Property {
   payments                 Payment[]
   disputes                 Dispute[]
   cardAuthorizations       CardAuthorization[]
+  guestIdentifications     GuestIdentification[]
+  registrationCards        RegistrationCard[]
   photos                   PropertyPhoto[]
   roomTypes                RoomType[]
   rooms                    Room[]
@@ -256,6 +258,9 @@ model Booking {
   policyAcceptance        BookingPolicyAcceptance?
   checklist               BookingChecklist?
   cardAuthorizations      CardAuthorization[]
+  // Guided check-in: the guest's photo ID and the signed registration card.
+  guestIdentification     GuestIdentification?
+  registrationCard        RegistrationCard?
   statusHistory           BookingStatusHistory[]
   channelReservation      ChannelReservation?
   property                Property                 @relation(fields: [propertyId], references: [id])
@@ -903,6 +908,7 @@ model Payment {
   stripeChargeId          String?   @unique
   stripeCheckoutSessionId String?
   /// ONLINE (guest paid when booking) | TERMINAL (card reader) | CARD_ENTRY (typed in at the desk) | VIRTUAL_CARD (OTA card) | CASH
+  /// | EXTERNAL_CARD (the hotel's own terminal, recorded) | OTHER (paid another way, recorded with a note)
   method                  String    @default("ONLINE")
   /// DEPOSIT | FULL (online at booking) | PAYMENT (toward the balance at the desk) | SECURITY_DEPOSIT (incidentals, returned at check-out)
   kind                    String    @default("FULL")
@@ -1092,6 +1098,81 @@ model CardAuthorizationIdPhoto {
   authorization   CardAuthorization @relation(fields: [authorizationId], references: [id], onDelete: Cascade)
 
   @@map("card_authorization_id_photos")
+}
+
+/// The guest's photo ID, recorded at check-in (scanned from the licence barcode or passport lines, or typed) with
+/// a photo. What the desk needs is kept in clear; the full number, date of birth and address are sealed with the
+/// vault and, like the photo, deleted CARD_AUTH_ID_PHOTO_DAYS after check-out unless a dispute is open. Never on
+/// Booking itself: a guest's own booking page reads every Booking column.
+model GuestIdentification {
+  id            String                    @id @default(cuid())
+  bookingId     String                    @unique
+  propertyId    String
+  /// SCAN_AAMVA | SCAN_MRZ | MANUAL
+  source        String
+  /// PASSPORT | DRIVERS_LICENSE | NATIONAL_ID | OTHER
+  idType        String
+  idCountry     String?
+  idRegion      String?
+  /// Last four characters of the ID number.
+  idLast4       String
+  expiresOn     DateTime?                 @db.Date
+  nameOnId      String
+  /// The name on the ID matches the guest on the booking.
+  nameMatched   Boolean
+  /// Adult on the check-in day (from the date of birth); null when no date of birth was given.
+  adult         Boolean?
+  /// Who looked at the ID and confirmed it belongs to the person checking in.
+  confirmedById String
+  /// { documentNumber, dateOfBirth, address, sex, nationality } sealed with AAD "guest-id:<id>"; null without the vault or after the retention period.
+  detailsCipher String?
+  purgedAt      DateTime?
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  photo         GuestIdentificationPhoto?
+  booking       Booking                   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  property      Property                  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, createdAt])
+  @@map("guest_identifications")
+}
+
+/// The front of the guest's ID, sealed with the vault (AAD "guest-id-photo:<id>"), read only when staff open it.
+model GuestIdentificationPhoto {
+  guestIdentificationId String              @id
+  mime                  String
+  sha256                String
+  cipher                String
+  createdAt             DateTime            @default(now())
+  guestIdentification   GuestIdentification @relation(fields: [guestIdentificationId], references: [id], onDelete: Cascade)
+
+  @@map("guest_identification_photos")
+}
+
+/// The registration card the guest signed at check-in on the desk's device: the exact wording and its hash, the
+/// signature, when and where, and who was at the desk. Kept with the booking as a record.
+model RegistrationCard {
+  bookingId       String   @id
+  propertyId      String
+  textVersion     String
+  text            String
+  textHash        String
+  guestName       String
+  /// DRAWN (signatureImage is a PNG data URL) | TYPED (the guest's typed name)
+  signatureMethod String
+  signatureImage  String?
+  signedAt        DateTime
+  signedIp        String?
+  signedUserAgent String?
+  witnessedById   String
+  /// SHA-256 over everything signed (wording, ID summary and photo hash, deposit, signature).
+  documentHash    String
+  createdAt       DateTime @default(now())
+  booking         Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  property        Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, signedAt])
+  @@map("registration_cards")
 }
 
 /// Stripe webhook events already handled, so redeliveries are ignored (idempotency).

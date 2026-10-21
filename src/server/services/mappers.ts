@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import type { BookingStatus, BookingSummary } from '@/lib/dto';
 import { computeRiskFlags } from '@/lib/risk';
+import { roundMoney } from '@/lib/currency';
 import { fromCents, reservationShares, toCents } from '@/lib/payments';
 import { highAmountThreshold } from '../payments/config';
 import { diffDays, toISODate } from '../dates';
@@ -57,6 +58,8 @@ export function toBookingSummary(b: BookingWithRelations): BookingSummary {
     currency: b.currency,
     paymentStatus: b.paymentStatus ?? 'UNPAID',
     amountPaid: fromCents(pay.heldCents),
+    // Check-out needs this at zero (bookings.ts checkTransition).
+    balance: roundMoney(Number(b.totalPrice) - fromCents(pay.heldCents), b.currency),
     // Flags describe online payments; pay-at-property bookings have nothing to flag.
     riskFlags: first
       ? computeRiskFlags({

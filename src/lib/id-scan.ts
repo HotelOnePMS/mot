@@ -4,11 +4,18 @@
  * Two formats cover almost every ID a hotel sees:
  * - AAMVA PDF417, the barcode on the back of US and Canadian driver's
  *   licenses and ID cards. A desk scanner (or the camera) reads it as text:
- *   one element per line, "DCS" family name, "DAQ" licence number, and so on.
+ *   a header naming the subfile ("DL" licence or "ID" card), then one
+ *   element per line, "DCS" family name, "DAQ" licence number, and so on.
  *   Keyboard-wedge scanners often drop the control characters and turn line
- *   feeds into Enter, so the parser is lenient about both.
- * - ICAO 9303 MRZ, the two or three lines of <<< at the bottom of passports
- *   (TD3, 2 × 44) and ID cards (TD1, 3 × 30), with check digits.
+ *   feeds into Enter, so the parser is lenient about both. When the line
+ *   feeds are lost altogether the elements run together and can't be told
+ *   apart reliably, so the scan comes back empty with a hint instead of a
+ *   licence number that is really half the barcode.
+ * - ICAO 9303 MRZ, the lines of <<< at the bottom of passports (TD3, 2 × 44)
+ *   and ID cards, residence permits and crew cards (TD1, 3 × 30, and the
+ *   older TD2, 2 × 36). Every check digit is verified, so a misread
+ *   character shows up as a problem for staff to look at, never as a quiet
+ *   mistake.
  *
  * Pure functions, no imports: the check-in form parses on the device and
  * nothing leaves it until staff save.
@@ -19,6 +26,7 @@ export type ScannedIdType = 'DRIVERS_LICENSE' | 'NATIONAL_ID' | 'PASSPORT' | 'OT
 export interface ScannedId {
   format: 'AAMVA' | 'MRZ';
   idType: ScannedIdType;
+  /** Empty when the scan has no number staff can trust (see problems). */
   documentNumber: string;
   firstName: string;
   middleName: string | null;
@@ -68,8 +76,31 @@ function joinName(first: string, middle: string | null, last: string): string {
 
 const AAMVA_ELEMENTS = ['DAA', 'DAB', 'DAC', 'DAD', 'DAG', 'DAH', 'DAI', 'DAJ', 'DAK', 'DAQ', 'DBA', 'DBB', 'DBC', 'DBD', 'DCG', 'DCS', 'DCT', 'DCU', 'DDE', 'DDF', 'DDG'];
 const ELEMENT_RE = new RegExp(`^(${AAMVA_ELEMENTS.join('|')})(.*)$`);
-// The subfile ("DL" licence or "ID" card) starts right after the header, glued to its first element.
-const SUBFILE_RE = new RegExp(`(DL|ID)(${AAMVA_ELEMENTS.join('|')})`, 'g');
+// "ANSI " ("AAMVA" on early cards), the issuer's IIN and version digits, then one designator per subfile: type, offset, length.
+const HEADER_RE = /(?:ANSI|AAMVA) ?\d{6,}((?:[A-Z]{2}\d{8})*)/;
+// The subfile ("DL" licence or "ID" card) starts glued to its first element id, whatever that element is.
+const SUBFILE_AT_START_RE = /^(DL|ID)(?=D[A-Z]{2})/;
+const SUBFILE_ANYWHERE_RE = /(DL|ID)(?=D[A-Z]{2})/;
+// Elements that come after DAQ on a card. One of them inside the licence number means the line break before it was lost.
+const FOLLOWING_ELEMENTS = [...AAMVA_ELEMENTS.filter((id) => id !== 'DAQ'), 'DAU', 'DAY', 'DCA', 'DCB', 'DCD', 'DCF'];
+// The longest licence number the standard allows.
+const MAX_LICENCE_NUMBER = 25;
+
+const LOST_LINE_BREAKS = 'Line breaks were lost. Scan into the box again, or set the scanner to send Enter after each line.';
+
+const CANADA = new Set('AB BC MB NB NL NS NT NU ON PE QC SK YT'.split(' '));
+const USA = new Set(
+  (
+    'AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA ' +
+    'WA WV WI WY DC PR AS GU MP VI'
+  ).split(' '),
+);
+
+/** "VA" → "US", "ON" → "CA": older cards have no country element, but the state or province gives it away. */
+function regionCountry(region: string | null): string | null {
+  if (!region) return null;
+  return USA.has(region) ? 'US' : CANADA.has(region) ? 'CA' : null;
+}
 
 /** AAMVA dates: MMDDCCYY in the USA, CCYYMMDD in Canada. A month is never 19 or 20, so the first two digits tell them apart. */
 function aamvaDate(v: string | undefined): string | null {
@@ -92,30 +123,82 @@ export function looksLikeAamva(text: string): boolean {
   return /ANSI\s?\d{6}|AAMVA/.test(text) && /DAQ|DCS|DAA/.test(text);
 }
 
+/** Where the subfile starts on the header line: right after the designators, or past whatever a scanner mangled there. */
+function subfileOnHeaderLine(rest: string): RegExpExecArray | null {
+  const atStart = SUBFILE_AT_START_RE.exec(rest);
+  if (atStart || /^D[A-Z]{2}/.test(rest)) return atStart;
+  return SUBFILE_ANYWHERE_RE.exec(rest);
+}
+
+/** A licence or ID card barcode, as text. Null when it isn't one. */
 export function parseAamva(text: string): ScannedId | null {
   if (!looksLikeAamva(text)) return null;
   const fields: Record<string, string> = {};
+  const seen = new Set<string>();
+  let headerFound = false;
+  let designated: 'DL' | 'ID' | null = null;
   let subfile: 'DL' | 'ID' | null = null;
+  let elementLines = 0;
+  let elementIds = 0;
   for (const raw of text.split(/\r\n|\r|\n|\u001e/)) {
     // Scanners vary: strip control characters, keep the text.
     let line = raw.replace(/[\u0000-\u001f\u007f]/g, '').trimEnd();
-    if (!line) continue;
-    if (/ANSI|AAMVA/.test(line)) {
-      const starts = [...line.matchAll(SUBFILE_RE)];
-      const last = starts[starts.length - 1];
-      if (!last || last.index === undefined) continue;
-      subfile = last[1] as 'DL' | 'ID';
-      line = line.slice(last.index + 2);
+    const header = headerFound ? null : HEADER_RE.exec(line);
+    if (header) {
+      headerFound = true;
+      // The designators say which subfile the card has; the subfile itself says it again.
+      designated = (/(DL|ID)\d{8}/.exec(header[1])?.[1] as 'DL' | 'ID' | undefined) ?? null;
+      line = line.slice(header.index + header[0].length);
     }
+    if (!subfile && elementLines === 0) {
+      const start = header ? subfileOnHeaderLine(line) : SUBFILE_AT_START_RE.exec(line);
+      if (start) {
+        subfile = start[1] as 'DL' | 'ID';
+        line = line.slice(start.index + 2);
+      }
+    }
+    if (!line) continue;
+    if (/^D[A-Z]{2}/.test(line)) {
+      elementLines++;
+      seen.add(line.slice(0, 3));
+    }
+    elementIds += line.match(/D[A-Z]{2}/g)?.length ?? 0;
     const m = ELEMENT_RE.exec(line);
     if (m && !(m[1] in fields)) fields[m[1]] = m[2].trim();
+  }
+
+  const idType: ScannedIdType = (subfile ?? designated) === 'ID' ? 'NATIONAL_ID' : 'DRIVERS_LICENSE';
+  // Every element on one line: the first one would swallow the rest. Nothing in it can be trusted.
+  if (elementLines <= 1 && elementIds >= 3) {
+    return {
+      format: 'AAMVA',
+      idType,
+      documentNumber: '',
+      firstName: '',
+      middleName: null,
+      lastName: '',
+      fullName: '',
+      dateOfBirth: null,
+      expiry: null,
+      country: null,
+      region: null,
+      sex: null,
+      nationality: null,
+      address: null,
+      problems: [LOST_LINE_BREAKS],
+    };
   }
 
   // Version 1 cards put the whole name in DAA ("FAMILY,GIVEN,MIDDLE"); later ones split it.
   let last = fields.DCS ?? fields.DAB ?? '';
   let first = fields.DAC ?? '';
   let middle = fields.DAD ?? '';
-  if (!first && fields.DCT) [first, middle = middle] = fields.DCT.split(/[,\s]+/, 2);
+  // Versions 2 and 3 have "given names" (DCT): the first word is the first name, the rest are middle names.
+  if (!first && fields.DCT) {
+    const given = fields.DCT.split(/[,\s]+/).filter(Boolean);
+    first = given[0] ?? '';
+    middle ||= given.slice(1).join(' ');
+  }
   if ((!last || !first) && fields.DAA) {
     const parts = fields.DAA.split(/,|\$/).map((p) => p.trim());
     last ||= parts[0] ?? '';
@@ -123,36 +206,44 @@ export function parseAamva(text: string): ScannedId | null {
     middle ||= parts[2] ?? '';
   }
   const cleanMiddle = middle && !/^(NONE|N\/?A|UNAVL)$/i.test(middle) ? titleCase(middle) : null;
-  const country = fields.DCG === 'USA' ? 'US' : fields.DCG === 'CAN' ? 'CA' : null;
   const region = fields.DAJ?.trim().toUpperCase() || null;
+  // DCG names the country; without it, the state or province (or a Canadian postal code) does.
+  const country = (fields.DCG && mrzCountry(fields.DCG)) || regionCountry(region) || (/^[A-Z]\d[A-Z]/.test(fields.DAK ?? '') ? 'CA' : null);
+
+  const number = (fields.DAQ ?? '').replace(/\s+/g, '');
+  // Another element inside the number, one that never got a line of its own, is a line break the scanner lost.
+  const garbled = number.length > MAX_LICENCE_NUMBER || FOLLOWING_ELEMENTS.some((id) => number.indexOf(id, 1) > 0 && !seen.has(id));
   const problems: string[] = [];
-  if (!fields.DAQ) problems.push('No licence number in the scan.');
+  if (!number) problems.push('No licence number in the scan.');
+  else if (garbled) problems.push('The licence number didn’t scan cleanly. Scan again, or type it from the card.');
   if (!last || !first) problems.push('The name is incomplete in the scan.');
+  // DDE, DDF and DDG say whether the family, first and middle names were cut to fit the card.
+  if ([fields.DDE, fields.DDF, fields.DDG].includes('T')) problems.push('The name is shortened on the licence. Check it against the card.');
   const sex = fields.DBC === '1' || fields.DBC === 'M' ? 'M' : fields.DBC === '2' || fields.DBC === 'F' ? 'F' : fields.DBC === '9' || fields.DBC === 'X' ? 'X' : null;
-  const addressCountry = country ?? (/^[A-Z]\d[A-Z]/.test(fields.DAK ?? '') ? 'CA' : null);
   return {
     format: 'AAMVA',
-    idType: subfile === 'ID' ? 'NATIONAL_ID' : 'DRIVERS_LICENSE',
-    documentNumber: (fields.DAQ ?? '').replace(/\s+/g, ''),
+    idType,
+    documentNumber: garbled ? '' : number,
     firstName: titleCase(first),
     middleName: cleanMiddle,
     lastName: titleCase(last),
     fullName: joinName(titleCase(first), cleanMiddle, titleCase(last)),
     dateOfBirth: aamvaDate(fields.DBB),
     expiry: aamvaDate(fields.DBA),
-    country: addressCountry,
+    country,
     region,
     sex,
     nationality: null,
-    address: fields.DAG
-      ? {
-          line1: titleCase([fields.DAG, fields.DAH].filter(Boolean).join(', ')),
-          city: titleCase(fields.DAI ?? ''),
-          region: region ?? '',
-          postalCode: aamvaPostal(fields.DAK, addressCountry),
-          country: addressCountry,
-        }
-      : null,
+    address:
+      fields.DAG || fields.DAI || fields.DAK
+        ? {
+            line1: titleCase([fields.DAG, fields.DAH].filter(Boolean).join(', ')),
+            city: titleCase(fields.DAI ?? ''),
+            region: region ?? '',
+            postalCode: aamvaPostal(fields.DAK, country),
+            country,
+          }
+        : null,
     problems,
   };
 }
@@ -171,7 +262,8 @@ export function mrzCheckDigit(field: string): number {
   return sum % 10;
 }
 
-const checks = (field: string, digit: string) => digit !== '<' && mrzCheckDigit(field) === Number(digit);
+// A check digit is a digit: a filler, a letter or nothing at all never passes.
+const checks = (field: string, digit: string | undefined) => /^\d$/.test(digit ?? '') && mrzCheckDigit(field) === Number(digit);
 
 // ISO 3166 alpha-3 → alpha-2, plus the MRZ's own codes (D for Germany, GBD… British nationals, RKS Kosovo).
 const ISO3 = (
@@ -216,90 +308,161 @@ function mrzNames(field: string): { first: string; middle: string | null; last: 
 
 const SEX = (c: string): ScannedId['sex'] => (c === 'M' || c === 'F' || c === 'X' ? c : null);
 
-/** MRZ lines from scanner text: upper-cased, spaces removed; one unbroken run of 88 or 90 characters is split too. */
+/** MRZ lines from scanner text: upper-cased, spaces removed; one unbroken run of 72, 88 or 90 characters is split too. */
 function mrzLines(text: string): string[] {
   const cleaned = text.toUpperCase().replace(/[^\S\r\n]/g, '').replace(/[«‹]/g, '<');
   let lines = cleaned.split(/\r\n|\r|\n/).map((l) => l.trim()).filter((l) => /^[A-Z0-9<]+$/.test(l) && l.length >= 28);
   if (lines.length === 1) {
     const one = lines[0];
-    if (one.length === 88) lines = [one.slice(0, 44), one.slice(44)];
+    if (one.length === 72) lines = [one.slice(0, 36), one.slice(36)];
+    else if (one.length === 88) lines = [one.slice(0, 44), one.slice(44)];
     else if (one.length === 90) lines = [one.slice(0, 30), one.slice(30, 60), one.slice(60)];
   }
   return lines;
 }
 
+// Line lengths of TD3 (passports), TD2 and TD1 (cards).
+const MRZ_SHAPES = ['44,44', '36,36', '30,30,30'];
+const mrzShape = (lines: string[]) => lines.map((l) => l.length).join(',');
+
 export function looksLikeMrz(text: string): boolean {
-  const lines = mrzLines(text);
-  return (lines.length === 2 && lines.every((l) => l.length === 44)) || (lines.length === 3 && lines.every((l) => l.length === 30));
+  return MRZ_SHAPES.includes(mrzShape(mrzLines(text)));
 }
 
+/** TD1 and TD2 codes: I… is an identity card, except IR; AR, CR and other A or C + letter codes are residence permits and crew cards. */
+const cardType = (code: string): ScannedIdType => (/^(IR|[AC][A-Z])/.test(code) ? 'OTHER' : 'NATIONAL_ID');
+
+/**
+ * A card number longer than nine characters has a filler where its check
+ * digit should be and goes on at the start of the optional data, up to the
+ * next filler. The last character of that run is the check digit.
+ */
+function cardNumber(principal: string, check: string, optional: string): { number: string; check: string } {
+  if (check !== '<') return { number: principal, check };
+  const run = optional.split('<')[0];
+  return { number: principal + run.slice(0, -1), check: run.slice(-1) };
+}
+
+/** The fields every MRZ layout has, cut out of its lines. */
+interface MrzFields {
+  idType: ScannedIdType;
+  issuer: string;
+  name: string;
+  number: string;
+  numberCheck: string;
+  nationality: string;
+  birth: string;
+  birthCheck: string;
+  sex: string;
+  expiry: string;
+  expiryCheck: string;
+  /** Passports only. */
+  personal?: { field: string; check: string };
+  composite: { field: string; check: string } | null;
+}
+
+const NUMBER_LABEL: Record<ScannedIdType, string> = { PASSPORT: 'passport number', NATIONAL_ID: 'ID number', DRIVERS_LICENSE: 'licence number', OTHER: 'document number' };
+const DOCUMENT_LABEL: Record<ScannedIdType, string> = { PASSPORT: 'passport', NATIONAL_ID: 'ID card', DRIVERS_LICENSE: 'licence', OTHER: 'document' };
+
+function readMrz(f: MrzFields, now: Date): ScannedId {
+  const problems: string[] = [];
+  const documentNumber = f.number.replace(/</g, '');
+  if (!documentNumber) problems.push('No document number in the scan.');
+  else if (!checks(f.number, f.numberCheck)) problems.push(`The ${NUMBER_LABEL[f.idType]}’s check digit doesn’t match. Rescan, or check the number by eye.`);
+  if (!checks(f.birth, f.birthCheck)) problems.push('The date of birth’s check digit doesn’t match.');
+  if (!checks(f.expiry, f.expiryCheck)) problems.push('The expiry date’s check digit doesn’t match.');
+  // A passport with no personal number may leave its check digit as a filler.
+  if (f.personal && f.personal.check !== '<' && !checks(f.personal.field, f.personal.check)) problems.push('The personal number’s check digit doesn’t match.');
+  if (f.composite && !checks(f.composite.field, f.composite.check)) problems.push(`The ${DOCUMENT_LABEL[f.idType]}’s overall check digit doesn’t match.`);
+  const n = mrzNames(f.name);
+  return {
+    format: 'MRZ',
+    idType: f.idType,
+    documentNumber,
+    firstName: n.first,
+    middleName: n.middle,
+    lastName: n.last,
+    fullName: joinName(n.first, n.middle, n.last),
+    dateOfBirth: mrzDate(f.birth, 'birth', now),
+    expiry: mrzDate(f.expiry, 'expiry', now),
+    country: mrzCountry(f.issuer),
+    region: null,
+    sex: SEX(f.sex),
+    nationality: mrzCountry(f.nationality),
+    address: null,
+    problems,
+  };
+}
+
+/** A passport or ID card MRZ (TD3, TD2 or TD1). Null when it isn't one, or is a visa. */
 export function parseMrz(text: string, now: Date = new Date()): ScannedId | null {
   const lines = mrzLines(text);
-  const problems: string[] = [];
-  if (lines.length === 2 && lines.every((l) => l.length === 44)) {
+  const shape = mrzShape(lines);
+  if (shape === '44,44') {
     const [l1, l2] = lines;
     if (l1[0] !== 'P') return null;
-    const number = l2.slice(0, 9);
-    if (!checks(number, l2[9])) problems.push('The passport number’s check digit doesn’t match. Rescan, or check the number by eye.');
-    if (!checks(l2.slice(13, 19), l2[19])) problems.push('The date of birth’s check digit doesn’t match.');
-    if (!checks(l2.slice(21, 27), l2[27])) problems.push('The expiry date’s check digit doesn’t match.');
-    const composite = l2.slice(0, 10) + l2.slice(13, 20) + l2.slice(21, 43);
-    if (l2[43] !== '<' && !checks(composite, l2[43])) problems.push('The passport’s overall check digit doesn’t match.');
-    const n = mrzNames(l1.slice(5));
-    return {
-      format: 'MRZ',
-      idType: 'PASSPORT',
-      documentNumber: number.replace(/</g, ''),
-      firstName: n.first,
-      middleName: n.middle,
-      lastName: n.last,
-      fullName: joinName(n.first, n.middle, n.last),
-      dateOfBirth: mrzDate(l2.slice(13, 19), 'birth', now),
-      expiry: mrzDate(l2.slice(21, 27), 'expiry', now),
-      country: mrzCountry(l1.slice(2, 5)),
-      region: null,
-      sex: SEX(l2[20]),
-      nationality: mrzCountry(l2.slice(10, 13)),
-      address: null,
-      problems,
-    };
+    return readMrz(
+      {
+        idType: 'PASSPORT',
+        issuer: l1.slice(2, 5),
+        name: l1.slice(5),
+        number: l2.slice(0, 9),
+        numberCheck: l2[9],
+        nationality: l2.slice(10, 13),
+        birth: l2.slice(13, 19),
+        birthCheck: l2[19],
+        sex: l2[20],
+        expiry: l2.slice(21, 27),
+        expiryCheck: l2[27],
+        personal: { field: l2.slice(28, 42), check: l2[42] },
+        composite: l2[43] === '<' ? null : { field: l2.slice(0, 10) + l2.slice(13, 20) + l2.slice(21, 43), check: l2[43] },
+      },
+      now,
+    );
   }
-  if (lines.length === 3 && lines.every((l) => l.length === 30)) {
+  if (shape === '36,36') {
+    const [l1, l2] = lines;
+    if (!/^[IAC]/.test(l1)) return null;
+    const { number, check } = cardNumber(l2.slice(0, 9), l2[9], l2.slice(28, 35));
+    return readMrz(
+      {
+        idType: cardType(l1),
+        issuer: l1.slice(2, 5),
+        name: l1.slice(5),
+        number,
+        numberCheck: check,
+        nationality: l2.slice(10, 13),
+        birth: l2.slice(13, 19),
+        birthCheck: l2[19],
+        sex: l2[20],
+        expiry: l2.slice(21, 27),
+        expiryCheck: l2[27],
+        composite: { field: l2.slice(0, 10) + l2.slice(13, 20) + l2.slice(21, 35), check: l2[35] },
+      },
+      now,
+    );
+  }
+  if (shape === '30,30,30') {
     const [l1, l2, l3] = lines;
     if (!/^[IAC]/.test(l1)) return null;
-    let number = l1.slice(5, 14);
-    let numberCheck = l1[14];
-    let numberField = number;
-    // Numbers longer than nine characters continue in the optional field, ending with their check digit.
-    if (numberCheck === '<') {
-      const rest = l1.slice(15, 30).replace(/<+$/, '');
-      numberField = number + rest.slice(0, -1);
-      number = numberField;
-      numberCheck = rest.slice(-1);
-    }
-    if (!checks(numberField, numberCheck)) problems.push('The ID number’s check digit doesn’t match. Rescan, or check the number by eye.');
-    if (!checks(l2.slice(0, 6), l2[6])) problems.push('The date of birth’s check digit doesn’t match.');
-    if (!checks(l2.slice(8, 14), l2[14])) problems.push('The expiry date’s check digit doesn’t match.');
-    const composite = l1.slice(5, 30) + l2.slice(0, 7) + l2.slice(8, 15) + l2.slice(18, 29);
-    if (!checks(composite, l2[29])) problems.push('The ID card’s overall check digit doesn’t match.');
-    const n = mrzNames(l3);
-    return {
-      format: 'MRZ',
-      idType: 'NATIONAL_ID',
-      documentNumber: number.replace(/</g, ''),
-      firstName: n.first,
-      middleName: n.middle,
-      lastName: n.last,
-      fullName: joinName(n.first, n.middle, n.last),
-      dateOfBirth: mrzDate(l2.slice(0, 6), 'birth', now),
-      expiry: mrzDate(l2.slice(8, 14), 'expiry', now),
-      country: mrzCountry(l1.slice(2, 5)),
-      region: null,
-      sex: SEX(l2[7]),
-      nationality: mrzCountry(l2.slice(15, 18)),
-      address: null,
-      problems,
-    };
+    const { number, check } = cardNumber(l1.slice(5, 14), l1[14], l1.slice(15, 30));
+    return readMrz(
+      {
+        idType: cardType(l1),
+        issuer: l1.slice(2, 5),
+        name: l3,
+        number,
+        numberCheck: check,
+        nationality: l2.slice(15, 18),
+        birth: l2.slice(0, 6),
+        birthCheck: l2[6],
+        sex: l2[7],
+        expiry: l2.slice(8, 14),
+        expiryCheck: l2[14],
+        composite: { field: l1.slice(5, 30) + l2.slice(0, 7) + l2.slice(8, 15) + l2.slice(18, 29), check: l2[29] },
+      },
+      now,
+    );
   }
   return null;
 }

@@ -4,10 +4,16 @@
  * tests use the same rules. Money is in integer cents.
  */
 
-/** How the desk took the money. ONLINE payments are the guest's own, made when booking. */
-export type PaymentMethod = 'ONLINE' | 'TERMINAL' | 'CARD_ENTRY' | 'VIRTUAL_CARD' | 'CASH';
+/**
+ * How the desk took the money. ONLINE payments are the guest's own, made when booking. EXTERNAL_CARD and OTHER
+ * record money taken outside HotelOne (the hotel's own card terminal; a bank transfer, the OTA, an invoice),
+ * so the balance reflects it: check-out needs a zero balance.
+ */
+export type PaymentMethod = 'ONLINE' | 'TERMINAL' | 'CARD_ENTRY' | 'VIRTUAL_CARD' | 'CASH' | 'EXTERNAL_CARD' | 'OTHER';
 export type DeskMethod = Exclude<PaymentMethod, 'ONLINE'>;
-export const DESK_METHODS: readonly DeskMethod[] = ['TERMINAL', 'CARD_ENTRY', 'VIRTUAL_CARD', 'CASH'];
+export const DESK_METHODS: readonly DeskMethod[] = ['TERMINAL', 'CARD_ENTRY', 'VIRTUAL_CARD', 'CASH', 'EXTERNAL_CARD', 'OTHER'];
+/** Methods the desk only records (no money moves through HotelOne): handing back is recorded too. */
+export const RECORDED_METHODS: readonly PaymentMethod[] = ['CASH', 'EXTERNAL_CARD', 'OTHER'];
 
 /** PAYMENT goes toward the stay's balance; SECURITY_DEPOSIT is held against incidentals and returned at check-out. */
 export type DeskKind = 'PAYMENT' | 'SECURITY_DEPOSIT';
@@ -29,6 +35,8 @@ export const METHOD_LABEL: Record<PaymentMethod, string> = {
   CARD_ENTRY: 'Card typed in',
   VIRTUAL_CARD: 'OTA virtual card',
   CASH: 'Cash',
+  EXTERNAL_CARD: 'Card on another terminal',
+  OTHER: 'Paid another way',
 };
 
 export const KIND_LABEL: Record<string, string> = {

@@ -16,6 +16,7 @@ import { publicSiteUrl } from '../public-url';
 import { recordAudit } from '../services/audit';
 import { bookingInclude, toBookingSummary } from '../services/mappers';
 import { cardBrandLabel, countryName, ID_TYPE_LABEL, type CardAuthCheck, type IdType } from '@/lib/card-authorization';
+import { METHOD_LABEL, type PaymentMethod } from '@/lib/desk-payments';
 import { buildEvidenceSummary, renderEvidenceText, stripeEvidenceFields, type EvidenceInput, type EvidenceSummary } from './evidence';
 import { paymentLines, restorePaymentStatus } from './record';
 
@@ -34,6 +35,9 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
       policyAcceptance: true,
       checklist: true,
       statusHistory: { orderBy: { createdAt: 'asc' } },
+      // The guided check-in: the photo ID checked and the registration card signed.
+      guestIdentification: { select: { idType: true, idCountry: true, idLast4: true, nameOnId: true, nameMatched: true, confirmedById: true, createdAt: true, photo: { select: { guestIdentificationId: true } } } },
+      registrationCard: true,
       // Someone else paid: the cardholder's signed authorizations (the ID photo itself stays with the hotel).
       cardAuthorizations: {
         where: { status: { in: ['SIGNED', 'VERIFIED'] } },
@@ -69,11 +73,19 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
   });
   if (!booking) return null;
   const summary = toBookingSummary(booking);
+  // Security deposits taken at the desk (held, kept or returned), on any line of the reservation.
+  const deposits = await prisma.payment.findMany({
+    where: { kind: 'SECURITY_DEPOSIT', status: { notIn: ['PENDING', 'FAILED', 'CANCELED'] }, booking: booking.groupCode ? { groupCode: booking.groupCode } : { id: booking.id } },
+    orderBy: { createdAt: 'asc' },
+    select: { method: true, status: true, amount: true, amountAuthorized: true, amountRefunded: true, currency: true, cardBrand: true, cardLast4: true, settledAt: true, createdAt: true },
+  });
   // One payment covers every room type of a reservation: the evidence describes them all.
   const lines = booking.groupCode ? await paymentLines(booking) : null;
   const staffIds = [
     ...(booking.checklist ? [booking.checklist.idMatchedById, booking.checklist.cardShownById, booking.checklist.registrationSignedById] : []),
     ...booking.cardAuthorizations.map((a) => a.reviewedById),
+    booking.guestIdentification?.confirmedById,
+    booking.registrationCard?.witnessedById,
   ].filter((id): id is string => !!id);
   const staff = staffIds.length ? await prisma.user.findMany({ where: { id: { in: staffIds } }, select: { id: true, firstName: true, lastName: true } }) : [];
   const nameOf = (id: string | null) => {
@@ -156,6 +168,31 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
         text: a.text,
       };
     }),
+    checkIn: {
+      id: booking.guestIdentification
+        ? `${ID_TYPE_LABEL[booking.guestIdentification.idType as IdType] ?? booking.guestIdentification.idType}${booking.guestIdentification.idCountry ? ` issued in ${countryName(booking.guestIdentification.idCountry)}` : ''}, number ending ${booking.guestIdentification.idLast4}, name on ID ${booking.guestIdentification.nameOnId} (${booking.guestIdentification.nameMatched ? 'matches the booking' : 'differs from the booking name; accepted by staff'})`
+        : null,
+      idCheckedAt: booking.guestIdentification?.createdAt.toISOString() ?? null,
+      idCheckedBy: nameOf(booking.guestIdentification?.confirmedById ?? null),
+      idPhotoKept: !!booking.guestIdentification?.photo,
+      registration: booking.registrationCard
+        ? {
+            signedAt: booking.registrationCard.signedAt.toISOString(),
+            signatureMethod: booking.registrationCard.signatureMethod,
+            ip: booking.registrationCard.signedIp,
+            witnessedBy: nameOf(booking.registrationCard.witnessedById),
+            textVersion: booking.registrationCard.textVersion,
+            textHash: booking.registrationCard.textHash,
+            documentHash: booking.registrationCard.documentHash,
+            text: booking.registrationCard.text,
+          }
+        : null,
+      deposits: deposits.map((d) => {
+        const held = d.status === 'AUTHORIZED' ? 'held on the card' : d.status === 'CANCELED' ? 'released' : d.settledAt ? 'settled' : 'held';
+        const kept = d.settledAt && ['SUCCEEDED', 'PARTIALLY_REFUNDED'].includes(d.status) ? Number(d.amount) - Number(d.amountRefunded) : 0;
+        return `${METHOD_LABEL[d.method as PaymentMethod] ?? d.method}, ${Number(d.amountAuthorized ?? d.amount).toFixed(2)} ${d.currency.toUpperCase()}${d.cardLast4 ? ` on ${cardBrandLabel(d.cardBrand)} ending ${d.cardLast4}` : ''}, taken ${d.createdAt.toISOString().slice(0, 10)}; ${held}${kept > 0 ? ` (${kept.toFixed(2)} kept for incidentals)` : ''}`;
+      }),
+    },
     riskFlags: summary.riskFlags,
     history: booking.statusHistory.map((h) => ({ status: h.status, notes: h.notes, at: h.createdAt.toISOString() })),
     dispute,

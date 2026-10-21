@@ -103,6 +103,23 @@ export async function createDeskReservation(ctx: OpContext, input: DeskReservati
     throw e;
   });
   if (guest.guestEmail) await prisma.booking.update({ where: { id: booking.id }, data: { guestEmail: guest.guestEmail } });
+  // Paid in full at the desk: record the money, so every screen agrees the balance is settled.
+  if (input.paid) {
+    await prisma.payment.create({
+      data: {
+        bookingId: booking.id,
+        propertyId: booking.propertyId,
+        kind: 'PAYMENT',
+        method: 'OTHER',
+        status: 'SUCCEEDED',
+        amount: booking.totalPrice,
+        currency: booking.currency.toLowerCase(),
+        note: 'Paid in full at the desk when booked',
+        recordedById: actor.userId,
+        paidAt: new Date(),
+      },
+    });
+  }
   await confirmPayAtProperty(booking.id);
   await recordAudit(ctx, input.propertyId, 'BOOKING_CREATED', `New reservation ${booking.code} for ${input.guest.firstName} ${input.guest.lastName}`.trim(), {
     bookingId: booking.id,

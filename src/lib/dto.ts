@@ -34,6 +34,8 @@ export interface BookingSummary {
   paymentStatus: string;
   /** Collected online and not refunded, in the booking's currency. */
   amountPaid: number;
+  /** What the guest still owes: the total less everything paid online or at the desk. Negative = the hotel owes the guest. */
+  balance: number;
   /** Reasons for the front desk to look twice (staff only; computed on the server). */
   riskFlags: RiskFlag[];
   notes: string | null;
