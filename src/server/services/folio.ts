@@ -14,7 +14,7 @@
 import { prisma } from '@/lib/prisma';
 import { cardBrandLabel } from '@/lib/card-authorization';
 import { METHOD_LABEL, depositHeldCents, type PaymentMethod } from '@/lib/desk-payments';
-import { folioTotals, stayLines, type FolioLine, type FolioTotals } from '@/lib/folio';
+import { folioTotals, stayLines, type FolioDeposit, type FolioLine, type FolioView } from '@/lib/folio';
 import { fromCents, toCents } from '@/lib/payments';
 import { requirePermission, type Actor } from '../authz';
 import { diffDays, toISODate } from '../dates';
@@ -22,39 +22,10 @@ import { paymentLines } from '../payments/record';
 import { getBookingForStaff } from './bookings';
 import { personName, toBookingSummary, type BookingWithRelations } from './mappers';
 
+// The shapes live in lib/folio so client components can use them without server code.
+export type { FolioDeposit, FolioView } from '@/lib/folio';
+
 const COLLECTED = ['SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'];
-
-export interface FolioDeposit {
-  id: string;
-  method: string;
-  methodLabel: string;
-  /** HELD (on a card hold or charged/cash, not returned yet), SETTLED (returned, or kept for incidentals), RELEASED. */
-  state: 'HELD' | 'SETTLED' | 'RELEASED';
-  /** A hold on the card rather than money taken. */
-  hold: boolean;
-  amount: number;
-  /** Kept for incidentals when it was settled. */
-  kept: number;
-  card: string | null;
-  at: string;
-  settledAt: string | null;
-}
-
-export interface FolioView {
-  bookingId: string;
-  code: string;
-  currency: string;
-  status: string;
-  lines: FolioLine[];
-  totals: FolioTotals;
-  deposits: FolioDeposit[];
-  /** Security deposit still held for the stay (not part of the balance). */
-  depositHeld: number;
-  /** Set when one set of payments covers several room types (this folio shows this room type's share). */
-  reservation: { code: string; roomTypes: number } | null;
-  /** Nothing left to pay: the guest can check out. */
-  settled: boolean;
-}
 
 const cardOf = (p: { cardBrand: string | null; cardLast4: string | null }) => (p.cardLast4 ? `${cardBrandLabel(p.cardBrand)} ending ${p.cardLast4}` : null);
 

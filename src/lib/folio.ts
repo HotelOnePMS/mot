@@ -89,6 +89,40 @@ export interface FolioTotals {
   balance: number;
 }
 
+/** A security deposit on the folio: listed apart, never part of the balance. */
+export interface FolioDeposit {
+  id: string;
+  method: string;
+  methodLabel: string;
+  /** HELD (on a card hold or charged/cash, not returned yet), SETTLED (returned, or kept for incidentals), RELEASED. */
+  state: 'HELD' | 'SETTLED' | 'RELEASED';
+  /** A hold on the card rather than money taken. */
+  hold: boolean;
+  amount: number;
+  /** Kept for incidentals when it was settled. */
+  kept: number;
+  card: string | null;
+  at: string;
+  settledAt: string | null;
+}
+
+/** Everything on a booking's folio, as the server sends it (server/services/folio.ts). */
+export interface FolioView {
+  bookingId: string;
+  code: string;
+  currency: string;
+  status: string;
+  lines: FolioLine[];
+  totals: FolioTotals;
+  deposits: FolioDeposit[];
+  /** Security deposit still held for the stay (not part of the balance). */
+  depositHeld: number;
+  /** Set when one set of payments covers several room types (this folio shows this room type's share). */
+  reservation: { code: string; roomTypes: number } | null;
+  /** Nothing left to pay: the guest can check out. */
+  settled: boolean;
+}
+
 /** Sums lines in the currency's precision: charges = ROOM+TAX, paid = PAYMENT (positive), refunded = REFUND (positive), balance = sum of signed amounts (negative = the hotel owes the guest). */
 export function folioTotals(lines: readonly FolioLine[], currency: string): FolioTotals {
   let charges = 0;

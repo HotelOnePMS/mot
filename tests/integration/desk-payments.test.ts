@@ -29,6 +29,13 @@ const stripe = vi.hoisted(() => {
           return pi;
         }),
       },
+      refunds: {
+        create: vi.fn(async (params: { payment_intent: string; amount: number }) => {
+          const charge = intents.get(params.payment_intent)!.latest_charge as { amount_refunded: number };
+          charge.amount_refunded += params.amount;
+          return { id: `re_${++n}`, amount: params.amount };
+        }),
+      },
       terminal: {
         readers: {
           retrieve: vi.fn(async (id: string) => ({ id, label: 'Front desk', location: 'tml_hotel', device_type: 'simulated_wisepos_e', serial_number: 'SIMULATOR', action: null })),
@@ -43,7 +50,7 @@ vi.mock('@/lib/stripe', () => ({ getStripe: () => stripe.api, isStripeConfigured
 
 import { prisma } from '@/lib/prisma';
 import { addDaysISO } from '@/server/dates';
-import { applyDeskIntent, getDeskPayments, recordCashPayment, refundCash, settleDeposit, startReaderPayment } from '@/server/payments/desk';
+import { applyDeskIntent, getDeskPayments, recordCashPayment, refundCash, settleDeposit, startCardEntry, startReaderPayment } from '@/server/payments/desk';
 import { getBookingForStaff } from '@/server/services/bookings';
 import { createDeskReservation } from '@/server/services/reservations';
 import { actorFor, makeHotel, makeUser } from './fixtures';
@@ -188,6 +195,69 @@ describe('card reader', () => {
     expect(state.deposit.held).toBe(0);
     // Kept incidentals don't pay for the room.
     expect(state.balance).toBe(booking.totalPrice);
+  });
+});
+
+describe('deposit: hold or charge', () => {
+  const lastIntent = () => (stripe.api.paymentIntents.create.mock.calls.at(-1) as unknown as [Record<string, unknown>])[0];
+  const charged = (pi: Record<string, unknown>, status: string) =>
+    Object.assign(pi, {
+      status,
+      amount_received: status === 'succeeded' ? pi.amount : 0,
+      amount_capturable: status === 'requires_capture' ? pi.amount : 0,
+      latest_charge: { id: `ch_${pi.id}`, amount_refunded: 0, payment_method_details: { card_present: { brand: 'visa', last4: '4242' } }, billing_details: {} },
+    });
+
+  it('holds at a hotel that charges, or charges at a hotel that holds, when the desk says so', async () => {
+    const charging = await setup({ stripe: true, deposit: 'CHARGE' });
+    const held = await startReaderPayment(charging.op, charging.booking.id, { kind: 'SECURITY_DEPOSIT', amount: 100, readerId: 'tmr_1', hold: true });
+    expect(lastIntent()).toMatchObject({ capture_method: 'manual', payment_method_options: { card_present: { request_extended_authorization: true } } });
+    const audit = await prisma.agentAuditLog.findFirstOrThrow({ where: { propertyId: charging.h.property.id, action: 'PAYMENT_TERMINAL' } });
+    expect(audit.detail).toMatch(/security deposit hold/);
+
+    const holding = await setup({ stripe: true, deposit: 'HOLD' });
+    const taken = await startReaderPayment(holding.op, holding.booking.id, { kind: 'SECURITY_DEPOSIT', amount: 50, readerId: 'tmr_1', hold: false });
+    expect(lastIntent().capture_method).toBe('automatic');
+    expect(lastIntent().payment_method_options).toBeUndefined();
+
+    // A payment toward the stay is never a hold.
+    await startReaderPayment(holding.op, holding.booking.id, { kind: 'PAYMENT', amount: 10, readerId: 'tmr_1', hold: true });
+    expect(lastIntent().capture_method).toBe('automatic');
+
+    // Both settle at check-out: the hold is released, the charge refunded.
+    const pis = await prisma.payment.findMany({ where: { id: { in: [held.id, taken.id] } } });
+    const piOf = (id: string) => stripe.intents.get(pis.find((p) => p.id === id)!.stripePaymentIntentId!)!;
+    await applyDeskIntent(held.id, charged(piOf(held.id), 'requires_capture') as never, null);
+    await applyDeskIntent(taken.id, charged(piOf(taken.id), 'succeeded') as never, null);
+    expect((await getDeskPayments(charging.actor, charging.booking.id)).deposit).toMatchObject({ held: 100 });
+    expect((await getDeskPayments(holding.actor, holding.booking.id)).deposit).toMatchObject({ held: 50 });
+
+    expect(await settleDeposit(charging.op, held.id, { keep: 0 })).toMatchObject({ status: 'CANCELED' });
+    expect(stripe.api.paymentIntents.cancel).toHaveBeenCalledWith(piOf(held.id).id, expect.anything(), expect.anything());
+    expect(await settleDeposit(holding.op, taken.id, { keep: 0 })).toMatchObject({ status: 'REFUNDED', amountRefunded: 50 });
+    expect(stripe.api.refunds.create).toHaveBeenCalledWith(expect.objectContaining({ payment_intent: piOf(taken.id).id, amount: 5000 }), expect.anything());
+    expect((await getDeskPayments(charging.actor, charging.booking.id)).deposit.held).toBe(0);
+    expect((await getDeskPayments(holding.actor, holding.booking.id)).deposit.held).toBe(0);
+  });
+
+  it('holds by default at a hotel without a deposit policy, on the reader and on Stripe’s page', async () => {
+    const { h, op, booking } = await setup({ stripe: true });
+    await startReaderPayment(op, booking.id, { kind: 'SECURITY_DEPOSIT', amount: 100, readerId: 'tmr_1' });
+    expect(lastIntent().capture_method).toBe('manual');
+
+    const create = vi.fn(async () => ({ id: `cs_${booking.id}`, url: `https://checkout.stripe.com/c/cs_${booking.id}` }));
+    (stripe.api as Record<string, unknown>).checkout = { sessions: { create } };
+    await startCardEntry(op, booking.id, { kind: 'SECURITY_DEPOSIT', amount: 100, siteUrl: 'https://hotelone.site' });
+    let [params] = create.mock.calls.at(-1) as unknown as [Record<string, any>];
+    expect(params.payment_intent_data.capture_method).toBe('manual');
+    expect(params.line_items[0].price_data.product_data.description).toMatch(/released at check-out/);
+    const audit = await prisma.agentAuditLog.findFirstOrThrow({ where: { propertyId: h.property.id, action: 'PAYMENT_CARD_ENTRY' } });
+    expect(audit.detail).toMatch(/security deposit hold/);
+
+    await startCardEntry(op, booking.id, { kind: 'SECURITY_DEPOSIT', amount: 100, hold: false, siteUrl: 'https://hotelone.site' });
+    [params] = create.mock.calls.at(-1) as unknown as [Record<string, any>];
+    expect(params.payment_intent_data.capture_method).toBe('automatic');
+    expect(params.line_items[0].price_data.product_data.description).toMatch(/Refunded at check-out/);
   });
 });
 

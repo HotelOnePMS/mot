@@ -47,7 +47,10 @@ import { BookingStatusBadge, SourceBadge } from '@/components/hotel/badges';
 import { BookingPayments } from '@/components/payments/BookingPayments';
 import { CardAuthorizationPanel } from '@/components/payments/CardAuthorizationPanel';
 import { DeskPayments } from '@/components/payments/DeskPayments';
-import { AssignRoomDialog, CheckInDialog, CheckOutDialog, ConfirmDialog, NoteDialog } from '@/components/frontdesk/dialogs';
+import { CheckInRecordCard } from '@/components/frontdesk/CheckInRecordCard';
+import { CheckInWizard } from '@/components/frontdesk/CheckInWizard';
+import { FolioCard } from '@/components/frontdesk/FolioCard';
+import { AssignRoomDialog, CheckOutDialog, ConfirmDialog, NoteDialog } from '@/components/frontdesk/dialogs';
 import { useBookingActions } from '@/components/frontdesk/useBookingActions';
 import { useConsole } from '@/components/console/ConsoleProvider';
 import { useCopy } from '@/components/setup/CopyButton';
@@ -375,6 +378,9 @@ export default function BookingDetailPage() {
             </dl>
           </Card>
 
+          {/* Folio: the room and taxes, payments and refunds, the balance; security deposits apart */}
+          <FolioCard booking={b} />
+
           {/* Notes */}
           <Card className="p-5 sm:p-6">
             <SectionTitle
@@ -480,6 +486,9 @@ export default function BookingDetailPage() {
           {/* Money taken at the desk: card reader, typed-in or OTA virtual card, cash, security deposit */}
           <DeskPayments booking={b} />
 
+          {/* What check-in recorded: the guest's photo ID and the signed registration card */}
+          <CheckInRecordCard booking={b} onRecord={can('booking.checkin') ? () => setDialog('checkin') : undefined} />
+
           {/* Someone else pays: the cardholder's signed authorization with photo ID */}
           {can('booking.cardAuth') && <CardAuthorizationPanel booking={b} />}
 
@@ -520,7 +529,7 @@ export default function BookingDetailPage() {
         </div>
       </div>
 
-      <CheckInDialog booking={dialog === 'checkin' ? b : null} open={dialog === 'checkin'} onOpenChange={(o) => !o && setDialog(null)} />
+      <CheckInWizard booking={dialog === 'checkin' ? b : null} open={dialog === 'checkin'} onOpenChange={(o) => !o && setDialog(null)} />
       <CheckOutDialog booking={dialog === 'checkout' ? b : null} open={dialog === 'checkout'} onOpenChange={(o) => !o && setDialog(null)} today={today} />
       <NoteDialog booking={dialog === 'note' ? b : null} open={dialog === 'note'} onOpenChange={(o) => !o && setDialog(null)} />
       <AssignRoomDialog booking={dialog === 'assign' ? b : null} open={dialog === 'assign'} onOpenChange={(o) => !o && setDialog(null)} />

@@ -7,8 +7,8 @@
  * Card payments are direct charges on the hotel's connected account, like
  * online payments (checkout.ts): the hotel is the merchant and HotelOne never
  * sees a card number. A security deposit is a card hold (captured only for
- * what is owed at check-out) or a charge refunded at check-out, as the hotel
- * chooses in its settings.
+ * what is owed at check-out) or a charge refunded at check-out: the hotel's
+ * setting decides by default, and the desk can choose for each deposit.
  *
  * Every desk payment is a Payment row created before Stripe is called, so the
  * webhook (payment_intent.*, checkout.session.*) and the desk's own polling
@@ -297,6 +297,19 @@ function assertCanCollect(ctx: Context, kind: DeskKind, amountCents: number) {
 
 const money = (cents: number, currency: string) => `${fromCents(cents).toFixed(2)} ${currency.toUpperCase()}`;
 
+/**
+ * Whether a card deposit is a hold (authorized now, captured at check-out only for what is owed) or a charge
+ * (refunded at check-out). The desk may choose per deposit; otherwise the hotel's setting decides, and a hotel
+ * without a deposit policy gets the hold, which is kinder to the guest. A payment toward the stay is never a hold.
+ */
+function holdsDeposit(kind: DeskKind, mode: string, hold: boolean | undefined): boolean {
+  if (kind !== 'SECURITY_DEPOSIT') return false;
+  return hold ?? mode !== 'CHARGE';
+}
+
+/** What a desk card payment is, for the audit log and the Stripe description. */
+const whatFor = (kind: DeskKind, hold: boolean) => (hold ? 'Security deposit hold' : KIND_LABEL[kind]);
+
 async function historyNote(lines: Context['lines'], note: string) {
   await prisma.bookingStatusHistory.createMany({ data: lines.map((l) => ({ bookingId: l.id, status: l.status, notes: note })) });
 }
@@ -392,7 +405,7 @@ async function loadDeskPayment(actor: Actor, paymentId: string) {
  * and the guest taps, inserts or swipes; the result arrives by webhook and by
  * the desk polling `refreshDeskPayment`.
  */
-export async function startReaderPayment(op: OpContext, bookingId: string, input: { kind: DeskKind; amount: number; readerId: string }): Promise<DeskPaymentRow> {
+export async function startReaderPayment(op: OpContext, bookingId: string, input: { kind: DeskKind; amount: number; readerId: string; hold?: boolean }): Promise<DeskPaymentRow> {
   requirePermission(op.actor, 'payments.collect');
   const ctx = await loadContext(op.actor, bookingId);
   const amountCents = toCents(input.amount);
@@ -405,7 +418,7 @@ export async function startReaderPayment(op: OpContext, bookingId: string, input
   if (!reader || reader.deleted || reader.location !== ctx.property.stripeTerminalLocationId) throw badRequest('That card reader isn’t registered to this hotel. Add it in Settings → Online payments.');
   if (reader.action && reader.action.status === 'in_progress') throw conflict(`${reader.label || 'The reader'} is busy with another payment. Finish or cancel it first.`);
 
-  const hold = input.kind === 'SECURITY_DEPOSIT' && ctx.property.securityDepositMode === 'HOLD';
+  const hold = holdsDeposit(input.kind, ctx.property.securityDepositMode, input.hold);
   const payment = await prisma.payment.create({
     data: { bookingId: ctx.lead.id, propertyId: ctx.property.id, method: 'TERMINAL', kind: input.kind, status: 'PENDING', amount: fromCents(amountCents), currency: ctx.booking.currency.toLowerCase(), terminalReaderId: reader.id, recordedById: op.actor.userId },
   });
@@ -419,7 +432,7 @@ export async function startReaderPayment(op: OpContext, bookingId: string, input
         capture_method: hold ? 'manual' : 'automatic',
         // Hotels may keep a card-present hold up to 30 days (lodging), and raise it if the stay grows.
         ...(hold ? { payment_method_options: { card_present: { request_extended_authorization: true, request_incremental_authorization_support: true } } } : {}),
-        description: `${ctx.property.name} · ${KIND_LABEL[input.kind]} · ${ctx.lead.code ?? ctx.booking.id}`,
+        description: `${ctx.property.name} · ${whatFor(input.kind, hold)} · ${ctx.lead.code ?? ctx.booking.id}`,
         metadata: { deskPaymentId: payment.id, bookingId: ctx.lead.id, propertyId: ctx.property.id, kind: input.kind },
         ...(fee > 0 ? { application_fee_amount: fee } : {}),
       },
@@ -432,7 +445,7 @@ export async function startReaderPayment(op: OpContext, bookingId: string, input
     console.error('[payments] Card reader payment failed to start:', e);
     throw new DomainError(502, 'PAYMENT_UNAVAILABLE', `The card reader couldn’t start the payment: ${stripeMessage(e)}`);
   }
-  await recordAudit(op, ctx.property.id, 'PAYMENT_TERMINAL', `Sent ${money(amountCents, ctx.booking.currency)} ${KIND_LABEL[input.kind].toLowerCase()} to ${reader.label || reader.id} · ${ctx.lead.code ?? ctx.booking.id}`, { bookingId: ctx.booking.id, paymentId: payment.id });
+  await recordAudit(op, ctx.property.id, 'PAYMENT_TERMINAL', `Sent ${money(amountCents, ctx.booking.currency)} ${whatFor(input.kind, hold).toLowerCase()} to ${reader.label || reader.id} · ${ctx.lead.code ?? ctx.booking.id}`, { bookingId: ctx.booking.id, paymentId: payment.id });
   return refreshDeskPayment(op.actor, payment.id);
 }
 
@@ -441,7 +454,7 @@ export async function startReaderPayment(op: OpContext, bookingId: string, input
  * guest reads out or hands over, or the OTA's virtual card copied from the
  * extranet. The card goes straight to Stripe.
  */
-export async function startCardEntry(op: OpContext, bookingId: string, input: { kind: DeskKind; amount: number; virtualCard?: boolean; siteUrl: string }): Promise<DeskPaymentRow & { url: string }> {
+export async function startCardEntry(op: OpContext, bookingId: string, input: { kind: DeskKind; amount: number; virtualCard?: boolean; hold?: boolean; siteUrl: string }): Promise<DeskPaymentRow & { url: string }> {
   requirePermission(op.actor, 'payments.collect');
   const ctx = await loadContext(op.actor, bookingId);
   const amountCents = toCents(input.amount);
@@ -455,7 +468,7 @@ export async function startCardEntry(op: OpContext, bookingId: string, input: { 
     if (!otaCard.chargeable) throw badRequest(otaCard.reason ?? 'This virtual card can’t be charged today.');
     if (otaCard.balance !== null && amountCents > toCents(otaCard.balance)) throw badRequest(`The virtual card’s balance is ${otaCard.balance.toFixed(2)} ${otaCard.currency ?? ctx.booking.currency}. Charge at most that.`);
   }
-  const hold = input.kind === 'SECURITY_DEPOSIT' && ctx.property.securityDepositMode === 'HOLD';
+  const hold = holdsDeposit(input.kind, ctx.property.securityDepositMode, input.hold);
   const method = input.virtualCard ? 'VIRTUAL_CARD' : 'CARD_ENTRY';
   const payment = await prisma.payment.create({
     data: { bookingId: ctx.lead.id, propertyId: ctx.property.id, method, kind: input.kind, status: 'PENDING', amount: fromCents(amountCents), currency: ctx.booking.currency.toLowerCase(), recordedById: op.actor.userId },
@@ -463,6 +476,8 @@ export async function startCardEntry(op: OpContext, bookingId: string, input: { 
   const back = `${input.siteUrl}/admin/bookings/${ctx.booking.id}?deskPayment=${payment.id}`;
   const metadata = { deskPaymentId: payment.id, bookingId: ctx.lead.id, propertyId: ctx.property.id, kind: input.kind };
   const fee = input.kind === 'PAYMENT' ? platformFeeCents(amountCents, platformFeePercent()) : 0;
+  // The guest may pay on their own phone: say what a deposit is.
+  const depositNote = input.kind !== 'SECURITY_DEPOSIT' ? '' : hold ? ' · Held on the card and released at check-out; only what’s owed is charged' : ' · Refunded at check-out';
   let session: Stripe.Checkout.Session;
   try {
     session = await getStripe().checkout.sessions.create(
@@ -476,7 +491,7 @@ export async function startCardEntry(op: OpContext, bookingId: string, input: { 
               currency: ctx.booking.currency.toLowerCase(),
               product_data: {
                 name: `${KIND_LABEL[input.kind]} — ${ctx.property.name}`,
-                description: `Reservation ${ctx.lead.code ?? ctx.booking.id}${otaCard ? ` · ${otaCard.channel} virtual card ending ${otaCard.last4 ?? '—'}` : ''}`,
+                description: `Reservation ${ctx.lead.code ?? ctx.booking.id}${otaCard ? ` · ${otaCard.channel} virtual card ending ${otaCard.last4 ?? '—'}` : ''}${depositNote}`,
               },
               unit_amount: amountCents,
             },
@@ -493,7 +508,7 @@ export async function startCardEntry(op: OpContext, bookingId: string, input: { 
         },
         payment_intent_data: {
           capture_method: hold ? 'manual' : 'automatic',
-          description: `${ctx.property.name} · ${KIND_LABEL[input.kind]} · ${ctx.lead.code ?? ctx.booking.id}${otaCard ? ` · ${otaCard.channel} virtual card` : ''}`,
+          description: `${ctx.property.name} · ${whatFor(input.kind, hold)} · ${ctx.lead.code ?? ctx.booking.id}${otaCard ? ` · ${otaCard.channel} virtual card` : ''}`,
           metadata,
           ...(fee > 0 ? { application_fee_amount: fee } : {}),
         },
@@ -509,7 +524,7 @@ export async function startCardEntry(op: OpContext, bookingId: string, input: { 
     throw new DomainError(502, 'PAYMENT_UNAVAILABLE', `Stripe’s payment page couldn’t be opened: ${stripeMessage(e)}`);
   }
   const row = await prisma.payment.update({ where: { id: payment.id }, data: { stripeCheckoutSessionId: session.id }, select: rowSelect });
-  await recordAudit(op, ctx.property.id, method === 'VIRTUAL_CARD' ? 'PAYMENT_VIRTUAL_CARD' : 'PAYMENT_CARD_ENTRY', `Opened Stripe’s page for ${money(amountCents, ctx.booking.currency)} ${KIND_LABEL[input.kind].toLowerCase()}${otaCard ? ` on the ${otaCard.channel} virtual card` : ''} · ${ctx.lead.code ?? ctx.booking.id}`, { bookingId: ctx.booking.id, paymentId: payment.id });
+  await recordAudit(op, ctx.property.id, method === 'VIRTUAL_CARD' ? 'PAYMENT_VIRTUAL_CARD' : 'PAYMENT_CARD_ENTRY', `Opened Stripe’s page for ${money(amountCents, ctx.booking.currency)} ${whatFor(input.kind, hold).toLowerCase()}${otaCard ? ` on the ${otaCard.channel} virtual card` : ''} · ${ctx.lead.code ?? ctx.booking.id}`, { bookingId: ctx.booking.id, paymentId: payment.id });
   return { ...toRow(row, new Map([[op.actor.userId, op.actor.name]])), url: session.url! };
 }
 

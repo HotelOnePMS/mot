@@ -3,11 +3,13 @@
 import * as React from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { toast } from 'sonner';
-import { Banknote, CreditCard, ExternalLink, KeyRound, Landmark, Loader2, Nfc, ShieldCheck, Undo2, XCircle } from 'lucide-react';
+import QRCode from 'qrcode';
+import { Banknote, CreditCard, ExternalLink, KeyRound, Landmark, Loader2, Nfc, Receipt, ShieldCheck, Undo2, XCircle } from 'lucide-react';
 import type { BookingSummary } from '@/lib/dto';
 import { api, fetcher } from '@/lib/fetcher';
 import { formatMoney } from '@/lib/format';
-import { cashChangeCents, type DeskKind, type DeskMethod } from '@/lib/desk-payments';
+import { CARD_BRANDS, cardBrandLabel } from '@/lib/card-authorization';
+import { cashChangeCents, RECORDED_METHODS, type DeskKind, type DeskMethod, type PaymentMethod } from '@/lib/desk-payments';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -72,6 +74,8 @@ interface DeskState {
 }
 
 const key = (bookingId: string) => `/api/admin/bookings/${bookingId}/desk-payments`;
+/** Everything that shows the reservation's money, refreshed after a change: the desk, the booking, its payment, the folio and the guided check-in. */
+const moneyKeys = (bookingId: string) => [key(bookingId), `/api/admin/bookings/${bookingId}`, `/api/admin/bookings/${bookingId}/payment`, `/api/admin/bookings/${bookingId}/folio`, `/api/admin/bookings/${bookingId}/check-in`];
 
 /** Everything the desk needs to collect money for a reservation. Null for staff who can't take payments. */
 export function useDeskPayments(bookingId: string | null | undefined) {
@@ -94,44 +98,95 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 function MethodIcon({ method, className }: { method: string; className?: string }) {
-  const Icon = method === 'CASH' ? Banknote : method === 'TERMINAL' ? Nfc : method === 'VIRTUAL_CARD' ? Landmark : CreditCard;
+  const Icon = method === 'CASH' ? Banknote : method === 'TERMINAL' ? Nfc : method === 'VIRTUAL_CARD' ? Landmark : method === 'OTHER' ? Receipt : CreditCard;
   return <Icon className={cn('size-4 text-muted-foreground', className)} aria-hidden />;
 }
 
+/** What the desk just collected, for a screen that moves on once the guest has paid (the guided check-in). */
+export interface CollectedPayment {
+  id: string;
+  kind: string;
+  method: string;
+  status: string;
+  amount: number;
+}
+
+const collected = (p: DeskPaymentRow): CollectedPayment => ({ id: p.id, kind: p.kind, method: p.method, status: p.status, amount: p.amount });
+const isRecorded = (method: string) => RECORDED_METHODS.includes(method as PaymentMethod);
+
+/** Quick amounts for a security deposit, in the hotel's currency; the hotel's own amount joins them. */
+const DEPOSIT_PRESETS = [50, 100];
+
 /**
  * Take a payment or the security deposit: on the card reader, typed into
- * Stripe's page (the guest's card or the OTA's virtual card), or in cash.
- * Card payments show live progress until the guest has paid.
+ * Stripe's page (the guest's card or the OTA's virtual card), in cash, or
+ * recorded when it was taken another way (the hotel's own terminal, a bank
+ * transfer). Card payments show live progress until the guest has paid; a
+ * card deposit is held on the card or charged, as the desk chooses.
  */
-export function CollectPaymentDialog({ booking, kind, open, onOpenChange }: { booking: Pick<BookingSummary, 'id' | 'guest'>; kind: DeskKind; open: boolean; onOpenChange: (o: boolean) => void }) {
+export function CollectPaymentDialog({
+  booking,
+  kind,
+  open,
+  onOpenChange,
+  onCollected,
+}: {
+  booking: Pick<BookingSummary, 'id' | 'guest'>;
+  kind: DeskKind;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  /** Called once the money is in (paid, held, or recorded), after the screens have refreshed. */
+  onCollected?: (payment: CollectedPayment) => void;
+}) {
   const { mutate } = useSWRConfig();
   const { refresh } = useConsole();
   const { data } = useDeskPayments(open ? booking.id : null);
   const [method, setMethod] = React.useState<DeskMethod>('TERMINAL');
   const [amount, setAmount] = React.useState('');
+  const [hold, setHold] = React.useState<'HOLD' | 'CHARGE'>('HOLD');
   const [tendered, setTendered] = React.useState('');
   const [note, setNote] = React.useState('');
+  const [cardBrand, setCardBrand] = React.useState('');
+  const [cardLast4, setCardLast4] = React.useState('');
+  const [approval, setApproval] = React.useState('');
+  const [paidHow, setPaidHow] = React.useState('');
   const [readerId, setReaderId] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
   const [active, setActive] = React.useState<DeskPaymentRow | null>(null);
   const [pageUrl, setPageUrl] = React.useState<string | null>(null);
+  const [qr, setQr] = React.useState<string | null>(null);
+  const amountRef = React.useRef<HTMLInputElement>(null);
+  // The amount is filled in once per opening, so "Custom" can leave it empty while the data refreshes.
+  const filled = React.useRef(false);
+  // The payment onCollected was called for: once per payment, whichever way it finished.
+  const reported = React.useRef<string | null>(null);
   const deposit = kind === 'SECURITY_DEPOSIT';
 
   // Fresh form each time it opens, with the amount due and the usual method.
   React.useEffect(() => {
     if (!open) return;
+    filled.current = false;
     setActive(null);
     setPageUrl(null);
     setError('');
     setNote('');
     setTendered('');
+    setCardBrand('');
+    setCardLast4('');
+    setApproval('');
+    setPaidHow('');
     setAmount('');
   }, [open]);
   React.useEffect(() => {
     if (!open || !data) return;
-    const due = deposit ? data.deposit.due || data.deposit.amount : data.balance;
-    setAmount((a) => a || (due > 0 ? due.toFixed(2) : ''));
+    if (!filled.current) {
+      filled.current = true;
+      const due = deposit ? data.deposit.due || data.deposit.amount || 100 : data.balance;
+      setAmount(due > 0 ? due.toFixed(2) : '');
+      // As the server does when the desk doesn't say: hold, unless the hotel charges deposits.
+      setHold(data.deposit.mode === 'CHARGE' ? 'CHARGE' : 'HOLD');
+    }
     const remembered = (() => {
       try {
         return window.localStorage.getItem(READER_LAST);
@@ -141,6 +196,7 @@ export function CollectPaymentDialog({ booking, kind, open, onOpenChange }: { bo
     })();
     setReaderId((r) => r || data.readers.find((x) => x.id === remembered)?.id || data.readers[0]?.id || '');
     setMethod((m) => {
+      if (isRecorded(m)) return m;
       if (!data.card.available) return 'CASH';
       if (m === 'TERMINAL' && !data.readers.length) return !deposit && data.otaCard?.type === 'VIRTUAL' && data.otaCard.chargeable ? 'VIRTUAL_CARD' : 'CARD_ENTRY';
       return m;
@@ -168,16 +224,38 @@ export function CollectPaymentDialog({ booking, kind, open, onOpenChange }: { bo
     };
   }, [active, waiting]);
 
+  // Stripe's page as a QR code, so the guest can type their card on their own phone.
+  const qrUrl = active?.method === 'CARD_ENTRY' && waiting ? pageUrl : null;
+  React.useEffect(() => {
+    setQr(null);
+    if (!qrUrl) return;
+    let stop = false;
+    QRCode.toDataURL(qrUrl, { margin: 2, width: 352, errorCorrectionLevel: 'L' })
+      .then((src) => {
+        if (!stop) setQr(src);
+      })
+      .catch(() => {
+        // The link still works.
+      });
+    return () => {
+      stop = true;
+    };
+  }, [qrUrl]);
+
   const done = React.useCallback(async () => {
-    await Promise.all([mutate(key(booking.id)), mutate(`/api/admin/bookings/${booking.id}`), mutate(`/api/admin/bookings/${booking.id}/payment`)]);
+    await Promise.all(moneyKeys(booking.id).map((path) => mutate(path)));
     refresh();
   }, [booking.id, mutate, refresh]);
 
   React.useEffect(() => {
-    if (!active) return;
+    if (!active || reported.current === active.id) return;
     if (active.status === 'SUCCEEDED' || active.status === 'AUTHORIZED') {
+      reported.current = active.id;
       toast.success(`${active.status === 'AUTHORIZED' ? 'Held' : 'Collected'} ${fmt(active.amount, active.currency)} from ${booking.guest.name}`);
-      void done();
+      const row = active;
+      void done()
+        .catch(() => undefined)
+        .then(() => onCollected?.(collected(row)));
     }
   }, [active?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -187,13 +265,27 @@ export function CollectPaymentDialog({ booking, kind, open, onOpenChange }: { bo
   const change = method === 'CASH' && tendered ? cashChangeCents(Math.round(toNumber(tendered) * 100), Math.round(value * 100)) : null;
   const vcc = data?.otaCard;
   const overBalance = !deposit && data ? value > data.balance + 0.004 : false;
-  const valid = value > 0 && !overBalance && (method !== 'TERMINAL' || !!readerId) && (method !== 'CASH' || !tendered || change !== null) && (method !== 'VIRTUAL_CARD' || !!vcc?.chargeable);
+  const recorded = isRecorded(method);
+  // A card deposit is held or charged as the desk chooses; the OTA's virtual card follows the hotel's setting.
+  const holdChoice = deposit && (method === 'TERMINAL' || method === 'CARD_ENTRY');
+  const holding = holdChoice ? hold === 'HOLD' : method === 'VIRTUAL_CARD' && data?.deposit.mode !== 'CHARGE';
+  const valid =
+    value > 0 &&
+    !overBalance &&
+    (method !== 'TERMINAL' || !!readerId) &&
+    (method !== 'CASH' || !tendered || change !== null) &&
+    (method !== 'VIRTUAL_CARD' || !!vcc?.chargeable) &&
+    (method !== 'EXTERNAL_CARD' || /^\d{4}$/.test(cardLast4)) &&
+    (method !== 'OTHER' || paidHow.trim().length >= 3);
+  const presets = data ? [...DEPOSIT_PRESETS, ...(data.deposit.amount > 0 && !DEPOSIT_PRESETS.includes(data.deposit.amount) ? [data.deposit.amount] : [])].sort((a, b) => a - b) : [];
+  const preset = presets.find((p) => Math.abs(p - value) < 0.004);
 
   async function collect() {
     setBusy(true);
     setError('');
     try {
       const body: Record<string, unknown> = { method, kind, amount: Math.round(value * 100) / 100 };
+      if (holdChoice) body.hold = hold === 'HOLD';
       if (method === 'TERMINAL') {
         body.readerId = readerId;
         try {
@@ -206,14 +298,27 @@ export function CollectPaymentDialog({ booking, kind, open, onOpenChange }: { bo
         if (tendered) body.tendered = Math.round(toNumber(tendered) * 100) / 100;
         if (note.trim()) body.note = note.trim();
       }
+      if (method === 'EXTERNAL_CARD') {
+        body.cardLast4 = cardLast4;
+        if (cardBrand) body.cardBrand = cardBrand;
+        if (approval.trim()) body.reference = approval.trim();
+      }
+      if (method === 'OTHER') body.note = paidHow.trim();
       const row = await api<DeskPaymentRow & { url?: string }>(key(booking.id), { method: 'POST', json: body });
       if (row.url) {
         setPageUrl(row.url);
         window.open(row.url, '_blank', 'noopener');
       }
-      if (method === 'CASH') {
-        toast.success(`Recorded ${fmt(row.amount, currency)} cash from ${booking.guest.name}${change ? ` · change ${fmt(change / 100, currency)}` : ''}`);
+      if (recorded) {
+        toast.success(
+          method === 'CASH'
+            ? `Recorded ${fmt(row.amount, currency)} cash from ${booking.guest.name}${change ? ` · change ${fmt(change / 100, currency)}` : ''}`
+            : method === 'EXTERNAL_CARD'
+              ? `Recorded ${fmt(row.amount, currency)} from ${booking.guest.name} on the hotel’s terminal`
+              : `Recorded ${fmt(row.amount, currency)} from ${booking.guest.name} · ${paidHow.trim()}`
+        );
         await done();
+        onCollected?.(collected(row));
         onOpenChange(false);
         return;
       }
@@ -229,8 +334,10 @@ export function CollectPaymentDialog({ booking, kind, open, onOpenChange }: { bo
     if (!active) return;
     setBusy(true);
     try {
-      setActive(await api<DeskPaymentRow>(`/api/admin/desk-payments/${active.id}`, { method: 'POST', json: { action, ...extra } }));
-      if (action === 'cancel') {
+      const row = await api<DeskPaymentRow>(`/api/admin/desk-payments/${active.id}`, { method: 'POST', json: { action, ...extra } });
+      setActive(row);
+      // The guest may have finished paying a moment before the cancel: then keep showing the payment.
+      if (action === 'cancel' && row.status !== 'SUCCEEDED' && row.status !== 'AUTHORIZED') {
         await done();
         setActive(null);
         setPageUrl(null);
@@ -242,13 +349,20 @@ export function CollectPaymentDialog({ booking, kind, open, onOpenChange }: { bo
     }
   }
 
+  // The ways to pay don't fit one row on a phone: a grid keeps them all in view instead of scrolling sideways.
   const methods = [
     { value: 'TERMINAL' as const, label: 'Card reader', icon: <Nfc className="size-4" aria-hidden />, disabled: !data?.card.available || !data?.readers.length },
     { value: 'CARD_ENTRY' as const, label: 'Type card', icon: <KeyRound className="size-4" aria-hidden />, disabled: !data?.card.available },
     ...(vcc ? [{ value: 'VIRTUAL_CARD' as const, label: vcc.type === 'VIRTUAL' ? 'Virtual card' : 'OTA card', icon: <Landmark className="size-4" aria-hidden />, disabled: !data?.card.available }] : []),
     { value: 'CASH' as const, label: 'Cash', icon: <Banknote className="size-4" aria-hidden /> },
+    { value: 'EXTERNAL_CARD' as const, label: 'Other terminal', icon: <CreditCard className="size-4" aria-hidden /> },
+    { value: 'OTHER' as const, label: 'Other', icon: <Receipt className="size-4" aria-hidden /> },
   ];
-  const holdText = data?.deposit.mode === 'HOLD' ? 'The card is authorized now and charged only for what’s owed at check-out.' : 'Charged now and refunded at check-out.';
+  const holdText = recorded
+    ? 'Taken now and given back at check-out.'
+    : holding
+      ? 'The card is authorized now and the hold is released at check-out; only what’s owed is charged.'
+      : 'Charged now and refunded at check-out.';
 
   return (
     <Dialog open={open} onOpenChange={(o) => (!waiting || !o ? onOpenChange(o) : undefined)}>
@@ -259,7 +373,7 @@ export function CollectPaymentDialog({ booking, kind, open, onOpenChange }: { bo
             {!data
               ? 'Loading…'
               : deposit
-                ? `${data.deposit.mode === 'NONE' ? 'This hotel doesn’t ask for a deposit, but you can take one.' : holdText}${data.deposit.held > 0 ? ` ${fmt(data.deposit.held, currency)} is already held.` : ''}`
+                ? `${data.deposit.mode === 'NONE' ? 'This hotel doesn’t ask for a deposit, but you can take one. ' : ''}${holdText}${data.deposit.held > 0 ? ` ${fmt(data.deposit.held, currency)} is already held.` : ''}`
                 : `Balance ${fmt(data.balance, currency)} of ${fmt(data.total, currency)}${data.reservation ? ` for all ${data.reservation.roomTypes} room types in reservation ${data.reservation.code}` : ''}.`}
           </DialogDescription>
         </DialogHeader>
@@ -304,6 +418,13 @@ export function CollectPaymentDialog({ booking, kind, open, onOpenChange }: { bo
                           Open Stripe’s payment page <ExternalLink className="size-3.5" aria-hidden />
                         </a>
                       )}
+                      {qrUrl && qr && (
+                        <figure className="space-y-1.5 pt-2">
+                          {/* eslint-disable-next-line @next/next/no-img-element -- a generated data URL, nothing for next/image to optimize */}
+                          <img src={qr} alt="QR code of Stripe’s payment page" width={176} height={176} className="size-44 rounded-lg border bg-white" />
+                          <figcaption className="text-muted-foreground">Or let the guest scan this to pay on their phone</figcaption>
+                        </figure>
+                      )}
                     </>
                   )}
                 </div>
@@ -327,11 +448,43 @@ export function CollectPaymentDialog({ booking, kind, open, onOpenChange }: { bo
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
           <div className="space-y-4">
-            <SegmentedControl layoutId="desk-method" aria-label="How the guest pays" value={method} onChange={setMethod} options={methods} size="sm" />
+            <SegmentedControl layoutId="desk-method" aria-label="How the guest pays" value={method} onChange={setMethod} options={methods} size="sm" className="grid w-full grid-cols-2 sm:grid-cols-3" />
             {!data.card.available && method === 'CASH' && data.card.reason && <p className="text-xs text-muted-foreground">{data.card.reason}</p>}
 
+            {holdChoice && (
+              <SegmentedControl
+                layoutId="desk-hold"
+                aria-label="Hold or charge the deposit"
+                value={hold}
+                onChange={setHold}
+                options={[
+                  { value: 'HOLD', label: 'Hold on the card' },
+                  { value: 'CHARGE', label: 'Charge now' },
+                ]}
+                size="sm"
+              />
+            )}
+
             <Field label={`Amount (${currency})`} htmlFor="desk-amount" hint={!deposit && overBalance ? `More than the balance of ${fmt(data.balance, currency)}.` : undefined}>
-              <Input id="desk-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+              {deposit && (
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Deposit amount">
+                  {presets.map((p) => (
+                    <AmountChip key={p} pressed={preset === p} onClick={() => setAmount(p.toFixed(2))}>
+                      {formatMoney(p, currency)}
+                    </AmountChip>
+                  ))}
+                  <AmountChip
+                    pressed={preset === undefined}
+                    onClick={() => {
+                      setAmount('');
+                      amountRef.current?.focus();
+                    }}
+                  >
+                    Custom
+                  </AmountChip>
+                </div>
+              )}
+              <Input id="desk-amount" ref={amountRef} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
             </Field>
 
             {method === 'TERMINAL' &&
@@ -351,7 +504,7 @@ export function CollectPaymentDialog({ booking, kind, open, onOpenChange }: { bo
                 <Callout tone="info">No card reader yet. An owner can add one in Settings → Online payments.</Callout>
               ))}
 
-            {method === 'CARD_ENTRY' && <p className="text-sm text-muted-foreground">Opens Stripe’s secure page in a new tab. Type the card the guest gives you; it goes straight to Stripe.</p>}
+            {method === 'CARD_ENTRY' && <p className="text-sm text-muted-foreground">Opens Stripe’s secure page in a new tab. Type the card the guest gives you, or let them scan a code and pay on their phone; it goes straight to Stripe.</p>}
 
             {method === 'VIRTUAL_CARD' && vcc && (
               <div className="space-y-2 rounded-xl border p-3 text-sm">
@@ -392,6 +545,36 @@ export function CollectPaymentDialog({ booking, kind, open, onOpenChange }: { bo
               </div>
             )}
 
+            {method === 'EXTERNAL_CARD' && (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">For a card charged on the hotel’s own terminal. Enter what the terminal’s receipt shows; HotelOne records it and no money moves through Stripe.</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Last four digits" required htmlFor="desk-card-last4">
+                    <Input id="desk-card-last4" required inputMode="numeric" autoComplete="off" maxLength={4} value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+                  </Field>
+                  <Field label="Card" optional htmlFor="desk-card-brand">
+                    <select id="desk-card-brand" value={cardBrand} onChange={(e) => setCardBrand(e.target.value)} className="h-10 w-full rounded-lg border border-input bg-surface px-3 text-sm">
+                      <option value="">Choose</option>
+                      {CARD_BRANDS.map((b) => (
+                        <option key={b} value={b}>
+                          {cardBrandLabel(b)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Approval code" optional htmlFor="desk-approval">
+                    <Input id="desk-approval" autoComplete="off" maxLength={40} value={approval} onChange={(e) => setApproval(e.target.value)} />
+                  </Field>
+                </div>
+              </div>
+            )}
+
+            {method === 'OTHER' && (
+              <Field label="What it was" required htmlFor="desk-paid-how" hint="For example a bank transfer or a voucher. HotelOne records it; no money moves through Stripe.">
+                <Input id="desk-paid-how" required value={paidHow} maxLength={200} placeholder="Bank transfer" onChange={(e) => setPaidHow(e.target.value)} />
+              </Field>
+            )}
+
             {error && (
               <Callout tone="danger" role="alert">
                 {error}
@@ -429,15 +612,46 @@ export function CollectPaymentDialog({ booking, kind, open, onOpenChange }: { bo
               <Button variant="ghost" onClick={() => onOpenChange(false)}>
                 Not now
               </Button>
-              <Button disabled={!valid || !data} loading={busy} loadingText="Starting…" onClick={collect}>
-                {method === 'CASH' ? <Banknote aria-hidden /> : method === 'TERMINAL' ? <Nfc aria-hidden /> : <ExternalLink aria-hidden />}
-                {method === 'CASH' ? 'Record cash' : method === 'TERMINAL' ? 'Send to reader' : 'Open payment page'} {value > 0 ? fmt(value, currency) : ''}
+              <Button disabled={!valid || !data} loading={busy} loadingText={recorded ? 'Saving…' : 'Starting…'} onClick={collect}>
+                <CollectIcon method={method} />
+                {COLLECT_LABEL[method]} {value > 0 ? fmt(value, currency) : ''}
               </Button>
             </>
           )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+const COLLECT_LABEL: Record<DeskMethod, string> = {
+  TERMINAL: 'Send to reader',
+  CARD_ENTRY: 'Open payment page',
+  VIRTUAL_CARD: 'Open payment page',
+  CASH: 'Record cash',
+  EXTERNAL_CARD: 'Record card payment',
+  OTHER: 'Record payment',
+};
+
+function CollectIcon({ method }: { method: DeskMethod }) {
+  const Icon = method === 'CASH' ? Banknote : method === 'TERMINAL' ? Nfc : method === 'EXTERNAL_CARD' ? CreditCard : method === 'OTHER' ? Receipt : ExternalLink;
+  return <Icon aria-hidden />;
+}
+
+/** A quick amount for the deposit; pressed when it is the amount in the box. */
+function AmountChip({ pressed, onClick, children }: { pressed: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onClick}
+      className={cn(
+        'inline-flex h-9 items-center rounded-full border px-3.5 text-sm font-medium tabular transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+        pressed ? 'border-primary/50 bg-primary-soft text-primary-soft-foreground' : 'border-border-strong/50 bg-surface text-muted-foreground hover:border-border-strong hover:text-foreground'
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -467,7 +681,7 @@ function SettleDepositDialog({ bookingId, payment, open, onOpenChange }: { booki
     try {
       await api(`/api/admin/desk-payments/${payment!.id}`, { method: 'POST', json: { action: 'settle', keep: Math.round(k * 100) / 100, note: note.trim() || undefined } });
       toast.success(k > 0 ? `Kept ${fmt(k, payment!.currency)}, returned ${fmt(back, payment!.currency)}` : `Deposit of ${fmt(held, payment!.currency)} returned`);
-      await Promise.all([mutate(key(bookingId)), mutate(`/api/admin/bookings/${bookingId}`)]);
+      await Promise.all(moneyKeys(bookingId).map((path) => mutate(path)));
       onOpenChange(false);
     } catch (e) {
       setError((e as Error).message);
@@ -476,14 +690,25 @@ function SettleDepositDialog({ bookingId, payment, open, onOpenChange }: { booki
     }
   }
 
-  const how = payment.method === 'CASH' ? 'Hand the cash back to the guest.' : payment.status === 'AUTHORIZED' ? 'The hold is released; only what you keep is charged.' : 'The rest is refunded to the card.';
+  const how =
+    payment.method === 'CASH'
+      ? 'Hand the cash back to the guest.'
+      : payment.method === 'EXTERNAL_CARD'
+        ? 'Refund the rest on the hotel’s terminal; HotelOne records it.'
+        : payment.method === 'OTHER'
+          ? 'Give the rest back the way it was paid; HotelOne records it.'
+          : payment.status === 'AUTHORIZED'
+            ? 'The hold is released; only what you keep is charged.'
+            : 'The rest is refunded to the card.';
+  const where =
+    payment.status === 'AUTHORIZED' ? 'held on the card' : payment.method === 'CASH' ? 'in cash' : payment.method === 'EXTERNAL_CARD' ? 'charged on the hotel’s terminal' : payment.method === 'OTHER' ? 'paid another way' : 'charged to the card';
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Return the security deposit</DialogTitle>
           <DialogDescription>
-            {fmt(held, payment.currency)} {payment.status === 'AUTHORIZED' ? 'held on the card' : payment.method === 'CASH' ? 'in cash' : 'charged to the card'}. {how}
+            {fmt(held, payment.currency)} {where}. {how}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -515,7 +740,8 @@ function SettleDepositDialog({ bookingId, payment, open, onOpenChange }: { booki
 /** One line of the desk ledger. */
 function LedgerRow({ p, onSettle, onRefundCash, canRefund }: { p: DeskPaymentRow; onSettle: () => void; onRefundCash: () => void; canRefund: boolean }) {
   const openDeposit = p.kind === 'SECURITY_DEPOSIT' && !p.settledAt && ['AUTHORIZED', 'SUCCEEDED', 'PARTIALLY_REFUNDED'].includes(p.status);
-  const cashBack = canRefund && p.method === 'CASH' && p.kind === 'PAYMENT' && ['SUCCEEDED', 'PARTIALLY_REFUNDED'].includes(p.status);
+  // Cash and payments recorded at the desk are handed back at the desk too; cards are refunded from the Payment card.
+  const handBack = canRefund && isRecorded(p.method) && p.kind === 'PAYMENT' && ['SUCCEEDED', 'PARTIALLY_REFUNDED'].includes(p.status);
   return (
     <li className="flex flex-wrap items-start justify-between gap-2 rounded-lg bg-muted/60 px-3 py-2.5 text-sm">
       <div className="min-w-0">
@@ -541,9 +767,9 @@ function LedgerRow({ p, onSettle, onRefundCash, canRefund }: { p: DeskPaymentRow
           <Undo2 aria-hidden /> Return deposit…
         </Button>
       )}
-      {cashBack && (
+      {handBack && (
         <Button size="sm" variant="ghost" onClick={onRefundCash}>
-          Hand back cash
+          {p.method === 'CASH' ? 'Hand back cash' : 'Record money given back'}
         </Button>
       )}
     </li>
@@ -601,11 +827,12 @@ export function DeskPayments({ booking }: { booking: BookingSummary }) {
 
   async function refundCash(p: DeskPaymentRow) {
     const left = p.amount - p.amountRefunded;
-    if (!window.confirm(`Hand back ${fmt(left, p.currency)} in cash to ${booking.guest.name}?`)) return;
+    const cash = p.method === 'CASH';
+    if (!window.confirm(cash ? `Hand back ${fmt(left, p.currency)} in cash to ${booking.guest.name}?` : `Record ${fmt(left, p.currency)} given back to ${booking.guest.name} outside HotelOne (${p.methodLabel.toLowerCase()})?`)) return;
     try {
       await api(`/api/admin/desk-payments/${p.id}`, { method: 'POST', json: { action: 'refund_cash' } });
-      toast.success(`Recorded ${fmt(left, p.currency)} cash handed back`);
-      await Promise.all([mutate(key(booking.id)), mutate(`/api/admin/bookings/${booking.id}`)]);
+      toast.success(cash ? `Recorded ${fmt(left, p.currency)} cash handed back` : `Recorded ${fmt(left, p.currency)} given back`);
+      await Promise.all(moneyKeys(booking.id).map((path) => mutate(path)));
     } catch (e) {
       toast.error((e as Error).message);
     }

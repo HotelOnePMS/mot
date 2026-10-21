@@ -51,7 +51,7 @@ When the person paying isn't the guest checking in (a parent, a company, a frien
 
 ## Front desk payments
 
-Staff collect the balance and a security deposit at check-in (or any time in the stay) from the check-in dialog or the reservation page (*At the desk*). Every way of paying writes a `Payment` row with a `method`:
+Staff collect the balance and a security deposit at check-in (or any time in the stay) from the guided check-in or the reservation page (*At the desk*). Every way of paying writes a `Payment` row with a `method`:
 
 | Method | How | Stripe |
 | --- | --- | --- |
@@ -59,12 +59,28 @@ Staff collect the balance and a security deposit at check-in (or any time in the
 | `CARD_ENTRY` | Staff type the guest's card into Stripe's page (opened in a new tab). | A Checkout session on the hotel's account, 3D Secure requested (`any`). |
 | `VIRTUAL_CARD` | The OTA's virtual card (Booking.com VCC, Expedia EVC) typed into Stripe's page from the OTA extranet. | Same as above, 3D Secure left to the bank (no cardholder to answer it). |
 | `CASH` | A ledger entry: amount, cash handed over, change, who took it. | None. |
+| `EXTERNAL_CARD` | A card taken on the hotel's own terminal (not Stripe), recorded with the last four digits and the approval code. | None. |
+| `OTHER` | Paid another way (bank transfer, voucher, city ledger), recorded with a note saying how. | None. |
 
 - **Kinds:** `PAYMENT` goes toward the stay's balance (booking `paymentStatus` becomes `DEPOSIT_PAID` / `PAID`); `SECURITY_DEPOSIT` is kept out of the balance and the revenue figures. A reservation of several room types is paid on its lead line, like online payments.
 - **Security deposit** (*Settings → Front desk payments*): none, **Hold on the card** (manual capture; on a reader with `request_extended_authorization`, so lodging holds last up to 30 days; typed-in cards get 7 days unless `STRIPE_EXTENDED_AUTHORIZATION=1`), or **Charge and refund** (card or cash). At check-out, *Return deposit…* keeps part for incidentals (a note is required) and returns the rest: a hold is captured for that amount or released, a charge is refunded, cash is recorded as handed back.
 - **Webhook and polling:** desk PaymentIntents and Checkout sessions carry `metadata.deskPaymentId`. The webhook applies them (`payment_intent.*`, `checkout.session.*`), and the desk polls `/api/admin/desk-payments/:id` while the guest pays, so it works even before the webhook is set up. Both paths are idempotent.
 - **OTA cards:** card numbers and security codes are removed from OTA payloads before they are stored (`ChannelReservation.rawPayload`) or logged. What the desk needs is kept in `ChannelReservation.paymentCard`: virtual or guest card, brand, last four, expiry, and for a virtual card the date it can be charged from, until when, and its balance. The desk refuses to charge a virtual card before its activation date or above its balance. Sandbox channel bookings come with a test virtual card (charge it with `4242 4242 4242 4242` in test mode). Charging the card automatically, without staff typing it, would need HotelOne to hold card numbers (PCI DSS SAQ D, or a card vault), which it deliberately doesn't.
+- **Hold or charge:** a card deposit follows the hotel's setting (no setting means a hold), and staff can switch it to a hold or a charge in the dialog. Suggested amounts are 50, 100 and the hotel's own amount, or a custom one. A typed-in card can also be paid by the guest on their phone: the dialog shows a QR code of Stripe's page.
+- **Check-out needs a zero balance.** Every booking carries a signed `balance` (room, taxes and fees less everything paid online or at the desk; a held security deposit doesn't count). Check-out is refused while it is above zero, on every path (the dialogs, the API, the agent), so money taken outside Stripe must be recorded as `EXTERNAL_CARD` or `OTHER` first. A credit owed to the guest doesn't block check-out. The guided check-in migration records a payment for bookings already marked paid at the desk, so they aren't blocked.
 - **Permissions:** `payments.collect` (admin, owner, manager, front desk) takes payments and deposits; handing back cash paid toward the stay needs `payments.refund`; deposit settings and readers need `payments.manage`.
+
+### Guided check-in
+
+*Check in* walks the desk through five steps, and nothing is saved until the last one; then everything is saved in the same transaction as the check-in (`src/server/services/checkin.ts`):
+
+1. **Photo ID.** Scan the barcode on the back of a North American driver's licence (AAMVA PDF417) or the machine-readable lines of a passport or ID card (ICAO 9303, check digits verified) with a keyboard-style desk scanner, photograph the barcode (browsers with `BarcodeDetector`), or type the details. Staff take a photo of the front and confirm the ID belongs to the guest. An expired ID, a different name or a guest under 18 needs a reason. Parsing happens on the device (`src/lib/id-scan.ts`).
+2. **Room**, from the free rooms of the booked type.
+3. **Folio**: room, taxes and fees, payments and refunds, the balance, and security deposits listed apart. Staff can take the balance here; it isn't required to check in, only to check out. The folio is also on the reservation page (`src/server/services/folio.ts`).
+4. **Security deposit**, through the desk payments dialog (card reader, the guest's card online as a hold, cash, the hotel's own terminal), or no deposit (with a reason when the hotel asks for one; logged).
+5. **Registration card.** The server writes the card from the database (hotel, guest, stay, room, amounts, deposit, ID type and last four, check-out time, house terms) and hashes it; the guest reads it on the desk's screen, agrees and signs by drawing or typing their name. If anything on the card changed before signing (a payment, the room), the check-in is refused and the guest signs the new card.
+
+What is kept: the ID's type, issuing country, last four characters, expiry and name in clear; the full number, date of birth and address sealed with the vault, and the front photo sealed in its own table (staff with `guestId.view` can open them; every view is logged). Both sealed parts are deleted `CARD_AUTH_ID_PHOTO_DAYS` after check-out unless a dispute is open. The registration card keeps its exact text, version, hash, signature, IP and device, and who witnessed it. A recorded ID covers "ID matches guest" on the check-in checklist, a signed card covers "Registration signed", and both go into dispute evidence. Nothing about the ID goes into the booking's status history, which the guest can read. A guest checked in another way (the agent, a walk-in) can have the ID and card added afterwards from the reservation page.
 
 ### Setting up a card reader
 
