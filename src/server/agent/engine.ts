@@ -12,7 +12,8 @@ import { PRODUCT_NAME } from '@/config/product';
 import { prisma } from '@/lib/prisma';
 import type { AgentBlock, AgentContextState, AgentEvent } from '@/lib/agent/blocks';
 import type { Actor } from '../authz';
-import { assertPropertyAccess, can } from '../authz';
+import { can } from '../authz';
+import { forbidden } from '../errors';
 import { todayAt } from '../services/hotels';
 import { recordAudit } from '../services/audit';
 import { enqueueTask, getConnection } from '../services/bridge';
@@ -21,6 +22,7 @@ import { bookingInclude, toBookingSummary } from '../services/mappers';
 import { looksLikeQuestion } from '../skills';
 import { runWithLLM } from './llm';
 import { parseMessage, WRITE_KINDS, type Intent } from './nlu';
+import { agentActor } from './policy';
 import { claimPlan, signPlan, verifyPlan, type PlanStep } from './plan';
 import {
   answerFromSkills,
@@ -46,6 +48,8 @@ export interface AgentRunInput {
   memory: AgentContextState;
   /** Earlier messages in this conversation, oldest first ("save that as a shortcut"). */
   recent?: string[];
+  /** Where the command came from when it isn't the console, for the audit log. */
+  channel?: 'whatsapp';
 }
 
 /** What a run gathers while it works through intents: memory, planned changes, and whether anything needed a person. */
@@ -127,14 +131,17 @@ async function* finishPlan(
   return undefined;
 }
 
+const NO_AGENT = 'Your role can’t use the agent at this hotel. The owner can turn it on under Agent access.';
+
 const onlyUnknown = (intents: Intent[]) => intents.length > 0 && intents.every((i) => i.kind === 'unknown');
 
-export async function* runAgent(input: AgentRunInput): AsyncGenerator<AgentEvent> {
+export async function* runAgent(request: AgentRunInput): AsyncGenerator<AgentEvent> {
   const started = Date.now();
+  // The hotel's agent access applies to everything below (tools, services, the plan this run signs).
+  const input: AgentRunInput = { ...request, actor: await agentActor(request.actor, request.propertyId) };
   const { actor, propertyId } = input;
-  assertPropertyAccess(actor, propertyId);
   if (!can(actor, 'agent.use')) {
-    yield { type: 'error', message: 'The agent is available to front desk, managers and owners.' };
+    yield { type: 'error', message: NO_AGENT };
     return;
   }
   const property = await prisma.property.findUnique({ where: { id: propertyId }, select: { id: true, name: true, setupPath: true } });
@@ -146,7 +153,8 @@ export async function* runAgent(input: AgentRunInput): AsyncGenerator<AgentEvent
   const today = await todayAt(propertyId);
   const ctx: ToolCtx = { actor, propertyId, propertyName: property.name, today, memory: { ...input.memory }, message };
   const bridged = property.setupPath === 'BRIDGE';
-  const audit = (summary: string, data: Record<string, unknown>) => recordAudit({ actor, source: 'agent' }, propertyId, 'COMMAND', summary, { message: message.slice(0, 300), ...data });
+  const via = input.channel ? { channel: input.channel } : {};
+  const audit = (summary: string, data: Record<string, unknown>) => recordAudit({ actor, source: 'agent' }, propertyId, 'COMMAND', summary, { message: message.slice(0, 300), ...via, ...data });
   const done = (engine: 'deterministic' | 'llm' = 'deterministic'): AgentEvent => ({ type: 'done', engine, ms: Date.now() - started });
 
   // --- Skills: save, list and run shortcuts --------------------------------
@@ -387,9 +395,11 @@ export interface ConfirmResult {
 }
 
 /** Execute a signed plan after the person confirms it. */
-export async function confirmPlan(actor: Actor, token: string): Promise<ConfirmResult> {
-  const plan = verifyPlan(token, actor.userId);
-  assertPropertyAccess(actor, plan.pid);
+export async function confirmPlan(person: Actor, token: string, opts: { channel?: 'whatsapp' } = {}): Promise<ConfirmResult> {
+  const plan = verifyPlan(token, person.userId);
+  // Access is checked again now: a capability the owner turned off since the plan was made stays off.
+  const actor = await agentActor(person, plan.pid);
+  if (!can(actor, 'agent.use')) throw forbidden(NO_AGENT);
   if (!(await claimPlan(plan.pid, plan.nonce, actor.userId))) {
     return { blocks: [{ type: 'result', ok: true, title: 'Already confirmed', lines: ['This plan was already confirmed, so nothing ran twice.'] }], context: {} };
   }
@@ -416,6 +426,7 @@ export async function confirmPlan(actor: Actor, token: string): Promise<ConfirmR
   for (const t of bridged) if (t.mode === 'MCP') await runMcpTaskInline(t.id, 15_000);
   await recordAudit(ctx, plan.pid, 'PLAN_EXECUTED', `${failed ? 'Partly carried out' : 'Carried out'}: ${plan.title}`, {
     ...(!failed && plan.shape ? { okShape: plan.shape.shape } : {}),
+    ...(opts.channel ? { channel: opts.channel } : {}),
     nonce: plan.nonce,
     steps: plan.steps.map((s) => s.summary),
     ok: !failed,

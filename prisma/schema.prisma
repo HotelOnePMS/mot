@@ -51,6 +51,8 @@ model User {
   agentAuditLogs     AgentAuditLog[]
   // Channel agent chat sessions started by this user
   channelAgentConversations ChannelAgentConversation[]
+  // The staff agent on WhatsApp: this person's linked number and chat
+  whatsAppLink       StaffWhatsAppLink?
   // Pending password-reset links (only a hash of each token is stored)
 
   @@unique([ssoIssuer, ssoSubject])
@@ -120,6 +122,7 @@ model Property {
   bridgeTasks            BridgeTask[]
   agentSkills            AgentSkill[]
   agentApiKeys           AgentApiKey[]
+  agentPolicy            AgentPolicy?
   charges                PropertyCharge[]
   nightAudits            NightAudit[]
   // OTA connections (Expedia, Booking.com)
@@ -332,6 +335,80 @@ model ExecutedPlan {
   createdAt  DateTime @default(now())
 
   @@map("executed_plans")
+}
+
+/// A staff member's WhatsApp number for the staff agent, and that chat's state.
+/// The number is set only once the person sent their link code from it.
+model StaffWhatsAppLink {
+  userId         String    @id
+  /// WhatsApp ID as Meta sends it: country code and number, digits only.
+  number         String?   @unique
+  linkedAt       DateTime?
+  /// SHA-256 of a pending link code (shown in the console, sent from the phone).
+  codeHash       String?   @unique
+  codeExpiresAt  DateTime?
+  /// The person's sessionVersion when linked: "sign out everywhere" also ends the WhatsApp link.
+  sessionVersion Int       @default(0)
+  /// The hotel the chat works on.
+  propertyId     String?
+  /// Agent conversation memory ("them", "that room") and the last messages ("save that as a shortcut").
+  memory         Json?
+  recent         String[]  @default([])
+  /// A signed plan waiting for the person to reply YES.
+  pendingPlan    String?
+  /// Commands offered as numbered replies in the last message.
+  choices        String[]  @default([])
+  /// The person's last message: WhatsApp allows free-form messages for 24 hours after it, templates after that.
+  lastInboundAt  DateTime?
+  /// The person turned the always-on agent's alerts off ("ALERTS OFF").
+  alertsOff      Boolean   @default(false)
+  /// The last alert sent, so "details" can show it again after a template message (outside the 24-hour window).
+  lastAlert      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("staff_whatsapp_links")
+}
+
+/// What each role may do through the agent at a hotel, and which alerts it gets (src/server/agent/policy.ts).
+/// Stored as differences from the role defaults, so a new permission's default reaches every hotel.
+model AgentPolicy {
+  propertyId  String   @id
+  /// { [role]: { grant?: Permission[], revoke?: Permission[], alerts?: NoticeKind[] } }
+  roles       Json     @default("{}")
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@map("agent_policies")
+}
+
+/// Something the always-on agent told staff about (src/server/agent/watch.ts), so each is sent once.
+model AgentNotice {
+  id         String   @id @default(cuid())
+  propertyId String
+  /// Stable per situation, e.g. "frontdesk:overdue:2026-10-20" or "guestRequest:<id>".
+  key        String
+  kind       String
+  title      String
+  /// Users it went to.
+  sentTo     String[] @default([])
+  createdAt  DateTime @default(now())
+
+  @@unique([propertyId, key])
+  @@index([createdAt])
+  @@map("agent_notices")
+}
+
+/// WhatsApp message ids already handled (Meta can deliver a webhook more than once).
+model WhatsAppInboundMessage {
+  id        String   @id
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("whatsapp_inbound_messages")
 }
 
 model AgentAuditLog {

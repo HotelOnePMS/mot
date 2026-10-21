@@ -17,6 +17,7 @@ import { recordAudit } from '../services/audit';
 import { bookingInclude, toBookingSummary } from '../services/mappers';
 import { buildEvidenceSummary, renderEvidenceText, stripeEvidenceFields, type EvidenceInput, type EvidenceSummary } from './evidence';
 import { paymentLines, restorePaymentStatus } from './record';
+import { watchSoon } from '../agent/watch';
 
 const OPEN_STATUSES = ['needs_response', 'warning_needs_response'];
 
@@ -170,6 +171,8 @@ export async function recordDispute(dispute: Stripe.Dispute): Promise<void> {
   if (OPEN_STATUSES.includes(dispute.status) && !record.evidenceSubmittedAt) await refreshEvidence(record.id);
   if (closed) await restorePaymentStatus(payment.bookingId, dispute.status === 'lost');
   if (!record.ownerNotifiedAt && !closed) await notifyOwner(record.id);
+  // And on WhatsApp, for owners linked there (urgent: sent at night too).
+  if (!before && !closed) watchSoon(record.propertyId);
 }
 
 async function notifyOwner(disputeId: string): Promise<void> {

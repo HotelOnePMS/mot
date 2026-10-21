@@ -351,12 +351,23 @@ export async function sendGuestRequestAlert(data: GuestRequestAlertData): Promis
 export interface AccountEmailData {
   to: string;
   name: string;
-  kind: 'RESET_PASSWORD' | 'VERIFY_EMAIL';
-  /** Absolute link with the single-use token. */
+  kind: 'RESET_PASSWORD' | 'VERIFY_EMAIL' | 'WHATSAPP_LINKED';
+  /** Absolute link with the single-use token (for WHATSAPP_LINKED, the account security page). */
   url: string;
+  /** WHATSAPP_LINKED: the masked number that was linked. */
+  detail?: string;
 }
 
 function accountContent(data: AccountEmailData) {
+  if (data.kind === 'WHATSAPP_LINKED') {
+    return {
+      subject: `WhatsApp linked to your ${PRODUCT_NAME} account`,
+      heading: 'WhatsApp linked',
+      body: `The WhatsApp number ${data.detail ?? ''} can now use the hotel agent as you: look things up and propose changes you confirm in the chat.`,
+      action: 'Review account security',
+      footer: 'Wasn’t you? Unlink it on the account security page and sign out everywhere.',
+    };
+  }
   return data.kind === 'RESET_PASSWORD'
     ? {
         subject: `Reset your ${PRODUCT_NAME} password`,

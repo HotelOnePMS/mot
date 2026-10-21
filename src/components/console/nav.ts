@@ -8,6 +8,7 @@ import {
   ChartLine,
   ConciergeBell,
   History,
+  KeyRound,
   LayoutDashboard,
   Settings2,
   ShieldAlert,
@@ -70,6 +71,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { label: 'Rooms', href: '/admin/room-types', icon: BedDouble, paths: ALL },
       { label: 'Skills', href: '/admin/skills', icon: Zap, paths: ALL },
+      { label: 'Agent access', href: '/admin/agent-access', icon: KeyRound, paths: ['FULL', 'BRIDGE'] },
       { label: 'Properties', href: '/admin/properties', icon: Building2, paths: ALL },
       { label: TERMS.assistants, href: '/admin/assistants', icon: Bot, paths: ALL },
       { label: 'Team', href: '/admin/users', icon: Users, paths: ALL },

@@ -9,7 +9,7 @@ import { prisma } from '@/lib/prisma';
 import type { AgentBlock, AgentContextState, QuickAction, RoomOption } from '@/lib/agent/blocks';
 import type { BookingStatus, BookingSummary, ISODate, OccupancyDay } from '@/lib/dto';
 import { money, PAYMENT_STATUS } from '@/lib/status';
-import { can } from '../authz';
+import { can, type Permission } from '../authz';
 import { addDaysISO, diffDays, eachNight, formatDay, toISODate } from '../dates';
 import { DomainError } from '../errors';
 import type { OpContext } from '../services/audit';
@@ -224,8 +224,31 @@ async function pickGuest(ctx: ToolCtx, purpose: 'checkIn' | 'checkOut'): Promise
 // Read tools
 // ---------------------------------------------------------------------------
 
+/**
+ * What each look-up needs, the same permissions the classic screens use, so
+ * the agent shows no one more than those screens would (and the hotel's
+ * agent access can widen or narrow it per role).
+ */
+const READ_PERMISSION: Partial<Record<Intent['kind'], { perm: Permission; denied: string }>> = {
+  overview: { perm: 'frontdesk.view', denied: 'Your role can’t see the front desk overview.' },
+  arrivals: { perm: 'frontdesk.view', denied: 'Your role can’t see arrivals.' },
+  departures: { perm: 'frontdesk.view', denied: 'Your role can’t see departures.' },
+  inHouse: { perm: 'frontdesk.view', denied: 'Your role can’t see who’s in house.' },
+  atDesk: { perm: 'frontdesk.view', denied: 'Your role can’t look up guests at the desk.' },
+  find: { perm: 'booking.view', denied: 'Your role can’t look up reservations.' },
+  suggestRooms: { perm: 'booking.view', denied: 'Your role can’t look up reservations.' },
+  availability: { perm: 'rates.view', denied: 'Your role can’t see availability and prices.' },
+  occupancy: { perm: 'analytics.view', denied: 'Occupancy and revenue are for managers and owners.' },
+  weekendForecast: { perm: 'analytics.view', denied: 'Forecasts are for managers and owners.' },
+  rooms: { perm: 'room.view', denied: 'Your role can’t see the room board.' },
+  housekeeping: { perm: 'housekeeping.view', denied: 'Your role can’t see housekeeping.' },
+  activity: { perm: 'activity.view', denied: 'The activity log is visible to managers and owners.' },
+};
+
 export async function runRead(ctx: ToolCtx, intent: Intent): Promise<ReadOutput> {
   const { actor, propertyId, today } = ctx;
+  const need = READ_PERMISSION[intent.kind];
+  if (need && !can(actor, need.perm)) return { blocks: [{ type: 'error', text: `${need.denied} The owner can change this under Agent access.` }] };
   switch (intent.kind) {
     case 'overview': {
       const s = await frontDeskSummary(actor, propertyId, today);
@@ -411,7 +434,6 @@ export async function runRead(ctx: ToolCtx, intent: Intent): Promise<ReadOutput>
       return { blocks: [{ type: 'housekeeping', title: 'Housekeeping today', tasks, team }] };
     }
     case 'activity': {
-      if (!can(actor, 'activity.view')) return { blocks: [{ type: 'error', text: 'The activity log is visible to managers and owners.' }] };
       const items = await listActivity(propertyId, 15);
       return { blocks: [{ type: 'activity', items }, { type: 'navigate', label: 'Open full activity log', href: '/admin/activity' }] };
     }

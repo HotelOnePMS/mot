@@ -10,6 +10,13 @@ import { isDemoEmail } from '@/config/product';
 import { siteUrl } from '../concierge/urls';
 import { sendGuestRequestAlert } from '../email';
 import { logError } from '@/server/log';
+import { runWatch } from '../agent/watch';
+
+/** The always-on agent's WhatsApp alert for this message (when anyone at the hotel is linked). */
+async function watchRequest(requestId: string): Promise<void> {
+  const r = await prisma.guestRequest.findUnique({ where: { id: requestId }, select: { propertyId: true } });
+  if (r) await runWatch({ propertyId: r.propertyId }).catch((e) => logError('requests', 'WhatsApp alert failed for', requestId, e));
+}
 
 const CHANNEL: Record<string, string> = { PHONE: 'Phone call', WHATSAPP: 'WhatsApp', VOICE: 'Booking page', AGENT: 'AI assistant' };
 const email = z.string().email();
@@ -52,9 +59,12 @@ async function deliver(requestId: string) {
   });
 }
 
-/** Email the hotel's team about a new message, after the response is sent (never delays the caller). */
+/** Email the hotel's team about a new message (and tell staff on WhatsApp), after the response is sent (never delays the caller). */
 export function alertTeam(requestId: string): void {
-  const run = () => deliver(requestId).catch((e) => logError('requests', 'alert failed for', requestId, e));
+  const run = () =>
+    deliver(requestId)
+      .catch((e) => logError('requests', 'alert failed for', requestId, e))
+      .then(() => watchRequest(requestId));
   try {
     after(run);
   } catch {
