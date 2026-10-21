@@ -251,6 +251,9 @@ describe('deposit: hold or charge', () => {
     let [params] = create.mock.calls.at(-1) as unknown as [Record<string, any>];
     expect(params.payment_intent_data.capture_method).toBe('manual');
     expect(params.line_items[0].price_data.product_data.description).toMatch(/released at check-out/);
+    // Whoever pays (the guest on their phone from the QR code, or staff) lands on a page without booking details.
+    expect(params.success_url).toBe('https://hotelone.site/pay/done?for=hold');
+    expect(params.cancel_url).toBe('https://hotelone.site/pay/done?cancelled=1');
     const audit = await prisma.agentAuditLog.findFirstOrThrow({ where: { propertyId: h.property.id, action: 'PAYMENT_CARD_ENTRY' } });
     expect(audit.detail).toMatch(/security deposit hold/);
 
@@ -258,6 +261,7 @@ describe('deposit: hold or charge', () => {
     [params] = create.mock.calls.at(-1) as unknown as [Record<string, any>];
     expect(params.payment_intent_data.capture_method).toBe('automatic');
     expect(params.line_items[0].price_data.product_data.description).toMatch(/Refunded at check-out/);
+    expect(params.success_url).toBe('https://hotelone.site/pay/done?for=deposit');
   });
 });
 

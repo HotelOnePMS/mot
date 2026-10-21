@@ -473,7 +473,9 @@ export async function startCardEntry(op: OpContext, bookingId: string, input: { 
   const payment = await prisma.payment.create({
     data: { bookingId: ctx.lead.id, propertyId: ctx.property.id, method, kind: input.kind, status: 'PENDING', amount: fromCents(amountCents), currency: ctx.booking.currency.toLowerCase(), recordedById: op.actor.userId },
   });
-  const back = `${input.siteUrl}/admin/bookings/${ctx.booking.id}?deskPayment=${payment.id}`;
+  // Whoever paid (staff in a new tab, or the guest on their phone from the QR code) lands on a page without booking details;
+  // the desk's own screen follows the payment by polling and the webhook.
+  const done = `${input.siteUrl}/pay/done?for=${input.kind === 'PAYMENT' ? 'payment' : hold ? 'hold' : 'deposit'}`;
   const metadata = { deskPaymentId: payment.id, bookingId: ctx.lead.id, propertyId: ctx.property.id, kind: input.kind };
   const fee = input.kind === 'PAYMENT' ? platformFeeCents(amountCents, platformFeePercent()) : 0;
   // The guest may pay on their own phone: say what a deposit is.
@@ -514,8 +516,8 @@ export async function startCardEntry(op: OpContext, bookingId: string, input: { 
         },
         metadata,
         expires_at: Math.floor(Date.now() / 1000) + CHECKOUT_SESSION_SECONDS,
-        success_url: back,
-        cancel_url: back,
+        success_url: done,
+        cancel_url: `${input.siteUrl}/pay/done?cancelled=1`,
       },
       { ...accountOpts(ctx.property), idempotencyKey: `desk-checkout-${payment.id}` }
     );
