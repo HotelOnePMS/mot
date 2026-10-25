@@ -15,6 +15,7 @@ import { sendDisputeAlert } from '../email';
 import { publicSiteUrl } from '../public-url';
 import { recordAudit } from '../services/audit';
 import { bookingInclude, toBookingSummary } from '../services/mappers';
+import { cardBrandLabel, countryName, ID_TYPE_LABEL, type CardAuthCheck, type IdType } from '@/lib/card-authorization';
 import { buildEvidenceSummary, renderEvidenceText, stripeEvidenceFields, type EvidenceInput, type EvidenceSummary } from './evidence';
 import { paymentLines, restorePaymentStatus } from './record';
 import { watchSoon } from '../agent/watch';
@@ -34,15 +35,47 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
       policyAcceptance: true,
       checklist: true,
       statusHistory: { orderBy: { createdAt: 'asc' } },
+      // Someone else paid: the cardholder's signed authorizations (the ID photo itself stays with the hotel).
+      cardAuthorizations: {
+        where: { status: { in: ['SIGNED', 'VERIFIED'] } },
+        orderBy: { signedAt: 'asc' },
+        select: {
+          signedAt: true,
+          signerName: true,
+          signerEmail: true,
+          signerPhone: true,
+          billingAddress: true,
+          signerCardBrand: true,
+          signerCardLast4: true,
+          cardLast4: true,
+          idType: true,
+          idCountry: true,
+          idLast4: true,
+          signatureMethod: true,
+          guestNames: true,
+          checks: true,
+          signedIp: true,
+          signedUserAgent: true,
+          status: true,
+          reviewedAt: true,
+          reviewedById: true,
+          textVersion: true,
+          textHash: true,
+          documentHash: true,
+          text: true,
+          idPhoto: { select: { authorizationId: true } },
+        },
+      },
     },
   });
   if (!booking) return null;
   const summary = toBookingSummary(booking);
   // One payment covers every room type of a reservation: the evidence describes them all.
   const lines = booking.groupCode ? await paymentLines(booking) : null;
-  const staffIds = booking.checklist
-    ? [booking.checklist.idMatchedById, booking.checklist.cardShownById, booking.checklist.registrationSignedById].filter((id): id is string => !!id)
-    : [];
+  const staffIds = [
+    ...(booking.checklist ? [booking.checklist.idMatchedById, booking.checklist.cardShownById, booking.checklist.registrationSignedById] : []),
+    ...booking.cardAuthorizations.map((a) => a.reviewedById),
+  ].filter((id): id is string => !!id);
   const staff = staffIds.length ? await prisma.user.findMany({ where: { id: { in: staffIds } }, select: { id: true, firstName: true, lastName: true } }) : [];
   const nameOf = (id: string | null) => {
     const u = staff.find((s) => s.id === id);
@@ -103,6 +136,30 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
           { item: CHECKLIST_LABELS.registrationSigned, at: c.registrationSignedAt?.toISOString() ?? null, by: nameOf(c.registrationSignedById) },
         ]
       : [],
+    authorizations: booking.cardAuthorizations.map((a) => {
+      const addr = a.billingAddress as { line1?: string; city?: string; postalCode?: string; country?: string } | null;
+      return {
+        signedAt: a.signedAt?.toISOString() ?? '',
+        signerName: a.signerName ?? '',
+        email: a.signerEmail,
+        phone: a.signerPhone,
+        billingAddress: addr ? [addr.line1, [addr.city, addr.postalCode].filter(Boolean).join(' '), addr.country ? countryName(addr.country) : null].filter(Boolean).join(', ') : null,
+        card: `${cardBrandLabel(a.signerCardBrand)} ending ${a.signerCardLast4 ?? '????'}`,
+        cardMatchesPayment: !!a.cardLast4 && a.cardLast4 === a.signerCardLast4,
+        idDocument: `${ID_TYPE_LABEL[a.idType as IdType] ?? a.idType ?? 'ID'}${a.idCountry ? ` issued in ${countryName(a.idCountry)}` : ''}${a.idLast4 ? `, number ending ${a.idLast4}` : ''}`,
+        idPhotoKept: !!a.idPhoto,
+        signatureMethod: a.signatureMethod,
+        guestNames: a.guestNames,
+        checks: ((a.checks as unknown as CardAuthCheck[] | null) ?? []).map((c) => ({ label: c.label, result: c.result })),
+        ip: a.signedIp,
+        userAgent: a.signedUserAgent,
+        review: a.status === 'VERIFIED' && a.reviewedAt ? `ID checked and verified by ${nameOf(a.reviewedById) ?? 'staff'} on ${a.reviewedAt.toISOString().replace('T', ' ').replace(/:\d{2}\.\d+Z$/, ' UTC')}` : 'Signed; not yet reviewed by staff',
+        textVersion: a.textVersion,
+        textHash: a.textHash,
+        documentHash: a.documentHash,
+        text: a.text,
+      };
+    }),
     riskFlags: summary.riskFlags,
     history: booking.statusHistory.map((h) => ({ status: h.status, notes: h.notes, at: h.createdAt.toISOString() })),
     dispute,

@@ -107,6 +107,7 @@ model Property {
   bookings               Booking[]
   payments               Payment[]
   disputes               Dispute[]
+  cardAuthorizations     CardAuthorization[]
   photos                 PropertyPhoto[]
   roomTypes              RoomType[]
   rooms                  Room[]
@@ -251,6 +252,7 @@ model Booking {
   disputes                Dispute[]
   policyAcceptance        BookingPolicyAcceptance?
   checklist               BookingChecklist?
+  cardAuthorizations      CardAuthorization[]
   statusHistory           BookingStatusHistory[]
   channelReservation      ChannelReservation?
   property                Property                 @relation(fields: [propertyId], references: [id])
@@ -1053,6 +1055,94 @@ model BookingChecklist {
   booking                Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
   @@map("booking_checklists")
+}
+
+/// Third-party payment: the cardholder's signed authorization for someone else's stay. Staff send a link
+/// (email, or copied into a text) or open it on the desk's device; the cardholder enters their details, the
+/// card's last four digits, their photo ID and a digital signature. Kept as dispute evidence.
+model CardAuthorization {
+  id                String                    @id @default(cuid())
+  /// The booking it covers (the lead line when several room types were booked together).
+  bookingId         String
+  propertyId        String
+  /// SHA-256 of the link's token. The token is shown once; a new link replaces it.
+  tokenHash         String                    @unique
+  /// PENDING | SIGNED | VERIFIED | REJECTED | CANCELLED | LOCKED. A PENDING link past expiresAt reads as EXPIRED.
+  status            String                    @default("PENDING")
+  expiresAt         DateTime
+  // What staff asked for.
+  cardholderName    String
+  cardholderEmail   String?
+  guestNames        String[]
+  /// The reservation's total when the request was made, in its currency.
+  amount            Decimal                   @db.Decimal(10, 2)
+  currency          String
+  coversIncidentals Boolean                   @default(false)
+  /// Most the card may be charged for incidentals (null: no limit set).
+  incidentalsLimit  Decimal?                  @db.Decimal(10, 2)
+  /// The card that paid online, if any: the cardholder's digits must match it.
+  paymentId         String?
+  cardBrand         String?
+  cardLast4         String?
+  requestedById     String
+  emailedAt         DateTime?
+  /// Card digits that didn't match the card that paid; the link locks after 5.
+  failedAttempts    Int                       @default(0)
+  // What the cardholder signed.
+  signerName        String?
+  signerEmail       String?
+  signerPhone       String?
+  /// { line1, city, postalCode, country }
+  billingAddress    Json?
+  signerCardBrand   String?
+  signerCardLast4   String?
+  /// PASSPORT | DRIVERS_LICENSE | NATIONAL_ID | OTHER
+  idType            String?
+  idCountry         String?
+  /// Last four characters of the ID number (never the whole number).
+  idLast4           String?
+  /// DRAWN (signatureImage is a PNG data URL) | TYPED (the signer's typed name)
+  signatureMethod   String?
+  signatureImage    String?
+  textVersion       String?
+  /// The authorization wording the cardholder agreed to, exactly as shown.
+  text              String?
+  textHash          String?
+  /// SHA-256 over everything signed (wording, details, ID photo, signature), so later changes would show.
+  documentHash      String?
+  /// How the cardholder's details matched the card and the request (src/lib/card-authorization.ts).
+  checks            Json?
+  signedAt          DateTime?
+  signedIp          String?
+  signedUserAgent   String?
+  reviewedAt        DateTime?
+  reviewedById      String?
+  reviewNote        String?
+  cancelledAt       DateTime?
+  idPhotoPurgedAt   DateTime?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+  idPhoto           CardAuthorizationIdPhoto?
+  booking           Booking                   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  property          Property                  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([propertyId, createdAt])
+  @@map("card_authorizations")
+}
+
+/// The cardholder's ID photo, sealed with the vault (AES-256-GCM), apart from the authorization so it is only
+/// read when staff open it. Deleted after the retention period (CARD_AUTH_ID_PHOTO_DAYS after check-out).
+model CardAuthorizationIdPhoto {
+  authorizationId String            @id
+  mime            String
+  /// SHA-256 of the image bytes (also part of the document hash).
+  sha256          String
+  cipher          String
+  createdAt       DateTime          @default(now())
+  authorization   CardAuthorization @relation(fields: [authorizationId], references: [id], onDelete: Cascade)
+
+  @@map("card_authorization_id_photos")
 }
 
 /// Stripe webhook events already handled, so redeliveries are ignored (idempotency).

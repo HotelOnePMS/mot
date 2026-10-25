@@ -41,9 +41,34 @@ export interface EvidenceInput {
   /** When and where the guest was checked in, from the booking history. */
   stay: { checkedInAt: string | null; roomNumber: string | null; checkedOutAt: string | null };
   checklist: { item: string; at: string | null; by: string | null }[];
+  /** Signed cardholder authorizations (someone else paid for the stay). */
+  authorizations?: AuthorizationEvidence[];
   riskFlags: string[];
   history: { status: string; notes: string | null; at: string }[];
   dispute: { stripeId: string; reason: string | null; amount: number; currency: string };
+}
+
+export interface AuthorizationEvidence {
+  signedAt: string;
+  signerName: string;
+  email: string | null;
+  phone: string | null;
+  billingAddress: string | null;
+  card: string;
+  /** The digits were checked against the card that paid online. */
+  cardMatchesPayment: boolean;
+  idDocument: string;
+  idPhotoKept: boolean;
+  signatureMethod: string | null;
+  guestNames: string[];
+  checks: { label: string; result: string }[];
+  ip: string | null;
+  userAgent: string | null;
+  review: string;
+  textVersion: string | null;
+  textHash: string | null;
+  documentHash: string | null;
+  text: string | null;
 }
 
 export interface EvidenceSection {
@@ -115,6 +140,28 @@ export function buildEvidenceSummary(i: EvidenceInput): EvidenceSummary {
         ])
       : ['No online payment is recorded for this booking.'],
   });
+
+  if (i.authorizations?.length) {
+    sections.push({
+      title: 'Cardholder authorization',
+      lines: i.authorizations.flatMap((a, n) => [
+        ...(i.authorizations!.length > 1 ? [`Authorization ${n + 1}:`] : []),
+        `Signed by the cardholder ${a.signerName} on ${when(a.signedAt)} from IP ${or(a.ip)}`,
+        `Device: ${or(a.userAgent)}`,
+        `Cardholder contact: ${or(a.email)}; phone ${or(a.phone)}`,
+        `Billing address given: ${or(a.billingAddress)}`,
+        `Card: ${a.card}${a.cardMatchesPayment ? ' (the last four digits entered match the card that paid)' : ''}`,
+        `Photo ID: ${a.idDocument}${a.idPhotoKept ? '; a photo of the ID is kept by the hotel' : ''}`,
+        `Signature: ${a.signatureMethod === 'DRAWN' ? 'drawn by hand on screen' : a.signatureMethod === 'TYPED' ? 'typed full name adopted as signature' : 'not recorded'}`,
+        `Guests the cardholder authorized: ${a.guestNames.join(', ')}`,
+        ...(a.checks.length ? [`Details compared: ${a.checks.map((c) => `${c.label}: ${c.result.toLowerCase()}`).join('; ')}`] : []),
+        `Hotel review: ${a.review}`,
+        `Record SHA-256: ${or(a.documentHash)} (wording version ${or(a.textVersion)}, SHA-256 ${or(a.textHash)})`,
+        'Wording the cardholder agreed to:',
+        or(a.text),
+      ]),
+    });
+  }
 
   sections.push({
     title: 'Cancellation and refund policy accepted',

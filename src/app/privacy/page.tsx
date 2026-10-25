@@ -53,6 +53,9 @@ const SECTIONS: LegalSection[] = [
           <strong>Payments:</strong> where card payment is enabled, card details are entered with our payment provider. We never see or store full card numbers.
         </li>
         <li>
+          <strong>Card authorizations:</strong> when someone pays for another person’s stay, the hotel can ask the cardholder to sign an authorization: their name and contact details, billing address, the last four digits of the card, the type, country and last four characters of their photo ID, a photo of that ID (stored encrypted), their signature, and the IP address and device they signed from.
+        </li>
+        <li>
           <strong>Technical data:</strong> IP address, device and browser information, and security logs.
         </li>
       </ul>
@@ -123,6 +126,7 @@ const SECTIONS: LegalSection[] = [
       <ul>
         <li>Account data: while the account is open, then deleted or anonymised within [90] days of closure.</li>
         <li>Booking and guest data: for as long as the hotel keeps it in the Service, and as the hotel instructs. Records we must keep for tax or accounting are kept for the legally required period.</li>
+        <li>Photos of ID taken for a card authorization: deleted 180 days after check-out (or the period the hotel’s deployment sets), unless a payment dispute about the stay is still open. The rest of the signed authorization is kept with the booking as a record.</li>
         <li>Voice transcripts and messages: [30–90] days unless the hotel sets a different period.</li>
         <li>Security and access logs: up to [12] months.</li>
         <li>Backups roll off within [35] days.</li>

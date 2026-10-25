@@ -61,6 +61,8 @@ export const PERMISSIONS = {
   'payments.refund': ['ADMIN', 'OWNER', 'MANAGER'],
   'disputes.view': ['ADMIN', 'OWNER', 'MANAGER'],
   'disputes.manage': ['ADMIN', 'OWNER'],
+  // Third-party payment: send the cardholder an authorization form, see what they signed (ID photo included), verify it.
+  'booking.cardAuth': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'room.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
   'room.status': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
   'room.outOfOrder': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
