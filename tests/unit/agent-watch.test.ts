@@ -49,6 +49,31 @@ describe('one message a round', () => {
     expect(m.summary).toBe('Message n1; 3 more');
   });
 
+  it('numbers on from an alert the person hasn’t read yet, and keeps its replies first', () => {
+    const unread = [choiceAt('p1', 'assign rooms'), choiceAt('p1', 'check out Smith')];
+    const m = roundMessage([{ hotel: harbor, brief: brief('p1', ['assign rooms', 'confirm Lee']), notices: [fix('n1', 'check out Jones')] }], null, 0, unread);
+    // The same fix at the same hotel keeps its number.
+    expect(m.text).toContain('Alert assign rooms (reply 1)');
+    expect(m.text).toContain('Alert confirm Lee (reply 3)');
+    expect(m.text).toContain('Reply *4* to: check out Jones');
+    expect(m.choices).toEqual([...unread, choiceAt('p1', 'confirm Lee'), choiceAt('p1', 'check out Jones')]);
+    // The template still describes only what's new.
+    expect(m.summary).toBe('your morning brief is ready; Title n1');
+  });
+
+  it('counts an unread alert’s replies towards the nine', () => {
+    const unread = Array.from({ length: 8 }, (_, i) => choiceAt('p1', `fix ${i}`));
+    const m = roundMessage([{ hotel: harbor, notices: [fix('n1', 'one'), fix('n2', 'two')] }], null, 0, unread);
+    expect(m.text).toContain('Reply *9* to: one');
+    expect(m.text).toContain('Send “two”');
+    expect(m.choices).toEqual([...unread, choiceAt('p1', 'one')]);
+
+    const full = roundMessage([{ hotel: harbor, brief: brief('p1', ['assign rooms']), notices: [fix('n1', 'one')] }], null, 0, [...unread, choiceAt('p1', 'fix 8')]);
+    expect(full.text).not.toMatch(/reply \d|Reply \*/);
+    expect(full.text).toContain('Send “one”');
+    expect(full.choices).toHaveLength(9);
+  });
+
   it('continues an alert’s numbers from the ones already used', () => {
     const m = alertMessage('Harbor Inn', [fix('n1', 'check out Smith')], null, 'p1', { numbered: 2 });
     expect(m.text).toContain('Reply *3* to: check out Smith');

@@ -16,10 +16,11 @@ import { BookingStatusBadge, PaymentBadge } from '@/components/hotel/badges';
 import { useAgentUI } from '../AgentUI';
 import { ActionButtons, BlockCard, BlockHeader, CountPill } from './core';
 
+/** A row’s buttons. Commands name a booking as "#CODE", which the agent always reads as a code (one without a digit would otherwise read as a name). */
 function rowActions(b: BookingSummary, variant: string, today: string): QuickAction[] {
   const arriving = (b.status === 'CONFIRMED' || b.status === 'PENDING') && b.checkIn <= today && b.checkOut > today;
-  if (variant === 'arrivals' && arriving) return [{ label: 'Check in', command: `check in ${b.code}`, tone: 'primary' }];
-  if ((variant === 'departures' || variant === 'inhouse') && b.status === 'CHECKED_IN') return [{ label: 'Check out', command: `check out ${b.code}` }];
+  if (variant === 'arrivals' && arriving) return [{ label: 'Check in', command: `check in #${b.code}`, tone: 'primary' }];
+  if ((variant === 'departures' || variant === 'inhouse') && b.status === 'CHECKED_IN') return [{ label: 'Check out', command: `check out #${b.code}` }];
   return [];
 }
 
@@ -42,7 +43,7 @@ export function BookingsBlock({ block }: { block: Extract<AgentBlock, { type: 'b
               booking={b}
               today={today}
               variant={block.variant === 'search' ? 'default' : block.variant}
-              onClick={() => send(`show reservation ${b.code}`)}
+              onClick={() => send(`show reservation #${b.code}`)}
               actions={<ActionButtons actions={rowActions(b, block.variant, today)} />}
               className={compact ? 'sm:flex-col sm:items-start' : undefined}
             />
@@ -213,7 +214,7 @@ export function RoomOptionsBlock({ block }: { block: Extract<AgentBlock, { type:
                 variant={i === 0 ? 'default' : 'outline'}
                 className="mt-3"
                 disabled={busy}
-                onClick={() => send(`assign room ${o.room.number} to ${block.bookingCode}`)}
+                onClick={() => send(`assign room ${o.room.number} to #${block.bookingCode}`)}
               >
                 {i === 0 ? `Use room ${o.room.number}` : `Use ${o.room.number}`}
               </Button>

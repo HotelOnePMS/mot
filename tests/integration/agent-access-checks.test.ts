@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { prisma } from '@/lib/prisma';
 import type { AgentBlock, AgentContextState } from '@/lib/agent/blocks';
-import { draftFrom, POLICY_ROLES, type AgentAccessUpdate } from '@/lib/agent/access';
+import { draftFrom, draftSwitches, POLICY_ROLES, updateFromDraft, type AgentAccessUpdate } from '@/lib/agent/access';
 import { confirmPlan, runAgent } from '@/server/agent/engine';
 import { accessView, agentActor, alertsFor, CAPABILITIES, DEFAULT_ALERTS, loadPolicy, saveAccess } from '@/server/agent/policy';
 import { resolveBooking } from '@/server/agent/resolve';
@@ -119,17 +119,27 @@ describe('agent access: booking changes', () => {
     expect(await status()).toBe('CANCELLED');
   });
 
-  it('gives booking changes only together with look-ups', async () => {
+  it('gives booking changes only together with look-ups, and both in one save from the page', async () => {
     const { pid, owner, person: housekeeper, guests } = await hotelWith('HOUSEKEEPER');
     const name = guests[0].guest.name;
 
     await saveAccess(owner, access(pid, (u) => Object.assign(u.capabilities.HOUSEKEEPER, { agent: true, checkin: true })));
     expect((await loadPolicy(pid)).HOUSEKEEPER?.granted).toEqual(['agent.use']);
-    const cell = (await accessView(owner, pid)).capabilities.find((c) => c.key === 'checkin')!.cells.HOUSEKEEPER;
-    expect(cell).toEqual({ on: false, byDefault: false, locked: 'Turn on “Look up guests and bookings” for housekeeping first.' });
     expect((await ask(housekeeper, pid, `check in ${name}`)).token).toBeUndefined();
+    const first = await prisma.agentAuditLog.findFirstOrThrow({ where: { propertyId: pid, action: 'AGENT_ACCESS' } });
 
-    await saveAccess(owner, access(pid, (u) => Object.assign(u.capabilities.HOUSEKEEPER, { agent: true, lookup: true, checkin: true })));
+    // On the page: check-in is locked until look-ups are turned on, then unlocks before anything is saved.
+    const view = await accessView(owner, pid);
+    const draft = draftFrom(view);
+    const cell = () => draftSwitches(view, draft).capabilities.find((c) => c.key === 'checkin')!.cells.HOUSEKEEPER;
+    expect(cell()).toMatchObject({ on: false, locked: 'Turn on “Look up guests and bookings” for housekeeping first.' });
+    draft.capabilities.HOUSEKEEPER.lookup = true;
+    expect(cell().locked).toBeUndefined();
+    draft.capabilities.HOUSEKEEPER.checkin = true;
+    await saveAccess(owner, { propertyId: pid, ...updateFromDraft(view, draft) });
+    const log = await prisma.agentAuditLog.findFirstOrThrow({ where: { propertyId: pid, action: 'AGENT_ACCESS', id: { not: first.id } } });
+    expect(JSON.parse(log.detail ?? '{}').changes).toEqual(['Look up guests and bookings: on for housekeeping', 'Check guests in and out: on for housekeeping']);
+
     const planned = await ask(housekeeper, pid, `check in ${name}`);
     expect(planned.token).toBeDefined();
     expect((await confirmPlan(housekeeper, planned.token!)).blocks[0]).toMatchObject({ type: 'result', ok: true });

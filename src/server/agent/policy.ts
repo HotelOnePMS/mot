@@ -15,7 +15,7 @@
  */
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
-import { ALERT_ROLES, NOTICE_INFO, NOTICE_KINDS, POLICY_ROLES, type AccessCell, type AgentAccessUpdate, type AgentAccessView, type AlertRole, type NoticeKind, type PolicyRole } from '@/lib/agent/access';
+import { ALERT_ROLES, NOTICE_INFO, NOTICE_KINDS, POLICY_ROLES, ROLE_WORDS, type AccessCell, type AgentAccessUpdate, type AgentAccessView, type AlertRole, type NoticeKind, type PolicyRole } from '@/lib/agent/access';
 import { assertPropertyAccess, can, PERMISSIONS, requirePermission, roleCan, type Actor, type Permission } from '../authz';
 import { notFound } from '../errors';
 import { recordAudit } from '../services/audit';
@@ -26,7 +26,7 @@ interface Capability {
   label: string;
   description: string;
   perms: Permission[];
-  /** Another capability this one needs to be any use: while that one is off, this one counts as off and its switch is locked. */
+  /** Another capability this one needs to be any use: while that one is off, this one counts as off and the page locks its switch. */
   needs?: string;
 }
 
@@ -148,8 +148,6 @@ export async function canUseWhatsAppAnywhere(actor: Actor): Promise<boolean> {
 // The Agent access page
 // ---------------------------------------------------------------------------
 
-const ROLE_WORDS: Record<string, string> = { OWNER: 'owners', MANAGER: 'managers', FRONT_DESK: 'front desk', HOUSEKEEPER: 'housekeeping' };
-
 const neededBy = (cap: Capability) => (cap.needs ? CAPABILITIES.find((c) => c.key === cap.needs) : undefined);
 
 /** Does the role hold every permission of the capability at this hotel? */
@@ -159,21 +157,18 @@ function holds(cap: Capability, role: PolicyRole, rp: RolePolicy | undefined): b
 
 function capabilityCell(cap: Capability, role: PolicyRole, rp: RolePolicy | undefined): AccessCell {
   const cell: AccessCell = { on: holds(cap, role, rp), byDefault: cap.perms.every((p) => roleCan(role, p)) };
-  const need = neededBy(cap);
   if (!cap.perms.every((p) => roleCan(role, p) || GRANTABLE.has(p))) cell.locked = 'Only owners can do this.';
-  else if (need && !holds(need, role, rp)) cell.locked = `Turn on “${need.label}” for ${ROLE_WORDS[role]} first.`;
+  else if (cap.needs) cell.needs = cap.needs;
   return cell;
 }
 
 function alertCell(kind: NoticeKind, role: AlertRole, policy: Policy): AccessCell {
   const cell: AccessCell = { on: alertsFor(policy, role).includes(kind), byDefault: DEFAULT_ALERTS[role].includes(kind) };
   const perm = NOTICE_PERMISSION[kind];
-  const rp = (POLICY_ROLES as readonly string[]).includes(role) ? policy[role] : undefined;
-  const allowed = !rp?.revoked.includes(perm) && (roleCan(role, perm) || !!rp?.granted.includes(perm));
-  if (!allowed) {
-    const cap = CAPABILITIES.find((c) => c.perms.includes(perm));
-    cell.locked = cap ? `Turn on “${cap.label}” for ${ROLE_WORDS[role]} first.` : `Not available to ${ROLE_WORDS[role]}.`;
-  }
+  const cap = (POLICY_ROLES as readonly string[]).includes(role) ? CAPABILITIES.find((c) => c.perms.includes(perm)) : undefined;
+  // The page changes whether a role holds the permission only through its capability (as policyFromUpdate stores it): on grants it, off takes it away — except from a role that only half has the capability by default, which keeps it.
+  if (cap && (roleCan(role, perm) ? cap.perms.every((p) => roleCan(role, p)) : GRANTABLE.has(perm))) cell.needs = cap.key;
+  else if (!roleCan(role, perm)) cell.locked = `Not available to ${ROLE_WORDS[role]}.`;
   return cell;
 }
 
@@ -196,7 +191,12 @@ export async function accessView(actor: Actor, propertyId: string): Promise<Agen
   };
 }
 
-/** The page's switches for a stored policy. A locked switch keeps what's stored in `on` (the page shows it off), so saving the page leaves it as it was. */
+/**
+ * The page's switches for a stored policy: `on` is what's stored, and `needs`
+ * the capability a switch waits for. The page locks switches from its own
+ * unsaved changes (draftSwitches in lib/agent/access.ts), so a capability and
+ * what needs it can be turned on in one save.
+ */
 export function accessSwitches(policy: Policy): Pick<AgentAccessView, 'capabilities' | 'alerts'> {
   return {
     capabilities: CAPABILITIES.map((cap) => ({

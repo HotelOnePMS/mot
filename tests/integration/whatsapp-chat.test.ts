@@ -148,6 +148,22 @@ describe('an alert sent as a template', () => {
     expect(await roomStatus(room.id)).toBe('CLEAN');
   });
 
+  it('arrives in several messages when it’s too long for one, and so does DETAILS', async () => {
+    const { owner, number } = await ownerOnWhatsApp();
+    // Several rounds' alerts kept for someone who hasn't replied yet.
+    const alert = Array.from({ length: 40 }, (_, i) => `💬 *Message from Guest ${i}*\n${'Is breakfast included, and can we check in early? '.repeat(4).trim()}`).join('\n\n');
+    expect(alert.length).toBeGreaterThan(2 * 4096);
+    await prisma.staffWhatsAppLink.update({ where: { userId: owner.id }, data: { alertUnseen: true, lastAlert: alert } });
+    const split = (reply: string) => {
+      const parts = reply.split('\n---\n');
+      expect(parts.length).toBeGreaterThan(2);
+      expect(parts.every((p) => p.length <= 4096)).toBe(true);
+      expect(parts.join('\n\n')).toBe(alert);
+    };
+    split(await say(number, 'show me'));
+    split(await say(number, 'DETAILS'));
+  });
+
   it('waits behind YES and NO, and keeps its numbered replies', async () => {
     const { h, owner, room, number } = await ownerOnWhatsApp();
     const alert = await unseenAlert(owner.id, h.property.id, room.roomNumber);

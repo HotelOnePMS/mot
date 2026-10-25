@@ -301,6 +301,57 @@ describe('the always-on agent', () => {
     expect(await say(number, '1')).toMatch(/Please confirm/);
   });
 
+  it('adds a second template to the one the person hasn’t read, numbered on from it, and keeps nothing from a send that failed', async () => {
+    const h = await makeHotel({ timezone: LA });
+    const owner = await makeUser({ role: 'OWNER', propertyIds: [h.property.id] });
+    await arrivalWithoutRoom(h, owner.id);
+    const number = await linked(owner.id);
+    const linkOf = () => prisma.staffWhatsAppLink.findUniqueOrThrow({ where: { userId: owner.id } });
+    const morning = at(h.today, 8);
+    await prisma.staffWhatsAppLink.update({ where: { userId: owner.id }, data: { lastInboundAt: new Date(morning.getTime() - 2 * 24 * 3600_000) } });
+    await runWatch({ propertyId: h.property.id, now: morning }); // the brief, as a template: "1" assigns rooms
+    const first = await linkOf();
+    expect(first.alertUnseen).toBe(true);
+    expect(first.choices).toEqual([choiceAt(h.property.id, 'assign rooms for today’s arrivals')]);
+
+    // Before they reply, an arrival turns up that still needs confirming.
+    const guest = `Ines${uid()} Lopez`;
+    const b = await createDeskReservation(
+      { actor: await actorFor(owner.id), source: 'classic' },
+      { propertyId: h.property.id, roomTypeId: h.roomType.id, checkIn: h.today, checkOut: addDaysISO(h.today, 1), guests: 1, rooms: 1, guest: { firstName: guest.split(' ')[0], lastName: 'Lopez' } },
+    );
+    await prisma.booking.update({ where: { id: b.id }, data: { status: 'PENDING' } });
+    const later = at(h.today, 9);
+    const sentTo = async () => (await prisma.agentNotice.findUniqueOrThrow({ where: { propertyId_key: { propertyId: h.property.id, key: `frontdesk:pending:${h.today}` } } })).sentTo;
+
+    // A template that doesn't go out changes nothing, and the alert is tried again.
+    failing.add(number);
+    try {
+      await runWatch({ propertyId: h.property.id, now: later });
+    } finally {
+      failing.delete(number);
+    }
+    expect(await linkOf()).toMatchObject({ lastAlert: first.lastAlert, choices: first.choices, alertUnseen: true });
+    expect(await sentTo()).toEqual([]);
+
+    sent = [];
+    await runWatch({ propertyId: h.property.id, now: later });
+    // The template is about the new alert only.
+    expect(sent.filter((m) => m.to === number)).toEqual([{ to: number, template: 'hotel_alert', params: [h.property.name, '1 arrival is still unconfirmed'] }]);
+    expect(await sentTo()).toEqual([owner.id]);
+    const both = await linkOf();
+    expect(both.alertUnseen).toBe(true);
+    expect(both.choices).toEqual([choiceAt(h.property.id, 'assign rooms for today’s arrivals'), choiceAt(h.property.id, `confirm ${guest}`)]);
+
+    // Their reply gets both, the brief first, numbered straight through, and the second one's number works.
+    const shown = await say(number, 'Show me');
+    expect(shown).toBe(both.lastAlert);
+    expect(shown.startsWith(`${first.lastAlert}\n\n`)).toBe(true);
+    expect(shown).toMatch(/needs a room[^\n]*\(reply 1\)[\s\S]*1 arrival is still unconfirmed[\s\S]*Reply \*2\* to: Confirm Ines/);
+    expect(shown.match(/Good morning/g)).toHaveLength(1);
+    expect(await say(number, '2')).toMatch(new RegExp(`Please confirm: .*${guest.split(' ')[0]}`));
+  });
+
   it('tries a failed send again next round, and the other owner still gets it', async () => {
     const h = await makeHotel({ timezone: LA });
     const ana = await makeUser({ role: 'OWNER', propertyIds: [h.property.id] });
@@ -372,6 +423,47 @@ describe('the always-on agent', () => {
     const reply = await say(number, '1');
     expect(reply).toContain(`_${a.property.name}_`);
     expect(reply).toMatch(/Please confirm/);
+  });
+
+  it('keeps each hotel’s own night and morning for someone at hotels in different time zones', async () => {
+    const la = await makeHotel({ timezone: LA });
+    const tokyo = await makeHotel({ timezone: 'Asia/Tokyo' });
+    const owner = await makeUser({ role: 'OWNER', propertyIds: [la.property.id, tokyo.property.id] });
+    const number = await linked(owner.id);
+    // 11pm in Los Angeles is the next afternoon in Tokyo.
+    const night = at(la.today, 23);
+    expect(hourIn('Asia/Tokyo', night)).toBe(15);
+    const ask = (h: typeof la, name: string, createdAt: Date) => prisma.guestRequest.create({ data: { propertyId: h.property.id, name, message: 'Is the pool open?', source: 'PHONE', createdAt } });
+    await ask(la, 'Lou Harbor', night);
+    await ask(tokyo, 'Taro Yamada', night);
+    const round = async (now: Date) => {
+      sent = [];
+      await prisma.staffWhatsAppLink.update({ where: { userId: owner.id }, data: { lastInboundAt: now } });
+      for (const h of [la, tokyo]) await runWatch({ propertyId: h.property.id, now });
+      return sent.filter((m) => m.to === number).map((m) => m.text ?? '');
+    };
+
+    const first = await round(night);
+    expect(first).toHaveLength(1);
+    expect(first[0]).toContain('Taro Yamada');
+    expect(first[0]).not.toContain('Lou Harbor');
+
+    // 8am in Los Angeles is midnight in Tokyo: the Los Angeles brief and the message that waited, nothing from Tokyo.
+    const morning = new Date(night.getTime() + 9 * 3600_000);
+    expect(hourIn(LA, morning)).toBe(8);
+    const second = await round(morning);
+    expect(second).toHaveLength(1);
+    expect(second[0]).toContain(`Good morning — ${la.property.name}`);
+    expect(second[0]).toContain('Lou Harbor');
+    expect(second[0]).not.toContain(tokyo.property.name);
+
+    // Tokyo's brief comes at 8am there.
+    const tokyoMorning = new Date(morning.getTime() + 8 * 3600_000);
+    expect(hourIn('Asia/Tokyo', tokyoMorning)).toBe(8);
+    const third = await round(tokyoMorning);
+    expect(third).toHaveLength(1);
+    expect(third[0]).toContain(`Good morning — ${tokyo.property.name}`);
+    expect(third[0]).not.toContain(`Good morning — ${la.property.name}`);
   });
 
   it('alerts the newest guest messages first, six to a message, however many are waiting', async () => {
@@ -456,6 +548,43 @@ describe('the always-on agent', () => {
     const alert = sent.find((m) => m.to === ownerNumber && m.text?.includes('Card dispute: $378 (fraudulent)'));
     expect(alert?.text).toContain(`/admin/disputes?dispute=${dispute.id}`);
     expect(sent.filter((m) => m.to === managerNumber)).toEqual([]);
+  });
+
+  it('sends each role the alerts the owner chose for it, and only disputes at night', async () => {
+    const h = await makeHotel({ timezone: LA });
+    const owner = await makeUser({ role: 'OWNER', propertyIds: [h.property.id] });
+    const manager = await makeUser({ role: 'MANAGER', propertyIds: [h.property.id] });
+    const desk = await makeUser({ role: 'FRONT_DESK', propertyIds: [h.property.id] });
+    await saveAccess(
+      await actorFor(owner.id),
+      access(h.property.id, (u) => {
+        u.alerts.MANAGER = ['disputes'];
+        u.alerts.FRONT_DESK = ['frontdesk'];
+      }),
+    );
+    const [ownerNumber, managerNumber, deskNumber] = [await linked(owner.id), await linked(manager.id), await linked(desk.id)];
+    const night = at(h.today, 23);
+    await prisma.guestRequest.create({ data: { propertyId: h.property.id, name: 'Ada Stone', message: 'Late check-out please', source: 'PHONE', createdAt: night } });
+    await prisma.dispute.create({ data: { propertyId: h.property.id, stripeDisputeId: `dp_${uid()}${uid()}`, amount: 120, reason: 'fraudulent', status: 'needs_response', createdAt: night } });
+    const round = async (now: Date) => {
+      sent = [];
+      for (const userId of [owner.id, manager.id, desk.id]) await prisma.staffWhatsAppLink.update({ where: { userId }, data: { lastInboundAt: now } });
+      await runWatch({ propertyId: h.property.id, now });
+      return (to: string) => sent.filter((m) => m.to === to).map((m) => m.text ?? '').join('\n');
+    };
+
+    const atNight = await round(night);
+    for (const to of [ownerNumber, managerNumber]) {
+      expect(atNight(to)).toContain('Card dispute: $120 (fraudulent)');
+      expect(atNight(to)).not.toContain('Ada Stone');
+    }
+    expect(atNight(deskNumber)).toBe('');
+
+    const afternoon = await round(new Date(night.getTime() + 16 * 3600_000));
+    expect(afternoon(ownerNumber)).toContain('Ada Stone');
+    expect(afternoon(ownerNumber)).not.toContain('Card dispute');
+    expect(afternoon(managerNumber)).toBe('');
+    expect(afternoon(deskNumber)).toBe('');
   });
 
   it('stays quiet for people who turned alerts off', async () => {

@@ -4,7 +4,7 @@ import * as React from 'react';
 import useSWR from 'swr';
 import { toast } from 'sonner';
 import { RotateCcw } from 'lucide-react';
-import { ALERT_ROLES, draftFrom, POLICY_ROLES, type AccessCell, type AgentAccessUpdate, type AgentAccessView, type AlertRole, type NoticeKind } from '@/lib/agent/access';
+import { ALERT_ROLES, draftFrom, draftSwitches, POLICY_ROLES, updateFromDraft, type AccessCell, type AgentAccessUpdate, type AgentAccessView, type AlertRole, type NoticeKind } from '@/lib/agent/access';
 import { api, fetcher } from '@/lib/fetcher';
 import { timeAgo } from '@/lib/format';
 import { roleLabel } from '@/lib/status';
@@ -25,12 +25,12 @@ function defaultsFrom(v: AgentAccessView): Draft {
   };
 }
 
-/** A switch in the grid, with a dot when it differs from the role's default. */
-function Toggle({ cell, on, label, editable, onChange }: { cell: AccessCell; on: boolean; label: string; editable: boolean; onChange: (v: boolean) => void }) {
-  const changed = on !== cell.byDefault;
+/** A switch in the grid (as the draft has it), with a dot when it differs from the role's default. */
+function Toggle({ cell, label, editable, onChange }: { cell: AccessCell; label: string; editable: boolean; onChange: (v: boolean) => void }) {
+  const changed = cell.on !== cell.byDefault;
   return (
     <div className="inline-flex items-center gap-1.5" title={cell.locked ?? (changed ? `Changed (default: ${cell.byDefault ? 'on' : 'off'})` : undefined)}>
-      <Switch checked={on && !cell.locked} onCheckedChange={onChange} disabled={!editable || !!cell.locked} aria-label={label} />
+      <Switch checked={cell.on} onCheckedChange={onChange} disabled={!editable || !!cell.locked} aria-label={label} />
       <span className={cn('size-1.5 rounded-full', changed && !cell.locked ? 'bg-agent' : 'bg-transparent')} aria-hidden />
     </div>
   );
@@ -40,19 +40,17 @@ function Grid<Row extends { label: string; description: string; cells: Record<st
   caption,
   roles,
   rows,
-  value,
   editable,
   onChange,
 }: {
   caption: string;
   roles: readonly string[];
   rows: (Row & { id: string })[];
-  value: (row: string, role: string) => boolean;
   editable: boolean;
   onChange: (row: string, role: string, on: boolean) => void;
 }) {
   const toggle = (row: Row & { id: string }, r: string) => (
-    <Toggle cell={row.cells[r]} on={value(row.id, r)} label={`${row.label} — ${roleLabel(r)}`} editable={editable} onChange={(on) => onChange(row.id, r, on)} />
+    <Toggle cell={row.cells[r]} label={`${row.label} — ${roleLabel(r)}`} editable={editable} onChange={(on) => onChange(row.id, r, on)} />
   );
   return (
     <>
@@ -118,14 +116,18 @@ export default function AgentAccessPage() {
     if (data) setDraft(draftFrom(data));
   }, [data]);
 
-  const dirty = !!data && !!draft && JSON.stringify(draft) !== JSON.stringify(draftFrom(data));
-  const atDefaults = !!data && !!draft && JSON.stringify(draft) === JSON.stringify(defaultsFrom(data));
+  // Locks follow the draft, so turning a capability on unlocks what needs it before saving.
+  const shown = data && draft ? draftSwitches(data, draft) : null;
+  // Compare what would be saved, not what's underneath a lock.
+  const sends = (d: Draft) => (data ? JSON.stringify(updateFromDraft(data, d)) : '');
+  const dirty = !!data && !!draft && sends(draft) !== sends(draftFrom(data));
+  const atDefaults = !!data && !!draft && sends(draft) === sends(defaultsFrom(data));
 
   async function save() {
-    if (!draft || !property) return;
+    if (!data || !draft || !property) return;
     setSaving(true);
     try {
-      const next = await api<AgentAccessView>('/api/admin/agent-access', { method: 'PUT', json: { propertyId: property.id, ...draft } });
+      const next = await api<AgentAccessView>('/api/admin/agent-access', { method: 'PUT', json: { propertyId: property.id, ...updateFromDraft(data, draft) } });
       await mutate(next, { revalidate: false });
       toast.success('Agent access saved');
     } catch (e) {
@@ -145,7 +147,7 @@ export default function AgentAccessPage() {
         <Callout tone="danger" role="alert">
           {(error as Error).message}
         </Callout>
-      ) : !data || !draft ? (
+      ) : !data || !draft || !shown ? (
         <div className="space-y-6" aria-busy>
           <Skeleton className="h-[420px] rounded-2xl" />
           <Skeleton className="h-[260px] rounded-2xl" />
@@ -163,8 +165,7 @@ export default function AgentAccessPage() {
             <Grid
               caption="Agent capabilities by role"
               roles={POLICY_ROLES}
-              rows={data.capabilities.map((c) => ({ ...c, id: c.key }))}
-              value={(row, role) => draft.capabilities[role as (typeof POLICY_ROLES)[number]][row]}
+              rows={shown.capabilities.map((c) => ({ ...c, id: c.key }))}
               editable={data.canEdit}
               onChange={(row, role, on) =>
                 setDraft((d) => d && { ...d, capabilities: { ...d.capabilities, [role]: { ...d.capabilities[role as (typeof POLICY_ROLES)[number]], [row]: on } } })
@@ -177,8 +178,7 @@ export default function AgentAccessPage() {
             <Grid
               caption="Alerts by role"
               roles={ALERT_ROLES}
-              rows={data.alerts.map((a) => ({ ...a, id: a.kind }))}
-              value={(row, role) => draft.alerts[role as AlertRole].includes(row as NoticeKind)}
+              rows={shown.alerts.map((a) => ({ ...a, id: a.kind }))}
               editable={data.canEdit}
               onChange={(row, role, on) =>
                 setDraft((d) => {

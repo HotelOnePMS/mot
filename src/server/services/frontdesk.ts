@@ -63,7 +63,8 @@ export async function frontDeskSummary(actor: Actor, propertyId: string, request
       tone: 'warning',
       title: `${late.length} late arrival${late.length > 1 ? 's' : ''} from a previous day`,
       detail: 'Decide whether to keep holding the room or mark a no-show.',
-      command: `show reservation ${late[0].code}`,
+      // "#CODE" always reads as a code to the agent, even a code without a digit.
+      command: `show reservation #${late[0].code}`,
     });
   }
   const pending = arrivalsDue.filter((b) => b.status === 'PENDING');

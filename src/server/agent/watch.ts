@@ -204,20 +204,27 @@ export interface RoundSection {
  * Everything one person gets this round, across their hotels, as one
  * message: the morning briefs, then each hotel's alerts, numbered straight
  * through (at most nine numbered replies). `more` alerts didn't fit and
- * come in the next message. `hotels` and `summary` are the alert template's
- * two variables.
+ * come in the next message. `offered` are the numbered replies of an alert
+ * the person hasn't read yet: this message's numbers follow on from them,
+ * and `choices` includes them. `hotels` and `summary` are the alert
+ * template's two variables.
  */
-export function roundMessage(sections: RoundSection[], siteUrl: string | null, more = 0): { text: string; summary: string; choices: string[]; hotels: string } {
+export function roundMessage(
+  sections: RoundSection[],
+  siteUrl: string | null,
+  more = 0,
+  offered: string[] = []
+): { text: string; summary: string; choices: string[]; hotels: string } {
   const used = sections.filter((s) => s.brief?.length || s.notices.length);
   const briefs = used.filter((s) => s.brief?.length);
   const parts: string[] = [];
-  const choices: string[] = [];
+  let choices = [...offered];
   if (briefs.length) {
     // Rendered together so the numbers run on from one hotel's brief to the next (the overview shows no amounts, so any hotel's currency will do).
     const blocks = briefs.flatMap((s): AgentBlock[] => [{ type: 'text', text: `☀️ **Good morning — ${s.hotel.name}**` }, ...(s.brief ?? [])]);
-    const r = renderBlocks(blocks, { currency: briefs[0].hotel.currency, siteUrl });
+    const r = renderBlocks(blocks, { currency: briefs[0].hotel.currency, siteUrl, offered: choices });
     parts.push(r.text);
-    choices.push(...r.choices);
+    choices = r.choices;
   }
   for (const s of used) {
     if (!s.notices.length) continue;
@@ -403,7 +410,7 @@ async function sendRound(cfg: WhatsAppConfig, r: Recipient, pending: Pending[], 
     }
     // Nothing to send: an overlapping run already sent it, or the brief couldn't be read.
     if (!claimed.length) return false;
-    delivered = await deliver(cfg, r, roundMessage(sections, site, candidates.length - chosen.length), template);
+    delivered = await deliver(cfg, r, sections, site, candidates.length - chosen.length, template);
     return delivered;
   } finally {
     if (!delivered) for (const c of claimed) await release(userId, c.propertyId, c.keys);
@@ -444,20 +451,47 @@ async function briefFor(actor: Actor, hotel: { id: string; name: string }, today
  * Sends inside the 24-hour window as a normal message; outside it, as the
  * approved alert template. Either way the chat keeps the whole message to
  * show (on the person's next message, after a template) and its numbered
- * replies, which replace the last ones only when it has some.
+ * replies, which replace the last ones only when it has some. Nothing is
+ * kept for a send that failed.
  */
-async function deliver(cfg: WhatsAppConfig, r: Recipient, msg: ReturnType<typeof roundMessage>, template: WhatsAppConfig['alertTemplate']): Promise<boolean> {
+async function deliver(cfg: WhatsAppConfig, r: Recipient, sections: RoundSection[], site: string | null, more: number, template: WhatsAppConfig['alertTemplate']): Promise<boolean> {
+  const userId = r.link.userId;
+  const msg = roundMessage(sections, site, more);
   try {
     if (template) await sendTemplate(cfg, r.link.number, template, [msg.hotels, msg.summary]);
     else await sendText(cfg, r.link.number, msg.text);
   } catch (e) {
-    logError('agent/watch', `Alert to ${r.link.userId} failed:`, e);
+    logError('agent/watch', `Alert to ${userId} failed:`, e);
     return false;
   }
-  await prisma.staffWhatsAppLink
-    .update({ where: { userId: r.link.userId }, data: { lastAlert: msg.text, alertUnseen: !!template, ...(msg.choices.length ? { choices: msg.choices } : {}) } })
-    .catch((e) => logError('agent/watch', `Saving the alert for ${r.link.userId} failed:`, e));
+  await (template
+    ? keepUnseen(userId, sections, site, more)
+    : prisma.staffWhatsAppLink.update({ where: { userId }, data: { lastAlert: msg.text, alertUnseen: false, ...(msg.choices.length ? { choices: msg.choices } : {}) } })
+  ).catch((e) => logError('agent/watch', `Saving the alert for ${userId} failed:`, e));
   return true;
+}
+
+/**
+ * Keeps a template's whole message for the person's next message. While the
+ * one before is still unread, this one is added after it, numbered on from
+ * its replies, so the chat shows both and every number works. The template
+ * itself carries no numbers, so they're worked out against what the chat
+ * holds now, and again if it changes meanwhile (they wrote, or another round
+ * added to it).
+ */
+async function keepUnseen(userId: string, sections: RoundSection[], site: string | null, more: number): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const link = await prisma.staffWhatsAppLink.findUnique({ where: { userId }, select: { lastAlert: true, alertUnseen: true, choices: true } });
+    if (!link) return; // unlinked meanwhile
+    const earlier = link.alertUnseen ? link.lastAlert : null;
+    const msg = roundMessage(sections, site, more, earlier ? link.choices : []);
+    const { count } = await prisma.staffWhatsAppLink.updateMany({
+      where: { userId, lastAlert: link.lastAlert, alertUnseen: link.alertUnseen, choices: { equals: link.choices } },
+      data: { lastAlert: earlier ? `${earlier}\n\n${msg.text}` : msg.text, alertUnseen: true, ...(msg.choices.length ? { choices: msg.choices } : {}) },
+    });
+    if (count) return;
+  }
+  throw new Error('the chat kept changing');
 }
 
 const lastLook = new Map<string, number>();

@@ -37,7 +37,7 @@ import {
   type Skill,
   type SkillParameters,
 } from '../skills';
-import { parseMessage, WRITE_KINDS, type Intent } from './nlu';
+import { codeRef, parseMessage, WRITE_KINDS, type Intent } from './nlu';
 import { logError } from '@/server/log';
 
 /** How many successful runs of the same command shape (within SUGGEST_WINDOW_DAYS) make a suggestion. */
@@ -707,7 +707,7 @@ async function guestOptions(propertyId: string, shortcutName: string) {
   return [...inHouse, ...arriving].slice(0, 6).map((b) => ({
     label: `${b.user.firstName} ${b.user.lastName}`.trim(),
     hint: `${b.code ?? ''}${b.room ? ` · room ${b.room.roomNumber}` : ''} · ${b.status === 'CHECKED_IN' ? 'in house' : 'arriving today'}`,
-    command: `run ${shortcutName} for ${b.code ?? b.id}`,
+    command: `run ${shortcutName} for ${codeRef(b.code ?? b.id)}`,
   }));
 }
 
