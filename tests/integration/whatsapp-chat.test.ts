@@ -112,7 +112,8 @@ describe('an alert sent as a template', () => {
   /** What watch.ts stores when an alert goes out as a template: the whole text and its numbered replies, not yet seen. */
   async function unseenAlert(userId: string, propertyId: string, roomNumber: string): Promise<string> {
     const text = `🔔 *Front desk*: room ${roomNumber} needs a look\nReply *1* to: mark room ${roomNumber} dirty`;
-    await prisma.staffWhatsAppLink.update({ where: { userId }, data: { alertUnseen: true, lastAlert: text, choices: [choiceAt(propertyId, `mark room ${roomNumber} dirty`)] } });
+    const choices = [choiceAt(propertyId, `mark room ${roomNumber} dirty`)];
+    await prisma.staffWhatsAppLink.update({ where: { userId }, data: { alertUnseen: true, lastAlert: text, alertChoices: choices, choices } });
     return text;
   }
 
@@ -164,13 +165,53 @@ describe('an alert sent as a template', () => {
     split(await say(number, 'DETAILS'));
   });
 
-  it('waits behind YES and NO, and keeps its numbered replies', async () => {
+  it('is what a “Yes” or “No” gets when no plan is waiting', async () => {
     const { h, owner, room, number } = await ownerOnWhatsApp();
     const alert = await unseenAlert(owner.id, h.property.id, room.roomNumber);
-    expect(await say(number, 'yes')).toMatch(/nothing waiting/);
-    expect(await say(number, 'no')).toBe('OK. What would you like to do?');
+    expect(await say(number, 'Yes')).toBe(alert);
+    expect(await say(number, '1')).toMatch(/Please confirm: Mark room/i);
+    await say(number, 'no');
+    await unseenAlert(owner.id, h.property.id, room.roomNumber);
+    expect(await say(number, 'no thanks')).toBe(alert);
+  });
+
+  it('waits behind a YES or NO to a plan still waiting, and keeps its numbered replies', async () => {
+    const { h, owner, room, number } = await ownerOnWhatsApp();
+    const other = h.rooms[1];
+    expect(await say(number, `mark room ${other.roomNumber} dirty`)).toMatch(/Please confirm/);
+    const alert = await unseenAlert(owner.id, h.property.id, room.roomNumber);
+    expect(await say(number, 'yes')).toMatch(/✅/);
+    expect(await roomStatus(other.id)).toBe('DIRTY');
     expect((await linkOf(owner.id)).alertUnseen).toBe(true);
     expect(await say(number, 'show me')).toBe(alert);
+    expect(await say(number, '1')).toMatch(/Please confirm: Mark room/i);
+  });
+
+  it('keeps its numbers through HOTELS and DETAILS, and HOTELS keeps a plan waiting', async () => {
+    const [a, b] = await Promise.all([makeHotel(), makeHotel()]);
+    const owner = await makeUser({ role: 'OWNER', propertyIds: [a.property.id, b.property.id] });
+    const number = await linked(owner.id);
+    const room = a.rooms[0];
+    await say(number, `switch to ${a.property.name}`);
+    const alert = await unseenAlert(owner.id, a.property.id, room.roomNumber);
+
+    // The alert first, then the hotels, numbered on from it.
+    const [shown, list] = (await say(number, 'hotels')).split('\n---\n');
+    expect(shown).toBe(alert);
+    expect(list).toMatch(new RegExp(`^[23]\\. ${a.property.name}$`, 'm'));
+    expect(list).toMatch(new RegExp(`^[23]\\. ${b.property.name}$`, 'm'));
+    expect(await say(number, '1')).toMatch(/Please confirm: Mark room/i);
+
+    // HOTELS and "switch to" the hotel they're on leave the plan waiting.
+    expect(await say(number, 'hotels')).toContain(b.property.name);
+    expect(await say(number, `switch to ${a.property.name}`)).toBe(`You’re already working on *${a.property.name}*.`);
+    expect(await say(number, 'yes')).toMatch(/✅/);
+    expect(await roomStatus(room.id)).toBe('DIRTY');
+
+    // After other replies, DETAILS shows the alert again and its number runs what it says.
+    await prisma.room.update({ where: { id: room.id }, data: { status: 'CLEAN' } });
+    await say(number, 'hotels');
+    expect(await say(number, 'details')).toBe(alert);
     expect(await say(number, '1')).toMatch(/Please confirm: Mark room/i);
   });
 });
@@ -200,9 +241,9 @@ describe('switching hotel', () => {
     const owner = await makeUser({ role: 'OWNER', propertyIds: [a.property.id, b.property.id] });
     const number = await linked(owner.id);
 
-    expect(await say(number, `switch to ${name.toLowerCase()}`)).toBe(`Now working on *${name}*. What would you like to know?`);
     expect(await say(number, `Switch to ${name} downtown?`)).toBe(`Now working on *${name} Downtown*. What would you like to know?`);
-    expect(await say(number, `switch to ${name}?`)).toBe(`Now working on *${name}*. What would you like to know?`);
+    expect(await say(number, `switch to ${name.toLowerCase()}`)).toBe(`Now working on *${name}*. What would you like to know?`);
+    expect(await say(number, `switch to ${name}?`)).toBe(`You’re already working on *${name}*.`);
     expect(await say(number, `switch to ${name.slice(0, -2)}`)).toMatch(/More than one hotel matches/);
   });
 

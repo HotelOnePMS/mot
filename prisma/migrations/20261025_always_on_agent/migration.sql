@@ -7,10 +7,7 @@ CREATE TABLE "staff_whatsapp_links" (
     "linkedAt" TIMESTAMP(3),
     "codeHash" TEXT,
     "codeExpiresAt" TIMESTAMP(3),
-    "codeSessionVersion" INTEGER,
-    "codeAuthMethod" TEXT,
     "sessionVersion" INTEGER NOT NULL DEFAULT 0,
-    "authMethod" TEXT NOT NULL DEFAULT 'password',
     "propertyId" TEXT,
     "memory" JSONB,
     "recent" TEXT[] DEFAULT ARRAY[]::TEXT[],
@@ -19,7 +16,6 @@ CREATE TABLE "staff_whatsapp_links" (
     "lastInboundAt" TIMESTAMP(3),
     "alertsOff" BOOLEAN NOT NULL DEFAULT false,
     "lastAlert" TEXT,
-    "alertUnseen" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 

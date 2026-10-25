@@ -470,19 +470,29 @@ export function withHeld(held: { text: string; choices: string[] } | null, secti
   return { ...own, text: `${HELD_DROPPED}\n\n${own.text}` };
 }
 
-/** The alert the chat is still holding for the person to read, if any. */
+/** The alert the chat is still holding for the person to read, if any, and the chat's current numbered replies. */
 async function heldAlert(userId: string) {
-  const link = await prisma.staffWhatsAppLink.findUnique({ where: { userId }, select: { lastAlert: true, alertUnseen: true, choices: true } });
+  const link = await prisma.staffWhatsAppLink.findUnique({ where: { userId }, select: { lastAlert: true, alertUnseen: true, alertChoices: true, choices: true } });
   if (!link) return { link: null, held: null };
-  return { link, held: link.alertUnseen && link.lastAlert ? { text: link.lastAlert, choices: link.choices } : null };
+  return { link, held: link.alertUnseen && link.lastAlert ? { text: link.lastAlert, choices: link.alertChoices } : null };
+}
+
+/**
+ * An alert inside the 24-hour window, while the person may be mid-conversation: its numbers follow the chat's
+ * last ones, so a reply to the list they were reading still picks what they saw. When there's no room for its
+ * numbers, it starts again from 1.
+ */
+function afterChat(chat: string[], sections: RoundSection[], siteUrl: string | null, more: number, chatHotel: string | null) {
+  const own = roundMessage(sections, siteUrl, more, [], chatHotel);
+  return chat.length + own.choices.length <= MAX_CHOICES ? roundMessage(sections, siteUrl, more, chat, chatHotel) : own;
 }
 
 /**
  * Sends inside the 24-hour window as a normal message (with any alert they
  * haven't read yet first); outside it, as the approved alert template.
  * Either way the chat keeps the whole message to show (on the person's next
- * message, after a template) and its numbered replies. Nothing is kept for a
- * send that failed.
+ * message after a template, and on DETAILS) and the numbered replies it
+ * refers to. Nothing is kept for a send that failed.
  */
 async function deliver(cfg: WhatsAppConfig, r: Recipient, sections: RoundSection[], site: string | null, more: number, template: WhatsAppConfig['alertTemplate']): Promise<boolean> {
   const userId = r.link.userId;
@@ -492,12 +502,12 @@ async function deliver(cfg: WhatsAppConfig, r: Recipient, sections: RoundSection
       const msg = roundMessage(sections, site, more, [], chatHotel);
       await sendTemplate(cfg, r.link.number, template, [msg.hotels, msg.summary]);
     } else {
-      const { held } = await heldAlert(userId);
-      const msg = withHeld(held, sections, site, more, chatHotel);
+      const { link, held } = await heldAlert(userId);
+      const msg = held ? withHeld(held, sections, site, more, chatHotel) : afterChat(link?.choices ?? [], sections, site, more, chatHotel);
       await sendText(cfg, r.link.number, msg.text);
-      // Their latest numbers are this message's. A message with none keeps the chat's (it may be mid-conversation), unless it replaced an unread alert's.
+      // Their latest numbers are this message's (the chat's earlier ones included, when it numbered on from them).
       await prisma.staffWhatsAppLink
-        .update({ where: { userId }, data: { lastAlert: msg.text, alertUnseen: false, ...(msg.choices.length || held ? { choices: msg.choices } : {}) } })
+        .update({ where: { userId }, data: { lastAlert: msg.text, alertUnseen: false, alertChoices: msg.choices, choices: msg.choices } })
         .catch((e) => logError('agent/watch', `Saving the alert for ${userId} failed:`, e));
       return true;
     }
@@ -523,8 +533,8 @@ async function keepUnseen(userId: string, sections: RoundSection[], site: string
     if (!link) return; // unlinked meanwhile
     const msg = withHeld(held, sections, site, more, chatHotel);
     const { count } = await prisma.staffWhatsAppLink.updateMany({
-      where: { userId, lastAlert: link.lastAlert, alertUnseen: link.alertUnseen, choices: { equals: link.choices } },
-      data: { lastAlert: msg.text, alertUnseen: true, choices: msg.choices },
+      where: { userId, lastAlert: link.lastAlert, alertUnseen: link.alertUnseen, alertChoices: { equals: link.alertChoices } },
+      data: { lastAlert: msg.text, alertUnseen: true, alertChoices: msg.choices, choices: msg.choices },
     });
     if (count) return;
   }

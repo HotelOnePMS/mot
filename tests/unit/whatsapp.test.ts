@@ -180,6 +180,13 @@ describe('agent blocks as WhatsApp text', () => {
     expect(r.choices).toEqual([choiceAt('p1', 'assign rooms'), 'brief me', 'who’s arriving today?']);
   });
 
+  it('shows options as commands to send once nine numbers are taken, so a question keeps its answers', () => {
+    const offered = Array.from({ length: 9 }, (_, i) => choiceAt('p1', `fix ${i}`));
+    const r = renderBlocks([{ type: 'clarify', question: 'Which Rosa?', options: [{ label: 'Rosa Diaz', command: 'check in #ABCDEF' }] }], { ...opts, offered });
+    expect(r.text).toContain('• Rosa Diaz: send “check in #ABCDEF”');
+    expect(r.choices).toEqual(offered);
+  });
+
   it('makes console links absolute', () => {
     const r = renderBlocks([{ type: 'navigate', label: 'Open full activity log', href: '/admin/activity' }], opts);
     expect(r.text).toBe('Open full activity log: https://hotelone.site/admin/activity');

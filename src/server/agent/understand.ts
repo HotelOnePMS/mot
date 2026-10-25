@@ -139,7 +139,8 @@ function correctWord(word: string): string {
 }
 
 export function fixTypos(text: string): string {
-  return text.replace(/[A-Za-z0-9]+/g, (w) => correctWord(w));
+  // "#TENANT" is a booking code, not a word.
+  return text.replace(/#?[A-Za-z0-9]+/g, (w) => (w.startsWith('#') ? w : correctWord(w)));
 }
 
 // ---------------------------------------------------------------------------
@@ -276,8 +277,8 @@ const RULES: Rule[] = [
 /** Plain-word synonyms for the guest. */
 function synonyms(text: string): string {
   return text
-    .replace(/\b(?:customer|client|visitor|patron|occupant|tenant|resident|traveller|traveler|person|lady|gentleman|man|woman|guy)(s?)\b/gi, 'guest$1')
-    .replace(/\b(?:people|folks|family)\b(?=\s+(?:is|are|in room|at|wants?|has|have|just))/gi, 'guests')
+    .replace(/(?<!#)\b(?:customer|client|visitor|patron|occupant|tenant|resident|traveller|traveler|person|lady|gentleman|man|woman|guy)(s?)\b/gi, 'guest$1')
+    .replace(/(?<!#)\b(?:people|folks|family)\b(?=\s+(?:is|are|in room|at|wants?|has|have|just))/gi, 'guests')
     .replace(/\b(?:someone|somebody)\b/gi, 'a guest')
     .replace(/\bcheck(?:ing)?\s*-\s*(in|out)\b/gi, 'check $1')
     .replace(/\s{2,}/g, ' ');

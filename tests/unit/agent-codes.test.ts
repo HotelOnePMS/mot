@@ -10,7 +10,7 @@ import { fillPlaceholders } from '@/server/skills';
 
 const TODAY = '2026-10-19';
 /** About 1 booking in 6 has a code without a digit; some codes spell words the parser knows ("DEPART", "SEARCH"). */
-const CODES = ['ABCDEF', 'DEPART', 'SEARCH', 'K7Q2MD', '234567'];
+const CODES = ['ABCDEF', 'DEPART', 'SEARCH', 'K7Q2MD', '234567', 'TENANT', 'TENANTS', 'GUESET', 'CUSTMER', 'PEPLE'];
 
 function booking(code: string, status: BookingStatus, checkIn: string, checkOut: string): BookingSummary {
   return {

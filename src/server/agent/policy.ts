@@ -15,7 +15,7 @@
  */
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
-import { ALERT_ROLES, NOTICE_INFO, NOTICE_KINDS, POLICY_ROLES, ROLE_WORDS, type AccessCell, type AgentAccessUpdate, type AgentAccessView, type AlertRole, type NoticeKind, type PolicyRole } from '@/lib/agent/access';
+import { ALERT_ROLES, draftFrom, draftSwitches, NOTICE_INFO, NOTICE_KINDS, POLICY_ROLES, ROLE_WORDS, type AccessCell, type AgentAccessUpdate, type AgentAccessView, type AlertRole, type NoticeKind, type PolicyRole } from '@/lib/agent/access';
 import { assertPropertyAccess, can, PERMISSIONS, requirePermission, roleCan, type Actor, type Permission } from '../authz';
 import { notFound } from '../errors';
 import { recordAudit } from '../services/audit';
@@ -158,7 +158,7 @@ function holds(cap: Capability, role: PolicyRole, rp: RolePolicy | undefined): b
 function capabilityCell(cap: Capability, role: PolicyRole, rp: RolePolicy | undefined): AccessCell {
   const cell: AccessCell = { on: holds(cap, role, rp), byDefault: cap.perms.every((p) => roleCan(role, p)) };
   if (!cap.perms.every((p) => roleCan(role, p) || GRANTABLE.has(p))) cell.locked = 'Only owners can do this.';
-  else if (cap.needs) cell.needs = cap.needs;
+  else if (cap.needs) cell.needs = [cap.needs];
   return cell;
 }
 
@@ -167,8 +167,10 @@ function alertCell(kind: NoticeKind, role: AlertRole, policy: Policy): AccessCel
   const perm = NOTICE_PERMISSION[kind];
   const cap = (POLICY_ROLES as readonly string[]).includes(role) ? CAPABILITIES.find((c) => c.perms.includes(perm)) : undefined;
   // The page changes whether a role holds the permission only through its capability (as policyFromUpdate stores it): on grants it, off takes it away — except from a role that only half has the capability by default, which keeps it.
-  if (cap && (roleCan(role, perm) ? cap.perms.every((p) => roleCan(role, p)) : GRANTABLE.has(perm))) cell.needs = cap.key;
-  else if (!roleCan(role, perm)) cell.locked = `Not available to ${ROLE_WORDS[role]}.`;
+  const viaCapability = cap && (roleCan(role, perm) ? cap.perms.every((p) => roleCan(role, p)) : GRANTABLE.has(perm));
+  if (!viaCapability && !roleCan(role, perm)) cell.locked = `Not available to ${ROLE_WORDS[role]}.`;
+  // Alerts come on WhatsApp: a role without it gets none (owners always have it).
+  else if (role !== 'OWNER') cell.needs = ['whatsapp', ...(viaCapability ? [cap!.key] : [])];
   return cell;
 }
 
@@ -249,12 +251,18 @@ export function policyFromUpdate(update: Pick<AgentAccessUpdate, 'capabilities' 
   return out;
 }
 
-/** Plain-language list of what changed, for the activity log. */
+/**
+ * Plain-language list of what changed, for the activity log. Capabilities as
+ * the page shows them, so one locked by a switch it needs counts as off (a
+ * policy saved before it needed that one changes nothing the owner saw).
+ * Alerts as stored: a locked alert keeps its place and isn't a change.
+ */
 function describeChanges(before: AgentAccessView, after: AgentAccessView): string[] {
+  const [shownBefore, shownAfter] = [draftSwitches(before, draftFrom(before)), draftSwitches(after, draftFrom(after))];
   const lines: string[] = [];
-  for (const [i, cap] of after.capabilities.entries()) {
+  for (const [i, cap] of shownAfter.capabilities.entries()) {
     for (const role of POLICY_ROLES) {
-      const was = before.capabilities[i].cells[role].on;
+      const was = shownBefore.capabilities[i].cells[role].on;
       const now = cap.cells[role].on;
       if (was !== now) lines.push(`${cap.label}: ${now ? 'on' : 'off'} for ${ROLE_WORDS[role]}`);
     }

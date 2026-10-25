@@ -191,3 +191,18 @@ describe('agent access: the page', () => {
     expect(alertsFor(await loadPolicy(pid), 'FRONT_DESK')).toEqual(DEFAULT_ALERTS.FRONT_DESK);
   });
 });
+
+describe('agent access: the activity log', () => {
+  it('names only what the owner changed, on a policy saved before switches needed look-ups', async () => {
+    const h = await makeHotel();
+    const owner = await makeUser({ role: 'OWNER', propertyIds: [h.property.id] });
+    // Saved by an older version: look-ups off for front desk, its booking changes not turned off with them.
+    await prisma.agentPolicy.create({ data: { propertyId: h.property.id, roles: { FRONT_DESK: { revoke: ['frontdesk.view', 'booking.view'] } } } });
+    const view = await accessView(await actorFor(owner.id), h.property.id);
+    const draft = draftFrom(view);
+    draft.capabilities.FRONT_DESK.activity = true;
+    await saveAccess(await actorFor(owner.id), { propertyId: h.property.id, ...updateFromDraft(view, draft) });
+    const log = await prisma.agentAuditLog.findFirstOrThrow({ where: { propertyId: h.property.id, action: 'AGENT_ACCESS' } });
+    expect(JSON.parse(log.detail ?? '{}').changes).toEqual(['Activity log: on for front desk']);
+  });
+});

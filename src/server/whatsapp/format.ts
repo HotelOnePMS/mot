@@ -35,6 +35,8 @@ export interface Rendered {
 export const HOTEL_CHOICE = '#hotel:';
 const AT_CHOICE = '#at:';
 export const choiceAt = (propertyId: string, command: string) => `${AT_CHOICE}${propertyId}|${command}`;
+/** Numbered replies tied to a hotel (an alert's fixes): they act there whichever hotel the chat is on, so they outlive a switch. */
+export const hotelBound = (choices: string[]) => choices.filter((c) => c.startsWith(AT_CHOICE));
 
 export function readChoice(choice: string): { hotel: string } | { at: string | null; command: string } {
   if (choice.startsWith(HOTEL_CHOICE)) return { hotel: choice.slice(HOTEL_CHOICE.length) };
@@ -86,10 +88,11 @@ export function renderBlocks(blocks: AgentBlock[], opts: RenderOptions): Rendere
     choices.push(command);
     return choices.length;
   };
+  // Past nine numbers, an option shows the command to send instead, so a question still has its answers.
   const offerLines = (items: { label: string; command: string }[]): string[] =>
-    items.flatMap((i) => {
+    items.map((i) => {
       const n = offer(i.command);
-      return n ? [`${n}. ${i.label}`] : [];
+      return n ? `${n}. ${i.label}` : `• ${i.label}: send “${i.command}”`;
     });
   const sendable = (actions: QuickAction[]) => actions.filter((a) => a.mode !== 'prefill').map((a) => ({ label: a.label, command: a.command }));
 

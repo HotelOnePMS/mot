@@ -625,8 +625,8 @@ describe('the always-on agent', () => {
     await prisma.staffWhatsAppLink.update({ where: { userId: owner.id }, data: { lastInboundAt: new Date(morning.getTime() - 2 * 24 * 3600_000) } });
     await runWatch({ propertyId: h.property.id, now: morning }); // the brief, as a template
     const brief = (await prisma.staffWhatsAppLink.findUniqueOrThrow({ where: { userId: owner.id } })).lastAlert!;
-    // A YES doesn't show the alert (it answers a plan), but it opens the 24-hour window.
-    expect(await say(number, 'yes')).toMatch(/nothing waiting/);
+    // A reaction doesn't show the alert, but it opens the 24-hour window.
+    await handleInbound(whatsAppConfig()!, { id: `wamid.${uid()}${uid()}`, from: number, text: null, type: 'reaction', emoji: '👍' });
 
     await prisma.guestRequest.create({ data: { propertyId: h.property.id, name: 'Noor Haddad', message: 'Do you have a crib?', source: 'PHONE', createdAt: at(h.today, 9) } });
     sent = [];
@@ -669,5 +669,24 @@ describe('the always-on agent', () => {
     expect(answer).not.toContain('Priya');
     expect(answer).toMatch(/No hotel is assigned/);
     expect(await say(number, 'DETAILS')).not.toContain('Priya');
+  });
+  it('numbers an alert on from the list the person is reading, and DETAILS brings its numbers back', async () => {
+    const h = await makeHotel({ timezone: LA });
+    const owner = await makeUser({ role: 'OWNER', propertyIds: [h.property.id] });
+    await arrivalWithoutRoom(h, owner.id);
+    const number = await linked(owner.id);
+    // Mid-conversation: their last reply offered two numbered options.
+    const chat = ['who’s arriving today?', 'forecast'];
+    await prisma.staffWhatsAppLink.update({ where: { userId: owner.id }, data: { choices: chat } });
+    sent = [];
+    await runWatch({ propertyId: h.property.id, now: at(h.today, 8) });
+    const brief = sent.find((m) => m.to === number)?.text ?? '';
+    expect(brief).toContain('(reply 3)');
+    expect((await prisma.staffWhatsAppLink.findUniqueOrThrow({ where: { userId: owner.id } })).choices).toEqual([...chat, choiceAt(h.property.id, 'assign rooms for today’s arrivals')]);
+
+    // Another question replaces the numbers; DETAILS shows the alert again with its own.
+    await say(number, 'who’s in house?');
+    expect(await say(number, 'DETAILS')).toBe(brief);
+    expect(await say(number, '3')).toMatch(/Please confirm/);
   });
 });

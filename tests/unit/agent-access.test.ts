@@ -66,16 +66,16 @@ describe('agent access', () => {
     u.capabilities.FRONT_DESK.lookup = false;
     const view = accessSwitches(parsePolicy(policyFromUpdate(u)));
     // The server says what each switch needs; the page locks it from its draft, which starts as what's stored.
-    expect(view.capabilities.find((c) => c.key === 'checkin')!.cells.FRONT_DESK).toEqual({ on: false, byDefault: true, needs: 'lookup' });
+    expect(view.capabilities.find((c) => c.key === 'checkin')!.cells.FRONT_DESK).toEqual({ on: false, byDefault: true, needs: ['lookup'] });
     const shown = draftSwitches(view, draftFrom(view));
     const cell = (key: string, role: PolicyRole) => shown.capabilities.find((c) => c.key === key)!.cells[role];
-    expect(cell('checkin', 'FRONT_DESK')).toEqual({ on: false, byDefault: true, needs: 'lookup', locked: 'Turn on “Look up guests and bookings” for front desk first.' });
-    expect(cell('reservations', 'HOUSEKEEPER')).toEqual({ on: false, byDefault: false, needs: 'lookup', locked: 'Turn on “Look up guests and bookings” for housekeeping first.' });
+    expect(cell('checkin', 'FRONT_DESK')).toEqual({ on: false, byDefault: true, needs: ['lookup'], locked: 'Turn on “Look up guests and bookings” for front desk first.' });
+    expect(cell('reservations', 'HOUSEKEEPER')).toEqual({ on: false, byDefault: false, needs: ['lookup'], locked: 'Turn on “Look up guests and bookings” for housekeeping first.' });
     expect(cell('whatsapp', 'HOUSEKEEPER').locked).toBe('Turn on “Use the agent” for housekeeping first.');
     expect(cell('checkin', 'MANAGER').locked).toBeUndefined();
-    // The front desk alert can't reach front desk without look-ups: shown off and locked, but still on the stored list.
-    expect(view.alerts.find((a) => a.kind === 'frontdesk')!.cells.FRONT_DESK).toEqual({ on: true, byDefault: true, needs: 'lookup' });
-    expect(shown.alerts.find((a) => a.kind === 'frontdesk')!.cells.FRONT_DESK).toEqual({ on: false, byDefault: true, needs: 'lookup', locked: 'Turn on “Look up guests and bookings” for front desk first.' });
+    // The front desk alert can't reach front desk without look-ups (nor any alert without WhatsApp): shown off and locked, but still on the stored list.
+    expect(view.alerts.find((a) => a.kind === 'frontdesk')!.cells.FRONT_DESK).toEqual({ on: true, byDefault: true, needs: ['whatsapp', 'lookup'] });
+    expect(shown.alerts.find((a) => a.kind === 'frontdesk')!.cells.FRONT_DESK).toEqual({ on: false, byDefault: true, needs: ['whatsapp', 'lookup'], locked: 'Turn on “Look up guests and bookings” for front desk first.' });
   });
 
   it('unlocks a switch as soon as what it needs is turned on in the draft', () => {
@@ -85,17 +85,23 @@ describe('agent access', () => {
     const alert = (kind: NoticeKind, role: 'FRONT_DESK' | 'HOUSEKEEPER') => draftSwitches(view, draft).alerts.find((a) => a.kind === kind)!.cells[role];
     expect(cell('checkin').locked).toBe('Turn on “Look up guests and bookings” for housekeeping first.');
     expect(cell('whatsapp').locked).toBe('Turn on “Use the agent” for housekeeping first.');
-    expect(alert('frontdesk', 'HOUSEKEEPER').locked).toBe('Turn on “Look up guests and bookings” for housekeeping first.');
+    // Alerts come on WhatsApp, so they wait for it first.
+    expect(alert('frontdesk', 'HOUSEKEEPER').locked).toBe('Turn on “Use the agent” for housekeeping first.');
+    expect(alert('housekeeping', 'HOUSEKEEPER').locked).toBe('Turn on “Use the agent” for housekeeping first.');
     expect(alert('pms', 'FRONT_DESK').locked).toBe('Turn on “Work in the hotel’s own PMS” for front desk first.');
 
-    // Nothing saved yet: turning on look-ups and the agent unlocks check-in, WhatsApp and the alerts that need them.
-    draft.capabilities.HOUSEKEEPER.lookup = true;
+    // Nothing saved yet: turning on the agent unlocks WhatsApp; with WhatsApp, look-ups unlock the front desk alert.
     draft.capabilities.HOUSEKEEPER.agent = true;
+    expect(cell('whatsapp')).toEqual({ on: false, byDefault: false, needs: ['agent'] });
+    expect(alert('frontdesk', 'HOUSEKEEPER').locked).toBe('Turn on “Use the agent on WhatsApp” for housekeeping first.');
+    draft.capabilities.HOUSEKEEPER.whatsapp = true;
+    expect(alert('frontdesk', 'HOUSEKEEPER').locked).toBe('Turn on “Look up guests and bookings” for housekeeping first.');
+    draft.capabilities.HOUSEKEEPER.lookup = true;
     draft.capabilities.FRONT_DESK.pms = true;
-    expect(cell('checkin')).toEqual({ on: false, byDefault: false, needs: 'lookup' });
-    expect(cell('whatsapp')).toEqual({ on: false, byDefault: false, needs: 'agent' });
-    expect(alert('frontdesk', 'HOUSEKEEPER')).toEqual({ on: false, byDefault: false, needs: 'lookup' });
-    expect(alert('pms', 'FRONT_DESK')).toEqual({ on: false, byDefault: false, needs: 'pms' });
+    expect(cell('checkin')).toEqual({ on: false, byDefault: false, needs: ['lookup'] });
+    expect(alert('frontdesk', 'HOUSEKEEPER')).toEqual({ on: false, byDefault: false, needs: ['whatsapp', 'lookup'] });
+    expect(alert('housekeeping', 'HOUSEKEEPER')).toEqual({ on: true, byDefault: true, needs: ['whatsapp'] });
+    expect(alert('pms', 'FRONT_DESK')).toEqual({ on: false, byDefault: false, needs: ['whatsapp', 'pms'] });
 
     // So check-in goes on in the same save.
     draft.capabilities.HOUSEKEEPER.checkin = true;
@@ -103,7 +109,7 @@ describe('agent access', () => {
     expect(cell('checkin').on).toBe(true);
     expect(alert('frontdesk', 'HOUSEKEEPER').on).toBe(true);
     const stored = parsePolicy(policyFromUpdate(updateFromDraft(view, draft)));
-    expect(stored.HOUSEKEEPER?.granted).toEqual(['agent.use', 'frontdesk.view', 'booking.view', 'booking.checkin', 'booking.checkout']);
+    expect(stored.HOUSEKEEPER?.granted).toEqual(['agent.use', 'whatsapp.use', 'frontdesk.view', 'booking.view', 'booking.checkin', 'booking.checkout']);
     expect(alertsFor(stored, 'HOUSEKEEPER')).toEqual(['frontdesk', 'housekeeping']);
   });
 
@@ -114,9 +120,9 @@ describe('agent access', () => {
     const shown = draftSwitches(view, draft);
     const locked = 'Turn on “Look up guests and bookings” for front desk first.';
     for (const key of ['checkin', 'assignRoom', 'notes', 'reservations']) {
-      expect(shown.capabilities.find((c) => c.key === key)!.cells.FRONT_DESK).toEqual({ on: false, byDefault: true, needs: 'lookup', locked });
+      expect(shown.capabilities.find((c) => c.key === key)!.cells.FRONT_DESK).toEqual({ on: false, byDefault: true, needs: ['lookup'], locked });
     }
-    expect(shown.alerts.find((a) => a.kind === 'frontdesk')!.cells.FRONT_DESK).toEqual({ on: false, byDefault: true, needs: 'lookup', locked });
+    expect(shown.alerts.find((a) => a.kind === 'frontdesk')!.cells.FRONT_DESK).toEqual({ on: false, byDefault: true, needs: ['whatsapp', 'lookup'], locked });
     const sent = updateFromDraft(view, draft);
     expect(sent.capabilities.FRONT_DESK).toMatchObject({ lookup: false, checkin: false, assignRoom: false, notes: false, reservations: false, roomStatus: true });
     // The alert keeps its place on the list, so it comes back with look-ups.
@@ -124,7 +130,7 @@ describe('agent access', () => {
 
     // What was on stays on underneath: turning look-ups back on before saving brings it back.
     draft.capabilities.FRONT_DESK.lookup = true;
-    expect(draftSwitches(view, draft).capabilities.find((c) => c.key === 'checkin')!.cells.FRONT_DESK).toEqual({ on: true, byDefault: true, needs: 'lookup' });
+    expect(draftSwitches(view, draft).capabilities.find((c) => c.key === 'checkin')!.cells.FRONT_DESK).toEqual({ on: true, byDefault: true, needs: ['lookup'] });
     expect(updateFromDraft(view, draft)).toEqual(updateFromDraft(view, draftFrom(view)));
   });
 
@@ -152,10 +158,13 @@ describe('agent access', () => {
     for (const r of POLICY_ROLES) for (const c of CAPABILITIES) draft.capabilities[r][c.key] = false;
     const shown = draftSwitches(view, draft);
     for (const a of shown.alerts) expect(a.cells.OWNER).toEqual({ on: DEFAULT_ALERTS.OWNER.includes(a.kind), byDefault: DEFAULT_ALERTS.OWNER.includes(a.kind) });
-    // Alerts no capability gives a role stay locked, and a housekeeper keeps the housekeeping alert (the page never takes the board away).
+    // Alerts no capability gives a role stay locked; a housekeeper's housekeeping alert needs only WhatsApp (the page never takes the board away).
     expect(shown.alerts.find((a) => a.kind === 'disputes')!.cells.HOUSEKEEPER.locked).toBe('Not available to housekeeping.');
-    expect(shown.alerts.find((a) => a.kind === 'housekeeping')!.cells.HOUSEKEEPER).toEqual({ on: true, byDefault: true });
-    expect(shown.alerts.find((a) => a.kind === 'housekeeping')!.cells.FRONT_DESK.locked).toBe('Turn on “Assign housekeeping” for front desk first.');
+    expect(shown.alerts.find((a) => a.kind === 'housekeeping')!.cells.HOUSEKEEPER).toEqual({ on: false, byDefault: true, needs: ['whatsapp'], locked: 'Turn on “Use the agent” for housekeeping first.' });
+    expect(shown.alerts.find((a) => a.kind === 'housekeeping')!.cells.FRONT_DESK.locked).toBe('Turn on “Use the agent” for front desk first.');
+    draft.capabilities.FRONT_DESK.agent = true;
+    draft.capabilities.FRONT_DESK.whatsapp = true;
+    expect(draftSwitches(view, draft).alerts.find((a) => a.kind === 'housekeeping')!.cells.FRONT_DESK.locked).toBe('Turn on “Assign housekeeping” for front desk first.');
   });
 
   it('stores alert lists only when they differ from the defaults', () => {

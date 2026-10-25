@@ -27,7 +27,7 @@ import { logError } from '../log';
 import { publicSiteUrl } from '../public-url';
 import { recordAudit } from '../services/audit';
 import { markReadAndTyping, sendText, type InboundMessage, type WhatsAppConfig } from './cloud';
-import { HOTEL_CHOICE, readChoice, renderBlocks } from './format';
+import { HOTEL_CHOICE, hotelBound, readChoice, renderBlocks } from './format';
 import { auditLink, linkByCode, maskNumber, parseLinkCommand, unlink } from './link';
 
 export type ChannelCommand =
@@ -175,16 +175,18 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
   }
 
   // An alert that went out as a template ("Reply to see the details"): their next message gets the whole alert first,
-  // while the agent on WhatsApp is still on for them here.
-  if (link.alertUnseen && !(cmd && ['yes', 'no', 'unlink', 'alerts'].includes(cmd.kind)) && canUseWhatsApp(await agentActor(person, hotel.id, await loadPolicy(hotel.id)))) {
+  // while the agent on WhatsApp is still on for them here. Only a YES or NO to a plan still waiting is left to answer it
+  // (a template goes out after a day's silence, so that's rare: "Yes" usually means "show me").
+  const answersPlan = (cmd?.kind === 'yes' || cmd?.kind === 'no') && planWaiting(link);
+  if (link.alertUnseen && !answersPlan && !(cmd && ['unlink', 'alerts'].includes(cmd.kind)) && canUseWhatsApp(await agentActor(person, hotel.id, await loadPolicy(hotel.id)))) {
     // Marked seen and read in one step, so an alert added to it meanwhile is shown too, and its numbers are the ones offered below.
-    const [held] = await prisma.$queryRaw<{ lastAlert: string | null; choices: string[] }[]>`
-      UPDATE staff_whatsapp_links SET "alertUnseen" = false WHERE "userId" = ${link.userId} AND "alertUnseen" RETURNING "lastAlert", choices`;
+    const [held] = await prisma.$queryRaw<{ lastAlert: string | null; alertChoices: string[] }[]>`
+      UPDATE staff_whatsapp_links SET "alertUnseen" = false, choices = "alertChoices" WHERE "userId" = ${link.userId} AND "alertUnseen" RETURNING "lastAlert", "alertChoices"`;
     if (held?.lastAlert) {
-      Object.assign(link, { lastAlert: held.lastAlert, choices: held.choices });
+      Object.assign(link, { lastAlert: held.lastAlert, choices: held.alertChoices });
       await reply(held.lastAlert);
-      // Asking to see it, "ok", or a number from a list they hadn't read yet: the alert is the whole answer.
-      if (cmd?.kind === 'pick' || cmd?.kind === 'ack' || cmd?.kind === 'details' || msg.type === 'button' || /^\d+$/.test(message.trim())) return;
+      // Asking to see it, "ok", "yes", "no", or a number from a list they hadn't read yet: the alert is the whole answer.
+      if (['pick', 'ack', 'details', 'yes', 'no'].includes(cmd?.kind ?? '') || msg.type === 'button' || /^\d+$/.test(message.trim())) return;
     } else link.alertUnseen = false;
   }
   if (!msg.text) {
@@ -228,6 +230,8 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
       return;
     case 'details':
       if (link.lastAlert) {
+        // Its numbers work again, whatever was offered since.
+        if (link.alertChoices.length) await prisma.staffWhatsAppLink.update({ where: { userId: link.userId }, data: { choices: link.alertChoices } });
         await reply(link.lastAlert);
         return;
       }
@@ -241,13 +245,16 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
         await reply(`You have one hotel: *${hotel.name}*.`);
         return;
       }
-      const shown = hotels.slice(0, MAX_LISTED);
-      const others = hotels.length > MAX_LISTED ? (await prisma.property.count({ where: scopeProperties(person) })) - MAX_LISTED : 0;
-      await prisma.staffWhatsAppLink.update({ where: { userId: link.userId }, data: { choices: shown.map((h) => `${HOTEL_CHOICE}${h.id}`), pendingPlan: null } });
+      // An alert's numbers stay (they act at their own hotel); the hotels number on from them. A plan waiting stays
+      // waiting: the chat is still on this hotel.
+      const kept = hotelBound(link.choices);
+      const shown = hotels.slice(0, Math.max(0, MAX_LISTED - kept.length));
+      const others = hotels.length > shown.length ? (await prisma.property.count({ where: scopeProperties(person) })) - shown.length : 0;
+      await prisma.staffWhatsAppLink.update({ where: { userId: link.userId }, data: { choices: [...kept, ...shown.map((h) => `${HOTEL_CHOICE}${h.id}`)] } });
       await reply(
         [
-          `You’re working on *${hotel.name}*. Reply with a number to switch:`,
-          ...shown.map((h, i) => `${i + 1}. ${h.name}`),
+          `You’re working on *${hotel.name}*.${shown.length ? ' Reply with a number to switch:' : ''}`,
+          ...shown.map((h, i) => `${kept.length + i + 1}. ${h.name}`),
           others ? `…and ${others} more. For those, send “switch to” and the hotel’s name.` : '',
         ]
           .filter(Boolean)
@@ -259,6 +266,10 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
       const matches = await hotelsNamed(person, cmd.name);
       if (matches.length !== 1) {
         await reply(matches.length ? `More than one hotel matches “${cmd.name}”: ${matches.map((h) => h.name).join(', ')}.` : `None of your hotels is called “${cmd.name}”. Send *HOTELS* to see them.`);
+        return;
+      }
+      if (matches[0].id === hotel.id) {
+        await reply(`You’re already working on *${hotel.name}*.`);
         return;
       }
       return switchHotel(person, link, matches[0], reply);
@@ -366,7 +377,8 @@ async function confirmPending(actor: Actor, link: Link, hotel: Hotel, reply: Rep
 }
 
 async function switchHotel(actor: Actor, link: Link, hotel: Hotel, reply: Reply): Promise<void> {
-  await prisma.staffWhatsAppLink.update({ where: { userId: link.userId }, data: { propertyId: hotel.id, memory: {}, pendingPlan: null, choices: [] } });
+  // An alert's numbers stay: they act at their own hotel.
+  await prisma.staffWhatsAppLink.update({ where: { userId: link.userId }, data: { propertyId: hotel.id, memory: {}, pendingPlan: null, choices: hotelBound(link.choices) } });
   await recordAudit({ actor, source: 'agent' }, hotel.id, 'COMMAND', `Switched WhatsApp to ${hotel.name}`, { channel: 'whatsapp' });
   await reply(`Now working on *${hotel.name}*. What would you like to know?`);
 }

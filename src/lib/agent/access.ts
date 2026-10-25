@@ -39,8 +39,8 @@ export interface AccessCell {
   byDefault: boolean;
   /** Why it can't be switched at all (e.g. the role never has the permission this needs). */
   locked?: string;
-  /** The capability (its key) this switch needs for the role: while that's off on the page, this switch is locked and shows off. */
-  needs?: string;
+  /** The capabilities (their keys) this switch needs for the role: while one is off on the page, this switch is locked and shows off. */
+  needs?: string[];
 }
 
 export interface AgentAccessView {
@@ -77,12 +77,21 @@ function blocker(v: Switches, draft: Draft, role: AlertRole, key: string): strin
   const cap = v.capabilities.find((c) => c.key === key);
   if (!cap || !(POLICY_ROLES as readonly string[]).includes(role)) return undefined;
   const cell = cap.cells[role as PolicyRole];
-  return (cell.needs && blocker(v, draft, role, cell.needs)) || (draft.capabilities[role as PolicyRole][key] ? undefined : key);
+  return firstBlocker(v, draft, role, cell.needs) ?? (draft.capabilities[role as PolicyRole][key] ? undefined : key);
+}
+
+/** The first of these capabilities (or one they need) that is off in the draft. */
+function firstBlocker(v: Switches, draft: Draft, role: AlertRole, keys: string[] = []): string | undefined {
+  for (const k of keys) {
+    const b = blocker(v, draft, role, k);
+    if (b) return b;
+  }
+  return undefined;
 }
 
 /** Works out one switch from the draft: locked while what it needs is off there, and then shown off (its draft value stays underneath). */
 function fromDraft(v: Switches, draft: Draft, role: AlertRole, cell: AccessCell, value: boolean): AccessCell {
-  const first = cell.needs ? blocker(v, draft, role, cell.needs) : undefined;
+  const first = firstBlocker(v, draft, role, cell.needs);
   const locked = cell.locked ?? (first ? `Turn on “${v.capabilities.find((c) => c.key === first)!.label}” for ${ROLE_WORDS[role]} first.` : undefined);
   return { ...cell, on: value && !locked, ...(locked ? { locked } : {}) };
 }
