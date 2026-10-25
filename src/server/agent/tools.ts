@@ -7,7 +7,7 @@
  */
 import { prisma } from '@/lib/prisma';
 import type { AgentBlock, AgentContextState, QuickAction, RoomOption } from '@/lib/agent/blocks';
-import type { BookingStatus, BookingSummary, ISODate, OccupancyDay } from '@/lib/dto';
+import type { BookingStatus, BookingSummary, ISODate, OccupancyDay, RoomSummary } from '@/lib/dto';
 import { money, PAYMENT_STATUS } from '@/lib/status';
 import { can, type Permission } from '../authz';
 import { addDaysISO, diffDays, eachNight, formatDay, toISODate } from '../dates';
@@ -164,7 +164,7 @@ function fail(text: string): PlanOutput {
 }
 
 /** Something the role can't do through the agent, and where that's changed. */
-const denied = (text: string) => `${text} The owner can change this under Agent access.`;
+export const denied = (text: string) => `${text} The owner can change this under Agent access.`;
 
 function summarizeOccupancy(days: OccupancyDay[]) {
   const sold = days.reduce((s, d) => s + d.roomsSold, 0);
@@ -250,6 +250,15 @@ const READ_PERMISSION: Partial<Record<Intent['kind'], { perm: Permission; denied
   housekeeping: { perm: 'housekeeping.view', denied: 'Your role can’t see housekeeping.' },
   activity: { perm: 'activity.view', denied: 'The activity log is visible to managers and owners.' },
 };
+
+/** A room as someone without look-ups sees it: occupied or arriving, but not by whom. */
+function withoutGuests(r: RoomSummary): RoomSummary {
+  return {
+    ...r,
+    current: r.current && { bookingId: '', code: '', guestName: 'Guest', checkOut: r.current.checkOut },
+    arriving: r.arriving && { bookingId: '', code: '', guestName: 'Guest', checkIn: r.arriving.checkIn },
+  };
+}
 
 export async function runRead(ctx: ToolCtx, intent: Intent): Promise<ReadOutput> {
   const { actor, propertyId, today } = ctx;
@@ -414,7 +423,9 @@ export async function runRead(ctx: ToolCtx, intent: Intent): Promise<ReadOutput>
       };
     }
     case 'rooms': {
-      const board = await roomBoard(actor, propertyId, today);
+      // Rooms for anyone who may see them; who is in them only for people who may look up guests.
+      const seesGuests = can(actor, 'booking.view');
+      const board = (await roomBoard(actor, propertyId, today)).map((r) => (seesGuests ? r : withoutGuests(r)));
       let rooms = board;
       const f = intent.filter;
       if (f.departingOn) {

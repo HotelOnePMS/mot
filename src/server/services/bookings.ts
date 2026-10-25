@@ -24,7 +24,7 @@ import { bookingInclude, floorNumber, toBookingSummary, type BookingWithRelation
 // Lookup
 // ---------------------------------------------------------------------------
 
-const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 export function generateBookingCode(length = 6): string {
   let out = '';

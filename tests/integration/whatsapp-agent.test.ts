@@ -192,6 +192,26 @@ describe('the agent on WhatsApp', () => {
     expect(JSON.parse(log?.detail ?? '{}').summary).toMatch(/Check guests in and out: off for front desk/);
   });
 
+  it('shows who is in each room only to people who may look up guests', async () => {
+    const h = await makeHotel();
+    const owner = await makeUser({ role: 'OWNER', propertyIds: [h.property.id] });
+    const desk = await makeUser({ role: 'FRONT_DESK', propertyIds: [h.property.id] });
+    const guestName = `Hidden${uid()}`;
+    const b = await createDeskReservation(
+      { actor: await actorFor(owner.id), source: 'classic' },
+      { propertyId: h.property.id, roomTypeId: h.roomType.id, checkIn: h.today, checkOut: addDaysISO(h.today, 2), guests: 1, rooms: 1, guest: { firstName: guestName, lastName: 'Guest' } },
+    );
+    await prisma.booking.update({ where: { id: b.id }, data: { status: 'CHECKED_IN', roomId: h.rooms[0].id } });
+    const deskPhone = await linked(desk.id);
+    expect(await say(deskPhone, 'room board')).toContain(guestName);
+
+    await saveAccess(await actorFor(owner.id), access(h.property.id, (u) => (u.capabilities.FRONT_DESK.lookup = false)));
+    const board = await say(deskPhone, 'room board');
+    expect(board).toContain(h.rooms[0].roomNumber);
+    expect(board).not.toContain(guestName);
+    expect(board).not.toContain(b.code);
+  });
+
   it('can’t be used for a hotel the person isn’t on', async () => {
     const [mine, theirs] = await Promise.all([makeHotel(), makeHotel()]);
     const owner = await makeUser({ role: 'OWNER', propertyIds: [mine.property.id] });
@@ -595,5 +615,59 @@ describe('the always-on agent', () => {
     await prisma.guestRequest.create({ data: { propertyId: h.property.id, name: 'Quiet Please', message: 'Hello', source: 'PHONE', createdAt: afternoon(h.today) } });
     await runWatch({ propertyId: h.property.id, now: afternoon(h.today) });
     expect(sent.filter((m) => m.to === number && m.text?.includes('Quiet Please'))).toEqual([]);
+  });
+  it('shows an unread template alert with the next alert, so it’s never lost', async () => {
+    const h = await makeHotel({ timezone: LA });
+    const owner = await makeUser({ role: 'OWNER', propertyIds: [h.property.id] });
+    await arrivalWithoutRoom(h, owner.id);
+    const number = await linked(owner.id);
+    const morning = at(h.today, 8);
+    await prisma.staffWhatsAppLink.update({ where: { userId: owner.id }, data: { lastInboundAt: new Date(morning.getTime() - 2 * 24 * 3600_000) } });
+    await runWatch({ propertyId: h.property.id, now: morning }); // the brief, as a template
+    const brief = (await prisma.staffWhatsAppLink.findUniqueOrThrow({ where: { userId: owner.id } })).lastAlert!;
+    // A YES doesn't show the alert (it answers a plan), but it opens the 24-hour window.
+    expect(await say(number, 'yes')).toMatch(/nothing waiting/);
+
+    await prisma.guestRequest.create({ data: { propertyId: h.property.id, name: 'Noor Haddad', message: 'Do you have a crib?', source: 'PHONE', createdAt: at(h.today, 9) } });
+    sent = [];
+    await runWatch({ propertyId: h.property.id, now: at(h.today, 10) });
+    const text = sent.filter((m) => m.to === number).map((m) => m.text).join('');
+    expect(text.startsWith(brief)).toBe(true);
+    expect(text).toContain('Do you have a crib?');
+    expect((await prisma.staffWhatsAppLink.findUniqueOrThrow({ where: { userId: owner.id } })).alertUnseen).toBe(false);
+    expect(await say(number, '1')).toMatch(/Please confirm/);
+  });
+
+  it('numbers an unread alert from 1, whatever the chat offered before', async () => {
+    const h = await makeHotel({ timezone: LA });
+    const owner = await makeUser({ role: 'OWNER', propertyIds: [h.property.id] });
+    await arrivalWithoutRoom(h, owner.id);
+    const number = await linked(owner.id);
+    const early = at(h.today, 7);
+    // Yesterday's chat left three numbered replies; they haven't written since.
+    await prisma.staffWhatsAppLink.update({
+      where: { userId: owner.id },
+      data: { lastInboundAt: new Date(early.getTime() - 2 * 24 * 3600_000), choices: ['who’s arriving today?', 'forecast', 'brief me'] },
+    });
+    await prisma.guestRequest.create({ data: { propertyId: h.property.id, name: 'Lena Park', message: 'Is breakfast included?', source: 'PHONE', createdAt: early } });
+    await runWatch({ propertyId: h.property.id, now: early }); // a template with no numbered reply
+    expect((await prisma.staffWhatsAppLink.findUniqueOrThrow({ where: { userId: owner.id } })).choices).toEqual([]);
+
+    await runWatch({ propertyId: h.property.id, now: at(h.today, 8) }); // the brief, added to it
+    const shown = await say(number, 'Show me');
+    expect(shown).toMatch(/Is breakfast included\?[\s\S]*Good morning[\s\S]*\(reply 1\)/);
+    expect(await say(number, '1')).toMatch(/Please confirm/);
+  });
+
+  it('doesn’t show a held alert to someone no longer at the hotel', async () => {
+    const h = await makeHotel({ timezone: LA });
+    const desk = await makeUser({ role: 'FRONT_DESK', propertyIds: [h.property.id] });
+    const number = await linked(desk.id);
+    await prisma.staffWhatsAppLink.update({ where: { userId: desk.id }, data: { alertUnseen: true, lastAlert: '💬 Message from Priya Secret: my card ends 4242', choices: [] } });
+    await prisma.user.update({ where: { id: desk.id }, data: { assignedProperties: { deleteMany: {} } } });
+    const answer = await say(number, 'hi');
+    expect(answer).not.toContain('Priya');
+    expect(answer).toMatch(/No hotel is assigned/);
+    expect(await say(number, 'DETAILS')).not.toContain('Priya');
   });
 });

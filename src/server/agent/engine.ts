@@ -39,7 +39,7 @@ import {
   suggestionBlocks,
   trackableShape,
 } from './skills';
-import { bookingActions, executeStep, followUps, maxRisk, planWrite, runRead, statusLine, type PlanOutput, type ToolCtx } from './tools';
+import { bookingActions, denied, executeStep, followUps, maxRisk, planWrite, runRead, statusLine, type PlanOutput, type ToolCtx } from './tools';
 
 export interface AgentRunInput {
   actor: Actor;
@@ -332,7 +332,7 @@ async function* runBridged(input: AgentRunInput, message: string, today: string)
     return;
   }
   if (!can(actor, 'bridge.use')) {
-    yield { type: 'error', message: 'Your role can’t send work to the PMS. Ask a manager or the owner to do it, or to give you that access.' };
+    yield { type: 'error', message: denied('Your role can’t send work to the PMS. Ask a manager or the owner to do it.') };
     return;
   }
   const intents = parseMessage(message, today);

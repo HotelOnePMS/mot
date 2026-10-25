@@ -163,25 +163,32 @@ async function respond(cfg: WhatsAppConfig, msg: InboundMessage, reply: Reply): 
 
   let message = (msg.text ?? '').slice(0, 600);
   const cmd = msg.text ? parseChannelCommand(message) : null;
-  // An alert that went out as a template ("Reply to see the details"): their next message gets the whole alert first.
-  if (link.alertUnseen && link.lastAlert && !(cmd && ['yes', 'no', 'unlink', 'alerts'].includes(cmd.kind))) {
-    const { count } = await prisma.staffWhatsAppLink.updateMany({ where: { userId: link.userId, alertUnseen: true }, data: { alertUnseen: false } });
-    if (count) {
-      await reply(link.lastAlert);
-      // Asking to see it, "ok", or a number from a list they hadn't read yet: the alert is the whole answer.
-      if (cmd?.kind === 'pick' || cmd?.kind === 'ack' || cmd?.kind === 'details' || msg.type === 'button' || /^\d+$/.test(message.trim())) return;
-    }
-  }
-  if (!msg.text) {
-    await reply('I can only read text messages for now.');
-    return;
-  }
 
   // Only the first few for HOTELS; every other hotel is looked up by id or name within the person's hotels.
   const hotels = await prisma.property.findMany({ where: scopeProperties(person), orderBy: { createdAt: 'asc' }, select: HOTEL_FIELDS, take: MAX_LISTED + 1 });
   let hotel = (link.propertyId ? await hotelById(person, link.propertyId) : null) ?? hotels[0];
   if (!hotel) {
+    // A held alert is about a hotel they no longer have: it isn't shown.
+    if (link.alertUnseen) await prisma.staffWhatsAppLink.update({ where: { userId: link.userId }, data: { alertUnseen: false, lastAlert: null, choices: [] } });
     await reply('No hotel is assigned to your account yet. Ask the owner to add you to one.');
+    return;
+  }
+
+  // An alert that went out as a template ("Reply to see the details"): their next message gets the whole alert first,
+  // while the agent on WhatsApp is still on for them here.
+  if (link.alertUnseen && !(cmd && ['yes', 'no', 'unlink', 'alerts'].includes(cmd.kind)) && canUseWhatsApp(await agentActor(person, hotel.id, await loadPolicy(hotel.id)))) {
+    // Marked seen and read in one step, so an alert added to it meanwhile is shown too, and its numbers are the ones offered below.
+    const [held] = await prisma.$queryRaw<{ lastAlert: string | null; choices: string[] }[]>`
+      UPDATE staff_whatsapp_links SET "alertUnseen" = false WHERE "userId" = ${link.userId} AND "alertUnseen" RETURNING "lastAlert", choices`;
+    if (held?.lastAlert) {
+      Object.assign(link, { lastAlert: held.lastAlert, choices: held.choices });
+      await reply(held.lastAlert);
+      // Asking to see it, "ok", or a number from a list they hadn't read yet: the alert is the whole answer.
+      if (cmd?.kind === 'pick' || cmd?.kind === 'ack' || cmd?.kind === 'details' || msg.type === 'button' || /^\d+$/.test(message.trim())) return;
+    } else link.alertUnseen = false;
+  }
+  if (!msg.text) {
+    await reply('I can only read text messages for now.');
     return;
   }
 

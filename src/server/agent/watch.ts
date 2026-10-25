@@ -172,9 +172,11 @@ export function alertMessage(
   notices: Notice[],
   siteUrl: string | null,
   propertyId: string,
-  opts: { numbered?: number } = {}
+  opts: { numbered?: number; chatHotel?: string | null } = {}
 ): { text: string; summary: string; choices: string[] } {
   const numbered = opts.numbered ?? 0;
+  // A command sent as text runs at the chat's hotel: for another hotel, they switch first.
+  const send = (command: string) => (opts.chatHotel === propertyId ? `Send “${command}”` : `Send “switch to ${hotelName}”, then “${command}”`);
   const choices: string[] = [];
   const lines: string[] = [`🔔 *${hotelName}*${notices.length > 1 ? ` — ${notices.length} things need you` : ''}`];
   for (const n of notices) {
@@ -184,7 +186,7 @@ export function alertMessage(
       choices.push(choiceAt(propertyId, n.action.command));
       lines.push(`Reply *${numbered + choices.length}* to: ${n.action.label}`);
     } else if (n.action) {
-      lines.push(`Send “${n.action.command}”`);
+      lines.push(send(n.action.command));
     } else if (n.href) {
       lines.push(siteUrl ? `${siteUrl}${n.href}` : `Open ${n.href} in the console`);
     }
@@ -206,14 +208,16 @@ export interface RoundSection {
  * through (at most nine numbered replies). `more` alerts didn't fit and
  * come in the next message. `offered` are the numbered replies of an alert
  * the person hasn't read yet: this message's numbers follow on from them,
- * and `choices` includes them. `hotels` and `summary` are the alert
+ * and `choices` includes them. `chatHotel` is the hotel the chat is on,
+ * where a command sent as text runs. `hotels` and `summary` are the alert
  * template's two variables.
  */
 export function roundMessage(
   sections: RoundSection[],
   siteUrl: string | null,
   more = 0,
-  offered: string[] = []
+  offered: string[] = [],
+  chatHotel: string | null = null
 ): { text: string; summary: string; choices: string[]; hotels: string } {
   const used = sections.filter((s) => s.brief?.length || s.notices.length);
   const briefs = used.filter((s) => s.brief?.length);
@@ -228,7 +232,7 @@ export function roundMessage(
   }
   for (const s of used) {
     if (!s.notices.length) continue;
-    const m = alertMessage(s.hotel.name, s.notices, siteUrl, s.hotel.id, { numbered: choices.length });
+    const m = alertMessage(s.hotel.name, s.notices, siteUrl, s.hotel.id, { numbered: choices.length, chatHotel });
     parts.push(m.text);
     choices.push(...m.choices);
   }
@@ -447,47 +451,80 @@ async function briefFor(actor: Actor, hotel: { id: string; name: string }, today
   }
 }
 
+/** An unread alert is kept to about this size; past it, or past nine numbers, it starts over with the newest round. */
+const MAX_HELD = 12_000;
+const HELD_DROPPED = '_Earlier alerts since you last wrote are left out to keep this short. Send “brief me” for the current picture._';
+
 /**
- * Sends inside the 24-hour window as a normal message; outside it, as the
- * approved alert template. Either way the chat keeps the whole message to
- * show (on the person's next message, after a template) and its numbered
- * replies, which replace the last ones only when it has some. Nothing is
- * kept for a send that failed.
+ * This round's message after an alert the person hasn't read yet: added
+ * below it, numbered on from its replies. When that would run past nine
+ * numbers or get too long, the newest round replaces it, numbered from 1, so
+ * every number the person sees works and the newest alerts always have one.
+ */
+export function withHeld(held: { text: string; choices: string[] } | null, sections: RoundSection[], siteUrl: string | null, more: number, chatHotel: string | null) {
+  const own = roundMessage(sections, siteUrl, more, [], chatHotel);
+  if (!held) return own;
+  const added = roundMessage(sections, siteUrl, more, held.choices, chatHotel);
+  const text = `${held.text}\n\n${added.text}`;
+  if (held.choices.length + own.choices.length <= MAX_CHOICES && text.length <= MAX_HELD) return { ...added, text };
+  return { ...own, text: `${HELD_DROPPED}\n\n${own.text}` };
+}
+
+/** The alert the chat is still holding for the person to read, if any. */
+async function heldAlert(userId: string) {
+  const link = await prisma.staffWhatsAppLink.findUnique({ where: { userId }, select: { lastAlert: true, alertUnseen: true, choices: true } });
+  if (!link) return { link: null, held: null };
+  return { link, held: link.alertUnseen && link.lastAlert ? { text: link.lastAlert, choices: link.choices } : null };
+}
+
+/**
+ * Sends inside the 24-hour window as a normal message (with any alert they
+ * haven't read yet first); outside it, as the approved alert template.
+ * Either way the chat keeps the whole message to show (on the person's next
+ * message, after a template) and its numbered replies. Nothing is kept for a
+ * send that failed.
  */
 async function deliver(cfg: WhatsAppConfig, r: Recipient, sections: RoundSection[], site: string | null, more: number, template: WhatsAppConfig['alertTemplate']): Promise<boolean> {
   const userId = r.link.userId;
-  const msg = roundMessage(sections, site, more);
+  const chatHotel = r.link.propertyId ?? (r.person.propertyIds !== 'ALL' && r.person.propertyIds.length === 1 ? r.person.propertyIds[0] : null);
   try {
-    if (template) await sendTemplate(cfg, r.link.number, template, [msg.hotels, msg.summary]);
-    else await sendText(cfg, r.link.number, msg.text);
+    if (template) {
+      const msg = roundMessage(sections, site, more, [], chatHotel);
+      await sendTemplate(cfg, r.link.number, template, [msg.hotels, msg.summary]);
+    } else {
+      const { held } = await heldAlert(userId);
+      const msg = withHeld(held, sections, site, more, chatHotel);
+      await sendText(cfg, r.link.number, msg.text);
+      // Their latest numbers are this message's. A message with none keeps the chat's (it may be mid-conversation), unless it replaced an unread alert's.
+      await prisma.staffWhatsAppLink
+        .update({ where: { userId }, data: { lastAlert: msg.text, alertUnseen: false, ...(msg.choices.length || held ? { choices: msg.choices } : {}) } })
+        .catch((e) => logError('agent/watch', `Saving the alert for ${userId} failed:`, e));
+      return true;
+    }
   } catch (e) {
     logError('agent/watch', `Alert to ${userId} failed:`, e);
     return false;
   }
-  await (template
-    ? keepUnseen(userId, sections, site, more)
-    : prisma.staffWhatsAppLink.update({ where: { userId }, data: { lastAlert: msg.text, alertUnseen: false, ...(msg.choices.length ? { choices: msg.choices } : {}) } })
-  ).catch((e) => logError('agent/watch', `Saving the alert for ${userId} failed:`, e));
+  await keepUnseen(userId, sections, site, more, chatHotel).catch((e) => logError('agent/watch', `Saving the alert for ${userId} failed:`, e));
   return true;
 }
 
 /**
- * Keeps a template's whole message for the person's next message. While the
- * one before is still unread, this one is added after it, numbered on from
- * its replies, so the chat shows both and every number works. The template
- * itself carries no numbers, so they're worked out against what the chat
- * holds now, and again if it changes meanwhile (they wrote, or another round
- * added to it).
+ * Keeps a template's whole message for the person's next message, added to
+ * any alert they haven't read yet (see withHeld). The template itself carries
+ * no numbers, so they're worked out against what the chat holds now, and
+ * again if it changes meanwhile (they wrote, or another round added to it).
+ * The first unread alert's numbers replace the chat's old ones, even when it
+ * has none, so later rounds number on from the alert's own.
  */
-async function keepUnseen(userId: string, sections: RoundSection[], site: string | null, more: number): Promise<void> {
+async function keepUnseen(userId: string, sections: RoundSection[], site: string | null, more: number, chatHotel: string | null): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const link = await prisma.staffWhatsAppLink.findUnique({ where: { userId }, select: { lastAlert: true, alertUnseen: true, choices: true } });
+    const { link, held } = await heldAlert(userId);
     if (!link) return; // unlinked meanwhile
-    const earlier = link.alertUnseen ? link.lastAlert : null;
-    const msg = roundMessage(sections, site, more, earlier ? link.choices : []);
+    const msg = withHeld(held, sections, site, more, chatHotel);
     const { count } = await prisma.staffWhatsAppLink.updateMany({
       where: { userId, lastAlert: link.lastAlert, alertUnseen: link.alertUnseen, choices: { equals: link.choices } },
-      data: { lastAlert: earlier ? `${earlier}\n\n${msg.text}` : msg.text, alertUnseen: true, ...(msg.choices.length ? { choices: msg.choices } : {}) },
+      data: { lastAlert: msg.text, alertUnseen: true, choices: msg.choices },
     });
     if (count) return;
   }

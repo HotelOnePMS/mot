@@ -9,6 +9,7 @@ import type { ISODate } from '@/lib/dto';
 import { BOOKING_STATUS } from '@/lib/status';
 import { can, type Actor } from '../authz';
 import { formatDay, toISODate } from '../dates';
+import { CODE_ALPHABET } from '../services/bookings';
 import { bookingInclude, personName, type BookingWithRelations } from '../services/mappers';
 import { codeRef, type GuestRef } from './nlu';
 
@@ -97,7 +98,7 @@ function replaceRef(message: string, name: string | undefined, code: string): st
 }
 
 /** One word in the letters and digits booking codes are made of (generateBookingCode in services/bookings.ts). */
-const BOOKING_CODE_RE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6,8}$/;
+const BOOKING_CODE_RE = new RegExp(`^[${CODE_ALPHABET}]{6,8}$`);
 
 const PURPOSE_WORD: Record<BookingPurpose, string> = {
   checkIn: 'arriving today',
