@@ -735,3 +735,165 @@ describe('refund with an allowance', () => {
     expect(await prisma.folioAllowance.count({ where: { bookingId: booking.id } })).toBe(0);
   });
 });
+
+describe('a reservation of several room types as one account', () => {
+  /** Queen 200, Suite 600, King 400 for two nights, paid at the hotel unless deposits are given (on the lead line). */
+  async function threeRoomTypes(deposits?: { queen: number; suite: number; king: number }) {
+    const h = await makeHotel({ basePrice: 100 });
+    const suite = await prisma.roomType.create({ data: { propertyId: h.property.id, name: 'Suite', capacity: 4, basePrice: 300, totalRooms: 1, amenities: [] } });
+    const king = await prisma.roomType.create({ data: { propertyId: h.property.id, name: 'King', capacity: 2, basePrice: 200, totalRooms: 1, amenities: [] } });
+    const desk = { actor: await actorFor((await makeUser({ role: 'FRONT_DESK', propertyIds: [h.property.id] })).id), source: 'classic' as const };
+    const managerUser = await makeUser({ role: 'MANAGER', propertyIds: [h.property.id] });
+    const manager = { actor: await actorFor(managerUser.id), source: 'classic' as const };
+    const guest = await makeUser({ role: 'CUSTOMER' });
+    const rows = await createReservation({
+      userId: guest.id,
+      propertyId: h.property.id,
+      checkIn: addDaysISO(h.today, 3),
+      checkOut: addDaysISO(h.today, 5),
+      guests: 5,
+      lines: [
+        { roomTypeId: h.roomType.id, rooms: 1 },
+        { roomTypeId: suite.id, rooms: 1 },
+        { roomTypeId: king.id, rooms: 1 },
+      ],
+      paymentStatus: deposits ? 'DEPOSIT_PAID' : 'PAY_AT_PROPERTY',
+    });
+    const q = rows.find((r) => r.roomTypeId === h.roomType.id)!;
+    const s = rows.find((r) => r.roomTypeId === suite.id)!;
+    const k = rows.find((r) => r.roomTypeId === king.id)!;
+    const lead = rows.find((r) => r.code === r.groupCode)!;
+    let payment = null as null | { id: string };
+    if (deposits) {
+      for (const [line, due] of [[q, deposits.queen], [s, deposits.suite], [k, deposits.king]] as const) await prisma.booking.update({ where: { id: line.id }, data: { paymentDue: due } });
+      payment = await prisma.payment.create({
+        data: { bookingId: lead.id, propertyId: h.property.id, method: 'ONLINE', kind: 'DEPOSIT', status: 'SUCCEEDED', amount: deposits.queen + deposits.suite + deposits.king, currency: 'usd', stripePaymentIntentId: `pi_test_${uid()}`, paidAt: new Date() },
+      });
+    }
+    session.userId = managerUser.id;
+    return { desk, manager, q, s, k, lead, payment };
+  }
+  const line = async (actor: Actor, id: string) => {
+    const x = await summaryOf(actor, id);
+    return { balance: x.balance, status: x.paymentStatus, due: x.checkOutDue, reservation: x.reservationBalance };
+  };
+
+  beforeEach(() => {
+    stripe.refunded.clear();
+    stripe.byKey.clear();
+    stripe.api.refunds.create.mockClear();
+  });
+
+  it('a cancelled room type keeps the deposit the hotel kept: the others still owe their remainder, and the desk collects it', async () => {
+    const { desk, q, s, k } = await threeRoomTypes({ queen: 100, suite: 300, king: 200 });
+    await transitionBooking(desk, s.id, 'CANCELLED');
+    expect(await line(desk.actor, q.id)).toMatchObject({ balance: 100, due: 300, reservation: 300 });
+    expect(await line(desk.actor, k.id)).toMatchObject({ balance: 200, due: 300 });
+    expect((await getDeskPayments(desk.actor, q.id)).balance).toBe(300);
+    expect((await getFolio(desk.actor, q.id)).reservation?.balance).toBe(300);
+    await recordCashPayment(desk, q.id, { kind: 'PAYMENT', amount: 300 });
+    for (const id of [q.id, k.id]) expect(await line(desk.actor, id)).toMatchObject({ balance: 0, due: 0, status: 'PAID' });
+  });
+
+  it('a no-show’s money kept by the hotel isn’t a credit: a goodwill refund with an allowance still works', async () => {
+    const { desk, q, k, payment } = await threeRoomTypes({ queen: 200, suite: 600, king: 400 });
+    await prisma.booking.updateMany({ where: { id: { in: [q.id, k.id] } }, data: { status: 'CONFIRMED' } });
+    await transitionBooking(desk, k.id, 'NO_SHOW').catch(async () => prisma.booking.update({ where: { id: k.id }, data: { status: 'NO_SHOW' } }));
+    expect((await line(desk.actor, q.id)).reservation).toBe(0);
+    await refundPayment(q.id, { paymentId: payment!.id, amount: 50, reason: 'Pool closed', allowance: true });
+    expect(await line(desk.actor, q.id)).toMatchObject({ balance: 0, reservation: 0 });
+  });
+
+  it('when every room type has ended, the payment is shared as before (not equally)', async () => {
+    const { desk, manager, q, s, k } = await threeRoomTypes();
+    await recordCashPayment(desk, q.id, { kind: 'PAYMENT', amount: 1200 });
+    for (const id of [s.id, q.id, k.id]) await prisma.booking.update({ where: { id }, data: { status: 'CANCELLED' } });
+    const cash = await prisma.payment.findFirstOrThrow({ where: { bookingId: { in: [q.id, s.id, k.id] }, method: 'CASH' } });
+    await refundCash(manager, cash.id, { amount: 1200 });
+    for (const id of [q.id, s.id, k.id]) expect((await summaryOf(desk.actor, id)).balance).toBe(Number((await prisma.booking.findUniqueOrThrow({ where: { id } })).totalPrice));
+  });
+
+  it('cancelling or reinstating a room type updates the others’ payment statuses', async () => {
+    const { desk, manager, q, s, k } = await threeRoomTypes();
+    await recordCashPayment(desk, q.id, { kind: 'PAYMENT', amount: 600 });
+    expect((await line(desk.actor, q.id)).status).toBe('DEPOSIT_PAID');
+    await transitionBooking(desk, s.id, 'CANCELLED');
+    for (const id of [q.id, k.id]) expect(await line(desk.actor, id)).toMatchObject({ balance: 0, status: 'PAID' });
+    // The cancelled one was to be paid at the hotel and holds nothing now: to pay at the hotel (not paid, nor "awaiting payment").
+    expect((await prisma.booking.findUniqueOrThrow({ where: { id: s.id } })).paymentStatus).toBe('PAY_AT_PROPERTY');
+    // Reinstated (a manager), it shares the payment again: everyone partly paid.
+    await transitionBooking(manager, s.id, 'CONFIRMED');
+    for (const id of [q.id, s.id, k.id]) expect((await line(desk.actor, id)).status).toBe('DEPOSIT_PAID');
+  });
+
+  it('refunding a credit leaves the room types that were exactly paid as paid', async () => {
+    const { desk, manager, q, s, k, payment } = await threeRoomTypes({ queen: 200, suite: 600, king: 400 });
+    await addAllowance(manager, q.id, { amount: 100, reason: 'Noise' });
+    expect((await line(desk.actor, q.id)).reservation).toBe(-100);
+    await refundPayment(q.id, { paymentId: payment!.id, amount: 100 });
+    for (const id of [s.id, k.id]) expect(await line(desk.actor, id)).toMatchObject({ balance: 0, status: 'PAID' });
+    expect((await line(desk.actor, q.id)).balance).toBe(0);
+  });
+
+  it('a credit handed back comes off the room type in credit, not the deposit a cancelled one kept', async () => {
+    const { desk, manager, q, s, k } = await threeRoomTypes({ queen: 100, suite: 300, king: 200 });
+    await transitionBooking(desk, k.id, 'CANCELLED');
+    await recordCashPayment(desk, q.id, { kind: 'PAYMENT', amount: 400 });
+    await addAllowance(manager, q.id, { amount: 100, reason: 'Noise' });
+    expect((await line(desk.actor, q.id)).reservation).toBe(-100);
+    const cash = await prisma.payment.findFirstOrThrow({ where: { bookingId: { in: [q.id, s.id, k.id] }, method: 'CASH' } });
+    await refundCash(manager, cash.id, { amount: 100 });
+    expect(await line(desk.actor, q.id)).toMatchObject({ balance: 0, status: 'PARTIALLY_REFUNDED', reservation: 0 });
+    expect(await line(desk.actor, s.id)).toMatchObject({ balance: 0, status: 'PAID' });
+    // The king's deposit is still the hotel's.
+    expect((await summaryOf(desk.actor, k.id)).amountPaid).toBe(200);
+    expect(await prisma.refundShare.findMany({ where: { paymentId: cash.id }, select: { bookingId: true, amount: true } })).toMatchObject([{ bookingId: q.id }]);
+  });
+
+  it('a refund stays with the room type it was for when another is cancelled later', async () => {
+    const { desk, manager, q, s, k, payment } = await threeRoomTypes({ queen: 200, suite: 600, king: 400 });
+    await addAllowance(manager, q.id, { amount: 100, reason: 'Noise' });
+    await refundPayment(q.id, { paymentId: payment!.id, amount: 100 });
+    expect((await line(desk.actor, q.id)).reservation).toBe(0);
+    await transitionBooking(desk, k.id, 'CANCELLED');
+    // The king keeps all it paid; the credit already refunded isn't owed again, nor counted twice.
+    expect((await summaryOf(desk.actor, k.id)).amountPaid).toBe(400);
+    expect(await line(desk.actor, q.id)).toMatchObject({ balance: 0, reservation: 0 });
+    expect(await line(desk.actor, s.id)).toMatchObject({ balance: 0, status: 'PAID' });
+  });
+
+  it('a refund from a cancelled room type’s page comes off that room type, even with a credit elsewhere', async () => {
+    const { desk, manager, q, s, k, payment } = await threeRoomTypes({ queen: 200, suite: 600, king: 400 });
+    await transitionBooking(desk, k.id, 'CANCELLED');
+    await addAllowance(manager, q.id, { amount: 100, reason: 'Noise' });
+    await refundPayment(k.id, { paymentId: payment!.id, amount: 400 });
+    expect((await prisma.booking.findUniqueOrThrow({ where: { id: k.id } })).paymentStatus).toBe('REFUNDED');
+    // The queen's credit is still owed to the guest.
+    expect((await line(desk.actor, q.id)).reservation).toBe(-100);
+    expect((await line(desk.actor, s.id)).status).toBe('PAID');
+  });
+
+  it('a refund sent twice is recorded against the room types once', async () => {
+    const { desk, manager, q, s, payment } = await threeRoomTypes({ queen: 200, suite: 600, king: 400 });
+    await addAllowance(manager, q.id, { amount: 100, reason: 'Noise' });
+    await Promise.all([refundPayment(q.id, { paymentId: payment!.id, amount: 100 }), refundPayment(q.id, { paymentId: payment!.id, amount: 100 })]);
+    expect(stripe.byKey.size).toBe(1);
+    expect(Number((await prisma.payment.findUniqueOrThrow({ where: { id: payment!.id } })).amountRefunded)).toBe(100);
+    expect(await prisma.refundShare.count({ where: { paymentId: payment!.id } })).toBe(1);
+    expect(await line(desk.actor, q.id)).toMatchObject({ balance: 0, reservation: 0 });
+    expect((await line(desk.actor, s.id)).status).toBe('PAID');
+  });
+
+  it('a comped room type takes no credit and stays paid while cash is handed back', async () => {
+    const { desk, manager, q, s, k } = await threeRoomTypes();
+    await addAllowance(manager, q.id, { amount: 200, reason: 'Comped' });
+    await recordCashPayment(desk, s.id, { kind: 'PAYMENT', amount: 1000 });
+    await transitionBooking(desk, k.id, 'CANCELLED');
+    expect(await line(desk.actor, q.id)).toMatchObject({ balance: 0, status: 'PAID', reservation: -400 });
+    expect((await line(desk.actor, s.id)).balance).toBe(-400);
+    const cash = await prisma.payment.findFirstOrThrow({ where: { bookingId: { in: [q.id, s.id, k.id] }, method: 'CASH' } });
+    await refundCash(manager, cash.id, { amount: 400 });
+    expect(await line(desk.actor, q.id)).toMatchObject({ balance: 0, status: 'PAID', reservation: 0 });
+    expect((await line(desk.actor, s.id)).balance).toBe(0);
+  });
+});

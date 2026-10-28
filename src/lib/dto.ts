@@ -44,6 +44,11 @@ export interface BookingSummary {
    * which is what the desk collects (payments are shared, so a part payment is spread over every room type).
    */
   checkOutDue: number;
+  /**
+   * A line of a multi-room-type reservation: what the whole reservation still owes (negative: owed back to the guest),
+   * its room types going ahead after allowances less what was paid toward them. Null for a single booking.
+   */
+  reservationBalance: number | null;
   /** Reasons for the front desk to look twice (staff only; computed on the server). */
   riskFlags: RiskFlag[];
   notes: string | null;

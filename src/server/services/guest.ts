@@ -5,6 +5,7 @@
  */
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { refreshPaymentStatus } from '../payments/record';
 import { roundMoney } from '@/lib/currency';
 import type { ISODate } from '@/lib/dto';
 import { isStaffRole } from '@/lib/routes';
@@ -117,6 +118,8 @@ export async function cancelOwnBooking(actor: Actor, bookingId: string, reason?:
     },
   });
   scheduleInventorySync(booking.roomTypeId, booking.checkIn, booking.checkOut);
+  // One room type of a reservation cancelled: how its payments are shared changes, and so may the others' statuses.
+  if (booking.groupCode) await refreshPaymentStatus(booking);
   await recordAudit({ actor, source: 'classic' }, booking.propertyId, 'BOOKING_CANCELLED', `${booking.user.firstName} ${booking.user.lastName} cancelled ${booking.code ?? 'their booking'} online`, {
     bookingId: booking.id,
   });

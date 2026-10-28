@@ -43,9 +43,9 @@ import { badRequest, conflict, DomainError, notFound } from '../errors';
 import { recordAudit, type OpContext } from '../services/audit';
 import { getBookingForStaff } from '../services/bookings';
 import { todayAt } from '../services/hotels';
-import { owedAfterAllowances } from '../services/mappers';
+import { owedAfterAllowances, reservationAccount } from '../services/mappers';
 import { CHECKOUT_SESSION_SECONDS } from './config';
-import { paymentLines, refreshPaymentStatus } from './record';
+import { paymentLines, planRefundShares, recordRefundShares, refreshPaymentStatus } from './record';
 
 /** Test-mode keys get a simulated card reader and the "simulate tap" button. */
 export function isStripeTestMode(): boolean {
@@ -206,11 +206,17 @@ async function loadContext(actor: Actor, bookingId: string) {
     },
   });
   const payments = await prisma.payment.findMany({ where: { bookingId: { in: lines.map((l) => l.id) } }, orderBy: { createdAt: 'asc' } });
-  const active = lines.filter((l) => l.status !== 'CANCELLED' && l.status !== 'NO_SHOW');
-  // What the reservation costs: its room types still going ahead, after their allowances.
-  const totalCents = (active.length ? active : lines).reduce((s, l) => s + owedAfterAllowances(l.totalPrice, l.allowances), 0);
   const toward = payments.filter((p) => p.kind !== 'SECURITY_DEPOSIT' && PAID.includes(p.status));
-  const paidCents = toward.reduce((s, p) => s + toCents(Number(p.amount)) - toCents(Number(p.amountRefunded)), 0);
+  const grossCents = toward.reduce((s, p) => s + toCents(Number(p.amount)), 0);
+  const refundedCents = toward.reduce((s, p) => s + toCents(Number(p.amountRefunded)), 0);
+  // What the stay costs after allowances and what was paid toward it; for several room types, the reservation's account
+  // (mappers.ts), where a cancelled room type keeps what it holds.
+  const account =
+    lines.length > 1
+      ? reservationAccount({ paidCents: grossCents, refundedCents, lines })
+      : { owedCents: owedAfterAllowances(lines[0].totalPrice, lines[0].allowances), paidCents: grossCents - refundedCents };
+  const totalCents = account.owedCents;
+  const paidCents = account.paidCents;
   return { booking, lines, lead, property, payments, totalCents, paidCents, balanceCents: Math.max(0, totalCents - paidCents) };
 }
 
@@ -802,12 +808,15 @@ export async function refundCash(op: OpContext, paymentId: string, input: { amou
   const cents = input.amount === undefined ? left : toCents(input.amount);
   if (!(cents > 0) || cents > left) throw badRequest(`Hand back between 0.01 and ${fromCents(left).toFixed(2)} ${payment.currency.toUpperCase()}.`);
   const refunded = toCents(Number(payment.amountRefunded)) + cents;
+  const booking = await prisma.booking.findUniqueOrThrow({ where: { id: payment.bookingId }, select: { id: true, groupCode: true, code: true } });
+  // Which room types of a reservation booked together it comes off: a credit first (refunds.ts says more).
+  const shares = await planRefundShares(booking, cents);
   const moved = await prisma.payment.updateMany({
     where: { id: payment.id, amountRefunded: payment.amountRefunded },
     data: { amountRefunded: fromCents(refunded), status: refunded >= toCents(Number(payment.amount)) ? 'REFUNDED' : 'PARTIALLY_REFUNDED' },
   });
   if (!moved.count) throw conflict('This payment just changed. Reload and try again.');
-  const booking = await prisma.booking.findUniqueOrThrow({ where: { id: payment.bookingId }, select: { id: true, groupCode: true, code: true } });
+  await recordRefundShares(payment.id, `cash-${payment.id}-${refunded - cents}-${cents}`, shares);
   const note = `${money(cents, payment.currency)} ${payment.method === 'CASH' ? 'cash handed back' : 'given back outside HotelOne'} by ${op.actor.name}${input.note?.trim() ? ` · ${input.note.trim().slice(0, 120)}` : ''}`;
   await refreshPaymentStatus(booking, note);
   await recordAudit(op, payment.propertyId, 'PAYMENT_REFUND', `${note} · ${booking.code ?? booking.id}`, { bookingId: booking.id, paymentId: payment.id });

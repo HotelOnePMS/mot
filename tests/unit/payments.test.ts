@@ -7,6 +7,7 @@ import {
   effectivePolicy,
   paymentAmountDue,
   platformFeeCents,
+  refundPlan,
   refundableCents,
   reservationShares,
   suggestedRefundCents,
@@ -150,9 +151,45 @@ test('refunds come off a cancelled room type first, so the rooms kept stay paid'
     { paidCents: 20000, refundedCents: 0 },
     { paidCents: 30000, refundedCents: 30000 },
   ]);
+  // A refund recorded for a room type counts there first, before a cancelled room type's kept money.
+  assert.deepEqual(
+    reservationShares({
+      paidCents: 120000,
+      refundedCents: 5000,
+      lines: [
+        { dueCents: 20000, owedCents: 15000, cancelled: false, refundFirstCents: 5000 },
+        { dueCents: 60000, owedCents: 60000, cancelled: false },
+        { dueCents: 40000, cancelled: true },
+      ],
+    }),
+    [
+      { paidCents: 20000, refundedCents: 5000 },
+      { paidCents: 60000, refundedCents: 0 },
+      { paidCents: 40000, refundedCents: 0 },
+    ],
+  );
   // Nothing cancelled: in proportion, never more than was paid.
   assert.deepEqual(reservationShares({ paidCents: 1000, refundedCents: 5000, lines: [{ dueCents: 1, cancelled: false }, { dueCents: 1, cancelled: false }] }), [
     { paidCents: 500, refundedCents: 500 },
     { paidCents: 500, refundedCents: 500 },
   ]);
+});
+
+test('a refund comes off the room type it is for, then credit, then cancelled room types, then the rest', () => {
+  const lines = [
+    { heldCents: 20000, owedCents: 15000, cancelled: false }, // 50 of credit (an allowance after paying)
+    { heldCents: 30000, owedCents: 60000, cancelled: false },
+    { heldCents: 20000, owedCents: 40000, cancelled: true }, // kept by the hotel
+  ];
+  // The credit first, then the cancelled room type, then in proportion to what is left.
+  assert.deepEqual(refundPlan({ cents: 5000, lines }), [5000, 0, 0]);
+  assert.deepEqual(refundPlan({ cents: 10000, lines }), [5000, 0, 5000]);
+  assert.deepEqual(refundPlan({ cents: 35000, lines }), [5000 + 3333, 6667, 20000]);
+  // For one room type (an allowance on it, or made from a cancelled room type's page): that one first.
+  assert.deepEqual(refundPlan({ cents: 25000, first: 2, lines }), [5000, 0, 20000]);
+  assert.deepEqual(refundPlan({ cents: 25000, first: 1, lines }), [0, 25000, 0]);
+  // Never more than everything held, and whole cents.
+  assert.deepEqual(refundPlan({ cents: 999999, lines }), [20000, 30000, 20000]);
+  assert.deepEqual(refundPlan({ cents: 1, lines: [{ heldCents: 1, owedCents: 1, cancelled: false }, { heldCents: 1, owedCents: 1, cancelled: false }] }), [1, 0]);
+  assert.deepEqual(refundPlan({ cents: 0, lines }), [0, 0, 0]);
 });

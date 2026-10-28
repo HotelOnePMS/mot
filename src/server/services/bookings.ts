@@ -12,6 +12,7 @@ import { MAX_RESERVATION_LINES, MAX_RESERVATION_ROOMS, normalizeLines, splitPart
 import { paymentAmountDue, toCents, fromCents, type PaymentPolicy } from '@/lib/payments';
 import { HOLD_MINUTES } from '../payments/config';
 import { releaseExpiredHolds } from '../payments/expiry';
+import { refreshPaymentStatus } from '../payments/record';
 import { assertPropertyAccess, can, requirePermission, scopeByProperty, type Actor, type Permission } from '../authz';
 import { addDaysISO, atNoonUTC, dayBounds, diffDays, eachNight, formatDay, hotelToday, isISODate, toISODate } from '../dates';
 import { badRequest, conflict, DomainError, notFound } from '../errors';
@@ -581,6 +582,8 @@ export async function transitionBooking(
   }
 
   if (to === 'CHECKED_OUT' && updated.room) effects.push(`Room ${updated.room.roomNumber} marked dirty and queued for housekeeping`);
+  // A room type cancelled, a no-show or reinstated changes how a reservation's payments are shared: each line's status.
+  if (booking.groupCode && occupying(from) !== occupying(to)) await refreshPaymentStatus(booking);
 
   const summary = toBookingSummary(updated);
   await recordAudit(ctx, booking.propertyId, `BOOKING_${to}`, `${VERB[to] ?? to} ${summary.guest.name} (${summary.code})`, {

@@ -264,6 +264,7 @@ model Booking {
   guestIdentification     GuestIdentification?
   registrationCard        RegistrationCard?
   allowances              FolioAllowance[]
+  refundShares            RefundShare[]
   checkoutOverride        CheckoutOverride?
   statusHistory           BookingStatusHistory[]
   channelReservation      ChannelReservation?
@@ -904,28 +905,28 @@ model ChannelAgentAction {
 /// card reader, typed in at the desk, or an OTA's virtual card) and cash recorded at the desk. No card data is
 /// stored: only the cardholder and risk details Stripe reports for the charge. Kept apart from the guest's name.
 model Payment {
-  id                      String    @id @default(cuid())
+  id                      String        @id @default(cuid())
   bookingId               String
   propertyId              String
   /// Null for cash, and for a desk card payment whose Stripe page hasn't been completed yet.
-  stripePaymentIntentId   String?   @unique
-  stripeChargeId          String?   @unique
+  stripePaymentIntentId   String?       @unique
+  stripeChargeId          String?       @unique
   stripeCheckoutSessionId String?
   /// ONLINE (guest paid when booking) | TERMINAL (card reader) | CARD_ENTRY (typed in at the desk) | VIRTUAL_CARD (OTA card) | CASH
   /// | EXTERNAL_CARD (the hotel's own terminal, recorded) | OTHER (paid another way, recorded with a note)
-  method                  String    @default("ONLINE")
+  method                  String        @default("ONLINE")
   /// DEPOSIT | FULL (online at booking) | PAYMENT (toward the balance at the desk) | SECURITY_DEPOSIT (incidentals, returned at check-out)
-  kind                    String    @default("FULL")
+  kind                    String        @default("FULL")
   /// PENDING | AUTHORIZED (card hold) | SUCCEEDED | FAILED | CANCELED (hold released, or abandoned) | PARTIALLY_REFUNDED | REFUNDED
-  status                  String    @default("PENDING")
-  amount                  Decimal   @db.Decimal(10, 2)
-  amountRefunded          Decimal   @default(0) @db.Decimal(10, 2)
+  status                  String        @default("PENDING")
+  amount                  Decimal       @db.Decimal(10, 2)
+  amountRefunded          Decimal       @default(0) @db.Decimal(10, 2)
   /// Card holds: the amount authorized; `amount` becomes what was captured.
-  amountAuthorized        Decimal?  @db.Decimal(10, 2)
+  amountAuthorized        Decimal?      @db.Decimal(10, 2)
   /// Card holds: Stripe releases the authorization at this time unless it is captured.
   captureBefore           DateTime?
-  applicationFee          Decimal?  @db.Decimal(10, 2)
-  currency                String    @default("usd")
+  applicationFee          Decimal?      @db.Decimal(10, 2)
+  currency                String        @default("usd")
   cardholderName          String?
   billingEmail            String?
   billingCountry          String?
@@ -941,17 +942,18 @@ model Payment {
   /// Card reader the payment was sent to (Stripe Terminal reader id).
   terminalReaderId        String?
   /// Cash: what the guest handed over (change = tendered - amount).
-  cashTendered            Decimal?  @db.Decimal(10, 2)
+  cashTendered            Decimal?      @db.Decimal(10, 2)
   /// Security deposits: when it was settled at check-out (hold released or captured, charge refunded or kept).
   settledAt               DateTime?
   /// Staff member who took or recorded the payment at the desk.
   recordedById            String?
   note                    String?
   paidAt                  DateTime?
-  createdAt               DateTime  @default(now())
-  updatedAt               DateTime  @updatedAt
-  booking                 Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  property                Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+  booking                 Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  property                Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  refundShares            RefundShare[]
 
   @@index([bookingId])
   @@index([propertyId, createdAt])
@@ -1200,6 +1202,25 @@ model FolioAllowance {
   @@index([bookingId])
   @@index([propertyId, createdAt])
   @@map("folio_allowances")
+}
+
+/// Which room type of a reservation booked together a refund was for, decided when it was made (a credit refunded, a
+/// cancelled room type's money handed back, a refund with an allowance on that room type). The reservation's one
+/// payment is shared out per room type each time it is shown; these keep a refund with the room type it was for.
+/// Refunds made outside HotelOne (the Stripe dashboard) have none and are shared out as before.
+model RefundShare {
+  /// One per refund and room type, so a request sent twice counts once.
+  id        String   @id
+  paymentId String
+  bookingId String
+  amount    Decimal  @db.Decimal(10, 2)
+  createdAt DateTime @default(now())
+  payment   Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([paymentId])
+  @@map("refund_shares")
 }
 
 /// A guest checked out while money was still owed, with a manager's reason (billed to a company, paying later). The

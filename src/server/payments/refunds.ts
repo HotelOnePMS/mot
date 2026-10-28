@@ -16,7 +16,7 @@ import { addAllowance, stayBalance } from '../services/folio';
 import { policyFor } from '../services/guest';
 import { hotelLocale } from '../services/hotels';
 import { toBookingSummary } from '../services/mappers';
-import { applyRefundState, paymentLines } from './record';
+import { applyRefundState, lineAccount, paymentLines, planRefundShares, recordRefundShares, refreshPaymentStatus } from './record';
 
 /**
  * Card payments refunded here, back to the card. Cash is handed back at the
@@ -71,8 +71,11 @@ export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
   const totalRefundable = rows.reduce((s, r) => s + toCents(r.refundable), 0);
   const refundedCents = rows.reduce((s, r) => s + toCents(r.refunded), 0);
   let suggested = suggestedRefundCents({ paidCents: rows.reduce((s, r) => s + toCents(r.amount), 0), refundedCents, deadlinePassed: policy.passed });
-  // Refunds so far count against the cancelled room types first.
-  if (partial) suggested = Math.min(suggested, Math.max(0, cancelledLines.reduce((s, l) => s + toCents(Number(l.paymentDue ?? 0)), 0) - refundedCents));
+  // Only what the cancelled room types still hold (refunds so far count against them first).
+  if (partial) {
+    const account = await lineAccount(booking);
+    suggested = Math.min(suggested, (account?.lines ?? []).reduce((s, l) => s + (l.cancelled ? Math.max(0, l.heldCents) : 0), 0));
+  }
   return {
     payments: rows,
     totalRefundable: fromCents(totalRefundable),
@@ -81,7 +84,7 @@ export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
     deadlineLabel: policy.deadlineLabel,
     canRefund: totalRefundable > 0 && isStripeConfigured(),
     reservation: lines.length > 1 ? { code: lines[0].code ?? booking.code ?? booking.id, roomTypes: lines.length } : null,
-    balance: await stayBalance(booking),
+    balance: stayBalance(booking),
   };
 }
 
@@ -119,13 +122,19 @@ export async function refundPayment(
     const summary = toBookingSummary(booking);
     // Already in credit (an allowance lowered the charges after they were paid), on this stay or anywhere in its
     // reservation: refund that credit as it is; another allowance would take the same money off twice.
-    const balance = await stayBalance(booking);
+    const balance = stayBalance(booking);
     if (balance < -0.004) {
       throw badRequest(`The guest already has a credit of ${fromCents(toCents(-balance)).toFixed(2)} ${payment.currency.toUpperCase()} on this stay. Refund it without an allowance.`);
     }
     const leftCents = toCents(Number(booking.totalPrice)) - toCents(summary.allowances);
     if (cents > leftCents) throw badRequest(`An allowance can take off at most ${fromCents(Math.max(0, leftCents)).toFixed(2)} ${payment.currency.toUpperCase()}. Refund that much, or refund without an allowance.`);
   }
+
+  // Which room types of a reservation booked together it comes off: this one first for an allowance on it, or when made
+  // from a cancelled room type's page; otherwise a credit first (refundPlan).
+  const ended = booking.status === 'CANCELLED' || booking.status === 'NO_SHOW';
+  const shares = await planRefundShares(booking, cents, input.allowance || ended ? booking.id : undefined);
+  const key = `refund-${payment.id}-${already}-${cents}`;
 
   const stripe = getStripe();
   const account = payment.property.stripeAccountId ? { stripeAccount: payment.property.stripeAccountId } : undefined;
@@ -139,13 +148,17 @@ export async function refundPayment(
       metadata: { bookingId: booking.id, refundedBy: actor.userId, ...(input.reason ? { note: input.reason.slice(0, 200) } : {}) },
     },
     // Same refund requested twice (double click, retry) is created once.
-    { ...account, idempotencyKey: `refund-${payment.id}-${already}-${cents}` }
+    { ...account, idempotencyKey: key }
   );
+  // Before the refund is counted (here or by the charge.refunded webhook, which may come first), so the statuses use it.
+  await recordRefundShares(payment.id, key, shares);
   // Read the total back so the page is right immediately; the charge.refunded webhook sets the same value.
   const intent = await stripe.paymentIntents.retrieve(intentId, { expand: ['latest_charge'] }, account);
   const charge = typeof intent.latest_charge === 'object' ? intent.latest_charge : null;
   const total = charge ? charge.amount_refunded : already + cents;
   await applyRefundState({ paymentIntentId: intentId, amountRefundedCents: total });
+  // The webhook got there between the two: its statuses were worked out before the room types were recorded.
+  if (shares) await refreshPaymentStatus(booking);
   await recordAudit({ actor, source: 'classic' }, booking.propertyId, 'PAYMENT_REFUND', `Refunded ${fromCents(cents).toFixed(2)} ${payment.currency.toUpperCase()} on ${booking.code ?? 'booking'}${input.reason ? ` (${input.reason.slice(0, 80)})` : ''}`, {
     bookingId: booking.id,
     paymentId: payment.id,

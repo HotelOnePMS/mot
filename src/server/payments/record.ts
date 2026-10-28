@@ -14,10 +14,11 @@
 import type Stripe from 'stripe';
 import { prisma } from '@/lib/prisma';
 import { getStripe } from '@/lib/stripe';
-import { bookingPaymentStatus, fromCents, reservationShares, toCents } from '@/lib/payments';
+import { bookingPaymentStatus, fromCents, refundPlan, toCents } from '@/lib/payments';
 import { toDateString } from '@/lib/date-utils';
 import { sendBookingConfirmation } from '../email';
 import { nightlyInventory } from '../services/inventory';
+import { refundShares, reservationAccount } from '../services/mappers';
 import { PAYMENT_CURRENCY } from './config';
 
 const PAID_STATUSES = ['SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'];
@@ -51,6 +52,7 @@ const lineSelect = {
   roomType: { select: { name: true } },
   // Allowances in force lower what the line costs (folio allowances; a removed one is voided).
   allowances: { where: { voidedAt: null }, select: { amount: true } },
+  refundShares,
 } as const;
 
 /**
@@ -74,17 +76,41 @@ const owedCents = (l: { totalPrice: unknown; allowances: { amount: unknown }[] }
 async function lineStatuses(lines: Awaited<ReturnType<typeof paymentLines>>): Promise<Map<string, string>> {
   const totals = await totalsFor(lines.map((l) => l.id));
   if (lines.length < 2) return new Map(lines.map((l) => [l.id, bookingPaymentStatus({ totalCents: owedCents(l), ...totals })]));
-  // The same order as the per-line amounts shown to staff (mappers.ts), so a cent of rounding lands on the same line.
-  const ordered = [...lines].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  const shares = reservationShares({
-    ...totals,
-    // As mappers.ts: a cancelled room type only ever held what was asked for it online.
-    lines: ordered.map((l) => {
-      const cancelled = l.status === 'CANCELLED' || l.status === 'NO_SHOW';
-      return { dueCents: toCents(Number(l.paymentDue ?? (cancelled ? 0 : l.totalPrice))), cancelled, owedCents: owedCents(l) };
+  // The shares shown to staff (mappers.ts reservationAccount), so a cent of rounding lands on the same line.
+  const { shares } = reservationAccount({ ...totals, lines });
+  return new Map(
+    lines.map((l) => {
+      const ended = l.status === 'CANCELLED' || l.status === 'NO_SHOW';
+      // A room type going ahead that allowances took entirely off is paid, whatever was refunded of the others' money.
+      if (!ended && owedCents(l) <= 0) return [l.id, 'PAID'];
+      return [l.id, bookingPaymentStatus({ totalCents: owedCents(l), ...(shares.get(l.id) ?? { paidCents: 0, refundedCents: 0 }) })];
     }),
-  });
-  return new Map(ordered.map((l, i) => [l.id, bookingPaymentStatus({ totalCents: owedCents(l), ...shares[i] })]));
+  );
+}
+
+/** A reservation of several room types as one account, as it stands now (mappers.ts reservationAccount); null for a single booking. */
+export async function lineAccount(booking: { id: string; groupCode: string | null }) {
+  const lines = await paymentLines(booking);
+  if (lines.length < 2) return null;
+  return reservationAccount({ ...(await totalsFor(lines.map((l) => l.id))), lines });
+}
+
+/**
+ * Which room types of a reservation booked together a refund of `cents` comes from (refundPlan), from where the
+ * reservation stands now. `first`: the room type it is for (a refund with an allowance on it, or made from a cancelled
+ * room type's page), which it comes off first. Null for a single booking. Record it once the money has moved.
+ */
+export async function planRefundShares(booking: { id: string; groupCode: string | null }, cents: number, first?: string): Promise<{ bookingId: string; cents: number }[] | null> {
+  const account = await lineAccount(booking);
+  if (!account) return null;
+  const plan = refundPlan({ cents, first: first === undefined ? undefined : account.lines.findIndex((l) => l.id === first), lines: account.lines });
+  return account.lines.map((l, i) => ({ bookingId: l.id, cents: plan[i] })).filter((r) => r.cents > 0);
+}
+
+/** Record a refund's plan (planRefundShares) once it went through. `key` names the refund, so a request sent twice counts once. */
+export async function recordRefundShares(paymentId: string, key: string, plan: { bookingId: string; cents: number }[] | null): Promise<void> {
+  if (!plan?.length) return;
+  await prisma.refundShare.createMany({ data: plan.map((r) => ({ id: `${key}-${r.bookingId}`, paymentId, bookingId: r.bookingId, amount: fromCents(r.cents) })), skipDuplicates: true });
 }
 
 function cardDetails(charge: Stripe.Charge | null) {
@@ -178,6 +204,8 @@ export async function recordPaymentSucceeded(paymentIntentId: string, opts_: { a
   const confirmed = pending.length
     ? await prisma.booking.updateMany({ where: { id: { in: pending }, status: 'PENDING' }, data: { status: 'CONFIRMED', paymentStatus, stripePaymentIntentId: intent.id, expiresAt: null } })
     : { count: 0 };
+  // Each room type's own status from its share of the payment (a comped one is paid, say), not the reservation's.
+  if (confirmed.count && lines.length > 1) await refreshPaymentStatus(booking);
   if (confirmed.count) {
     const note = `Confirmed · ${kind === 'DEPOSIT' ? 'Deposit' : 'Payment'} of ${shown(amountCents)}${forReservation} received by card (3D Secure: ${details.threeDSecure ?? 'n/a'})`;
     await prisma.bookingStatusHistory.createMany({ data: pending.map((bookingId) => ({ bookingId, status: 'CONFIRMED' as const, notes: note })) });
@@ -267,14 +295,8 @@ export async function applyRefundState(input: { paymentIntentId: string; amountR
   if (!booking) return;
   // A dispute in progress keeps its own status until it closes.
   if (booking.paymentStatus === 'DISPUTED') return;
-  const lines = await paymentLines(booking);
-  const statuses = await lineStatuses(lines);
-  const note = `Refund recorded: ${fromCents(refundedCents).toFixed(2)} of ${fromCents(paidCents).toFixed(2)} ${booking.currency} refunded to the card${lines.length > 1 ? ' (one payment for every room type in this reservation)' : ''}`;
-  for (const line of lines) {
-    const paymentStatus = statuses.get(line.id)!;
-    if (paymentStatus === line.paymentStatus || line.paymentStatus === 'DISPUTED') continue;
-    await prisma.booking.update({ where: { id: line.id }, data: { paymentStatus, statusHistory: { create: { status: line.status, notes: note } } } });
-  }
+  const shared = !!booking.groupCode && (await prisma.booking.count({ where: { groupCode: booking.groupCode } })) > 1;
+  await refreshPaymentStatus(booking, `Refund recorded: ${fromCents(refundedCents).toFixed(2)} of ${fromCents(paidCents).toFixed(2)} ${booking.currency} refunded to the card${shared ? ' (one payment for every room type in this reservation)' : ''}`);
 }
 
 /** Where a booking's payment status stands once a dispute no longer holds it (won, or no longer open). */
@@ -287,7 +309,11 @@ export async function restorePaymentStatus(bookingId: string, lost: boolean): Pr
     return;
   }
   const statuses = await lineStatuses(lines);
-  for (const line of lines) await prisma.booking.update({ where: { id: line.id }, data: { paymentStatus: statuses.get(line.id)! } });
+  // A room type holding none of the reservation's money is to pay at the hotel, not awaiting an online payment.
+  for (const line of lines) {
+    const status = statuses.get(line.id)!;
+    await prisma.booking.update({ where: { id: line.id }, data: { paymentStatus: status === 'AWAITING_PAYMENT' && lines.length > 1 ? 'PAY_AT_PROPERTY' : status } });
+  }
 }
 
 /**
@@ -301,6 +327,13 @@ export async function refreshPaymentStatus(booking: { id: string; groupCode: str
   const statuses = await lineStatuses(lines);
   for (const line of lines) {
     let paymentStatus = statuses.get(line.id)!;
+    if (paymentStatus === 'AWAITING_PAYMENT' && line.paymentStatus !== 'AWAITING_PAYMENT') {
+      // Holding none of the reservation's money isn't an online payment pending: it is to pay at the hotel. A room type
+      // that has ended keeps its status, unless that says it was paid (it shared the money before it was cancelled).
+      const ended = line.status === 'CANCELLED' || line.status === 'NO_SHOW';
+      if (ended && line.paymentStatus !== 'PAID' && line.paymentStatus !== 'DEPOSIT_PAID') continue;
+      paymentStatus = 'PAY_AT_PROPERTY';
+    }
     if (paidCents <= 0) {
       // Nothing paid yet: only a stay allowances took entirely off is paid; one put back (allowance removed) is to pay at
       // the hotel again. Others keep their status, and so does a hold awaiting an online payment, so it still expires.
