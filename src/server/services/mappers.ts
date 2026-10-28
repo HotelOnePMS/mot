@@ -104,8 +104,12 @@ function reservationPayment(b: BookingWithRelations) {
   const shares = reservationShares({
     paidCents: lead.payments.reduce((sum, p) => sum + toCents(Number(p.amount)), 0),
     refundedCents: lead.payments.reduce((sum, p) => sum + toCents(Number(p.amountRefunded)), 0),
-    // The same inputs as the payment statuses (record.ts lineStatuses), so a cent of rounding lands on the same line.
-    lines: lead.reservationLines.map((l) => ({ dueCents: toCents(Number(l.paymentDue ?? l.totalPrice)), cancelled: ENDED.includes(l.status), owedCents: owedAfterAllowances(l.totalPrice, l.allowances) })),
+    // The same inputs as the payment statuses (record.ts lineStatuses), so a cent of rounding lands on the same line. A
+    // cancelled room type only ever held what was asked for it online (nothing, if it was to be paid at the hotel).
+    lines: lead.reservationLines.map((l) => {
+      const cancelled = ENDED.includes(l.status);
+      return { dueCents: toCents(Number(l.paymentDue ?? (cancelled ? 0 : l.totalPrice))), cancelled, owedCents: owedAfterAllowances(l.totalPrice, l.allowances) };
+    }),
   });
   const share = shares[lead.reservationLines.findIndex((l) => l.id === b.id)];
   // What the reservation still owes, as the desk counts it (server/payments/desk.ts): its room types still going ahead

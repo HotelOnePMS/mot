@@ -715,6 +715,18 @@ describe('refund with an allowance', () => {
     expect((await prisma.booking.findUniqueOrThrow({ where: { id: suiteLine.id } })).paymentStatus).toBe('REFUNDED');
   });
 
+  it('a room type cancelled before anything was paid holds nothing: the one kept shows paid once the desk is paid', async () => {
+    const { desk, queen, suiteLine } = await sharedReservation();
+    await transitionBooking(desk, suiteLine.id, 'CANCELLED');
+    const due = (await getDeskPayments(desk.actor, queen.id)).balance;
+    expect(due).toBe(Number(queen.totalPrice));
+    await recordCashPayment(desk, queen.id, { kind: 'PAYMENT', amount: due });
+    expect(await summaryOf(desk.actor, queen.id)).toMatchObject({ balance: 0, checkOutDue: 0, paymentStatus: 'PAID' });
+    const folio = await getFolio(desk.actor, queen.id);
+    expect(folio.totals.balance).toBe(0);
+    expect(folio.reservation?.balance).toBe(0);
+  });
+
   it('the front desk can’t refund, with or without an allowance', async () => {
     const { deskUser, booking, payment } = await paidOnline();
     session.userId = deskUser.id;

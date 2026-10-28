@@ -78,7 +78,11 @@ async function lineStatuses(lines: Awaited<ReturnType<typeof paymentLines>>): Pr
   const ordered = [...lines].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const shares = reservationShares({
     ...totals,
-    lines: ordered.map((l) => ({ dueCents: toCents(Number(l.paymentDue ?? l.totalPrice)), cancelled: l.status === 'CANCELLED' || l.status === 'NO_SHOW', owedCents: owedCents(l) })),
+    // As mappers.ts: a cancelled room type only ever held what was asked for it online.
+    lines: ordered.map((l) => {
+      const cancelled = l.status === 'CANCELLED' || l.status === 'NO_SHOW';
+      return { dueCents: toCents(Number(l.paymentDue ?? (cancelled ? 0 : l.totalPrice))), cancelled, owedCents: owedCents(l) };
+    }),
   });
   return new Map(ordered.map((l, i) => [l.id, bookingPaymentStatus({ totalCents: owedCents(l), ...shares[i] })]));
 }

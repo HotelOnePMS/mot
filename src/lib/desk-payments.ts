@@ -139,25 +139,35 @@ function luhn(digits: string): boolean {
   return sum % 10 === 0;
 }
 
+const CARD_PREFIX = /^(?:[3-6]|2[2-7])/;
+const EXPIRY = /^(0[1-9]|1[0-2])\d\d$/;
+/** 13 to 19 digits starting the way card numbers do (Visa, Mastercard, Amex, Discover, JCB, UnionPay...), passing Luhn. */
+const isCardNumber = (d: string) => d.length >= 13 && d.length <= 19 && CARD_PREFIX.test(d) && luhn(d);
+// Spaces, dashes of any kind, dots, slashes and underscores split digit groups.
+const SEPARATORS = /[\s._/\u2010-\u2015-]+/;
+
 /**
- * A full card number typed by mistake into a note or an approval code: 13 to 19 digits, whole or in groups split by
- * spaces or dashes, that pass the Luhn check, even next to other digits (an expiry, a reference). Card numbers are
- * never stored, so the desk refuses them.
+ * A full card number typed by mistake into a note or an approval code: whole or in the groups cards are printed in
+ * (fours, or 4-6-5 for Amex, with a shorter last group), even next to other digits (an expiry, a reference) or typed
+ * with full-width digits. Card numbers are never stored, so the desk refuses them.
  */
 export function containsCardNumber(text: string | null | undefined): boolean {
-  for (const piece of (text ?? '').split(/[^\d\s-]+/)) {
-    const groups = piece.split(/[\s-]+/).filter(Boolean);
+  for (const piece of (text ?? '').normalize('NFKC').split(/[^\d\s._/\u2010-\u2015-]+/)) {
+    const groups = piece.split(SEPARATORS).filter(Boolean);
     for (let i = 0; i < groups.length; i++) {
-      // A card stuck to its expiry (MMYY), as copied from a terminal slip.
       const g = groups[i];
-      if (g.length >= 17 && g.length <= 23 && /^(0[1-9]|1[0-2])\d\d$/.test(g.slice(-4)) && luhn(g.slice(0, -4))) return true;
-      // Groups joined from this one on as cards are printed (groups of four or more, a shorter one only last), as long
-      // as they fit.
-      let run = '';
-      for (let j = i; j < groups.length && run.length + groups[j].length <= 19; j++) {
-        if (j > i && groups[j - 1].length < 4) break;
-        run += groups[j];
-        if (run.length >= 13 && luhn(run)) return true;
+      // Unbroken, or stuck to its expiry (MMYY), as copied from a terminal slip.
+      if (isCardNumber(g) || (g.length >= 17 && g.length <= 23 && EXPIRY.test(g.slice(-4)) && isCardNumber(g.slice(0, -4)))) return true;
+      // Groups joined from this one on as cards are printed: groups of four or more, a shorter one only last after fours.
+      let run = g;
+      for (let j = i + 1; j < groups.length && groups[j - 1].length >= 4; j++) {
+        const next = groups[j];
+        // The expiry typed straight after the last group.
+        if (next.length > 4 && EXPIRY.test(next.slice(-4)) && isCardNumber(run + next.slice(0, -4))) return true;
+        if (next.length < 4 && !groups.slice(i, j).every((x) => x.length === 4)) break;
+        if (run.length + next.length > 19) break;
+        run += next;
+        if (isCardNumber(run)) return true;
       }
     }
   }

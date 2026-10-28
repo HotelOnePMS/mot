@@ -142,6 +142,24 @@ describe('card numbers typed into notes', () => {
     expect(containsCardNumber('4222 2222 2222 2')).toBe(true);
     expect(containsCardNumber('3782822463100051226')).toBe(true);
   });
+  it('spots full-width digits, dots and other dashes, and an expiry typed onto a grouped card', () => {
+    expect(containsCardNumber('カード ４１１１ １１１１ １１１１ １１１１')).toBe(true);
+    expect(containsCardNumber('card 4111.1111.1111.1111')).toBe(true);
+    expect(containsCardNumber('4111–1111–1111–1111')).toBe(true);
+    expect(containsCardNumber('4111/1111/1111/1111')).toBe(true);
+    expect(containsCardNumber('card 4111 1111 1111 11111226')).toBe(true);
+    expect(containsCardNumber('Amex 3782 8224 6310 0051226')).toBe(true);
+  });
+  it('leaves IBANs, invoice and booking references, phone numbers and room lists alone', () => {
+    expect(containsCardNumber('Bank transfer from IBAN FI21 1234 5600 0007 85')).toBe(false);
+    expect(containsCardNumber('Rooms 1003 1004 1005 2 nights')).toBe(false);
+    expect(containsCardNumber('INV-2026-0000002-01')).toBe(false);
+    expect(containsCardNumber('Credit note INV-2026-0000010-01')).toBe(false);
+    expect(containsCardNumber('2026102100000017')).toBe(false);
+    expect(containsCardNumber('Paid via Expedia, itinerary 7200000055433')).toBe(false);
+    expect(containsCardNumber('Guest mobile +8613800138002')).toBe(false);
+    expect(containsCardNumber('Rooms 2101 2102 2103 2104 2105')).toBe(false);
+  });
   it('leaves long references and room lists alone', () => {
     expect(containsCardNumber('WeChat Pay 4200001234202610211234567890')).toBe(false);
     expect(containsCardNumber('Alipay trade 2026102122001412345678901234')).toBe(false);
