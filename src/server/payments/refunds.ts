@@ -74,7 +74,8 @@ export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
   // Only what the cancelled room types still hold (refunds so far count against them first).
   if (partial) {
     const account = await lineAccount(booking);
-    suggested = Math.min(suggested, (account?.lines ?? []).reduce((s, l) => s + (l.cancelled ? Math.max(0, l.heldCents) : 0), 0));
+    const cancelled = new Set(cancelledLines.map((l) => l.id));
+    suggested = Math.min(suggested, (account?.lines ?? []).reduce((s, l) => s + (cancelled.has(l.id) ? Math.max(0, l.heldCents) : 0), 0));
   }
   return {
     payments: rows,

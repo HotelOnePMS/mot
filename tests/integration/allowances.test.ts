@@ -50,7 +50,7 @@ import { addDaysISO } from '@/server/dates';
 import { getDeskPayments, recordCashPayment, refundCash } from '@/server/payments/desk';
 import { refreshEvidence } from '@/server/payments/disputes';
 import { listCardAuthorizations } from '@/server/payments/cardAuthorization';
-import { refundPayment } from '@/server/payments/refunds';
+import { getRefundInfo, refundPayment } from '@/server/payments/refunds';
 import { checkTransition, createReservation, getBookingForStaff, transitionBooking } from '@/server/services/bookings';
 import { previewRegistration } from '@/server/services/checkin';
 import { addAllowance, getFolio, voidAllowance } from '@/server/services/folio';
@@ -871,6 +871,14 @@ describe('a reservation of several room types as one account', () => {
     // The queen's credit is still owed to the guest.
     expect((await line(desk.actor, q.id)).reservation).toBe(-100);
     expect((await line(desk.actor, s.id)).status).toBe('PAID');
+  });
+
+  it('suggests refunding what the cancelled room type still holds', async () => {
+    const { desk, k, payment } = await threeRoomTypes({ queen: 100, suite: 300, king: 200 });
+    await transitionBooking(desk, k.id, 'CANCELLED');
+    expect((await getRefundInfo(k.id)).suggested).toBe(200);
+    await refundPayment(k.id, { paymentId: payment!.id, amount: 150 });
+    expect((await getRefundInfo(k.id)).suggested).toBe(50);
   });
 
   it('a refund sent twice is recorded against the room types once', async () => {
