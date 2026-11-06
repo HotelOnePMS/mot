@@ -117,7 +117,7 @@ function nights(text: string, today: ISODate): { start: ISODate; end: ISODate; l
 const FILLER = /^(?:the|guest|mr\.?|mrs\.?|ms\.?|miss|dr\.?|reservation|booking|for|of)\s+/i;
 const TRAILING = /(?:'s|’s)?\s+(?:reservation|booking|stay|party|family|group)$|(?:'s|’s)$/i;
 
-/** "the Morenos" → "Moreno"; "booking ABC123" → code ABC123. */
+/** "the Morenos" → "Moreno"; "booking ABC123" or "#ABCDEF" → that code. */
 export function refFrom(raw: string | undefined): ReservationRef | null {
   if (!raw) return null;
   let t = raw.trim().replace(/[?.!,;:]+$/, '').replace(/^["“']|["”']$/g, '');
@@ -127,6 +127,9 @@ export function refFrom(raw: string | undefined): ReservationRef | null {
     t = t.replace(FILLER, '').replace(TRAILING, '').trim();
   }
   if (!t || t.length > 80) return null;
+  // "#" marks a code, with or without a digit (the agent's own buttons name bookings this way).
+  const hash = t.match(/^#([A-Z0-9][A-Z0-9-]{3,})$/i);
+  if (hash) return { confirmationCode: hash[1].toUpperCase() };
   if (/^(?=.*\d)[A-Z0-9][A-Z0-9-]{3,}$/i.test(t) && !/\s/.test(t)) return { confirmationCode: t.toUpperCase() };
   if (/^the\s/i.test(raw.trim()) && /[a-z]{3,}s$/i.test(t) && !/ss$/i.test(t)) t = t.slice(0, -1); // the Smiths → Smith
   if (/^(him|her|them|it|this|that|guest|someone|everyone|all)$/i.test(t)) return null;

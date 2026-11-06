@@ -32,7 +32,8 @@ const schema = z.object({
  * here; they come back as a signed plan for POST /api/agent/confirm.
  */
 export const POST = handleRoute(async (request: NextRequest) => {
-  const actor = await requireStaff('agent.use');
+  // Whether this person may use the agent at that hotel is the hotel's agent access (checked in runAgent).
+  const actor = await requireStaff();
   const body = await parseJson(request, schema);
   const encoder = new TextEncoder();
 

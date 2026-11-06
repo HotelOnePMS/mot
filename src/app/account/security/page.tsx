@@ -16,6 +16,7 @@ import { Field } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Callout, Skeleton } from '@/components/ui/primitives';
 import { GuestShell } from '@/app/properties/_components/guest-shell';
+import { WhatsAppLink, type WhatsAppStatus } from './WhatsAppLink';
 
 interface Status {
   email: string;
@@ -102,6 +103,7 @@ function ConfirmFactors({ hasPassword, busy, label, onSubmit }: { hasPassword: b
 function SecurityPage() {
   const params = useSearchParams();
   const { data, error, mutate } = useSWR<Status>('/api/account/security', fetcher);
+  const { data: whatsApp, mutate: refreshWhatsApp } = useSWR<WhatsAppStatus>('/api/account/whatsapp', fetcher);
   const [setup, setSetup] = React.useState<{ secret: string; qrSvg: string } | null>(null);
   const [code, setCode] = React.useState('');
   const [codes, setCodes] = React.useState<string[] | null>(null);
@@ -298,6 +300,12 @@ function SecurityPage() {
               Change password
             </Button>
           </form>
+        </Section>
+      )}
+
+      {whatsApp?.available && (
+        <Section title="WhatsApp" description="Message the hotel agent from your phone: look things up and make changes, with the same access you have here. It always asks before changing anything.">
+          <WhatsAppLink status={whatsApp} refresh={refreshWhatsApp} />
         </Section>
       )}
 

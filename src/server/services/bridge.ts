@@ -34,6 +34,7 @@ import { deleteCachedTools } from '../pms/tools';
 import { displayUrl } from '../pms/url-guard';
 import { scheduleConfigSkillSync } from '../skills/config';
 import { recordAudit, type OpContext } from './audit';
+import { watchSoon } from '../agent/watch';
 
 export const PMS_SYSTEMS = ['Cloudbeds', 'Mews', 'Oracle OPERA Cloud', 'Little Hotelier', 'RoomRaccoon', 'eZee Absolute', 'innRoad', 'WebRezPro', 'SkyTouch', 'Hotelogix', 'Other'] as const;
 export const TERMINAL = ['DONE', 'FAILED', 'CANCELLED'] as const;
@@ -232,6 +233,8 @@ export async function finishTask(caller: BridgeCaller, taskId: string, input: { 
   if (input.status === 'FAILED' && input.error) await prisma.pmsConnection.update({ where: { id: task.connectionId }, data: { lastError: input.error.slice(0, 300) } });
   // Learn (or count) the recipe for this kind of task. Never fails the report.
   await learnFromTask({ ...updated, connection: task.connection });
+  // Work that failed or needs a person: tell the team on WhatsApp now rather than at the next round.
+  if (input.status !== 'DONE') watchSoon(task.propertyId);
   return updated;
 }
 

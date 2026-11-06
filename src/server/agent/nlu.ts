@@ -278,6 +278,15 @@ function bareNumbers(text: string): string[] {
 
 const CODE_RE = /(?:#|\b(?:reservation|booking|confirmation|res|conf)\s*(?:number|no\.?|code|#)?\s*:?\s*)([A-Za-z0-9]{4,30})\b/i;
 const STANDALONE_CODE_RE = /\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{6,8}\b/;
+/** "#CODE" with a letter in it, in lowercased text: its letters aren't words ("#DEPART" isn't about departures). */
+const HASH_CODE_RE = /#(?=[a-z0-9]*[a-z])[a-z0-9]{4,30}\b/g;
+
+/**
+ * How a command the agent offers (a button, a numbered reply, a suggestion)
+ * names a booking: "#CODE" always reads as a code, including the codes
+ * without a digit ("#ABCDEF") that would otherwise read as a name.
+ */
+export const codeRef = (code: string) => `#${code}`;
 
 const PRONOUN_RE = /\b(them|they|their|him|her|he|she|this guest|that guest|this reservation|that reservation|this booking|that booking|the guest)\b/i;
 
@@ -366,7 +375,7 @@ function splitClauses(message: string): { clauses: string[]; noteText?: string; 
 }
 
 function classify(clause: string, today: ISODate): Intent | null {
-  const t = clause.toLowerCase().replace(/[’']/g, "'");
+  const t = clause.toLowerCase().replace(/[’']/g, "'").replace(HASH_CODE_RE, '#');
   const isQuestion = QUESTION_RE.test(t) || /\?\s*$/.test(t);
   const dates = parseDates(t, today);
 
@@ -492,7 +501,7 @@ function classify(clause: string, today: ISODate): Intent | null {
   // Lookup: "find Smith", "reservation ABC123", "pull up Jordan", "Emily Nakamura"
   const ref = guestRef(clause, false);
   if (/\b(find|search|look ?up|pull up|open|show|details|where is|who is)\b/.test(t) || ref.code) {
-    const r = guestRef(clause.replace(/\b(find|search|look ?up|pull up|open|show|details|for|where is|who is)\b/gi, ' '));
+    const r = guestRef(clause.replace(/(?<!#)\b(find|search|look ?up|pull up|open|show|details|for|where is|who is)\b/gi, ' '));
     if (hasRef(r)) return { kind: 'find', ref: r };
   }
   return null;

@@ -23,6 +23,7 @@ Hotels move between paths without starting over (Console → *Your PMS* → *Mov
 - **Skills** — every agent's reusable tools (`src/server/skills`): answers generated from each hotel's settings (FAQs, amenities, policies, rooms, contact) and kept in sync, staff-agent shortcuts ("save that as a shortcut called late checkout", then "late checkout for Smith" — changes still need a confirmed plan), shortcuts suggested from repeated commands, and PMS-bridge recipes learned from tasks that worked. Managed on *Setup → Skills*.
 - **Phone line** (ElevenLabs) — each hotel gets its own phone agent; connect a Twilio number from the console (*Voice → Phone → Connect a number*: Twilio confirms the credentials own the number, ElevenLabs imports it and points it at the hotel's agent; nothing is stored), or point a SIP-trunk or Exotel number at it in ElevenLabs, and forward the hotel's existing number to it. Assign the same agent to a WhatsApp number in ElevenLabs and it answers WhatsApp chats and calls too. Calls start with a webhook to HotelOne (hotel prompt + signed session) and run their tools server to server; phone bookings become requests the team confirms (hotels on HotelOne send the guest a pre-filled booking link; voice-only hotels book it in their own system). Every new message or booking request is emailed to the hotel (Voice → Settings → *Email them to*; the owners by default). See *Voice → Phone* in the console.
 - **PMS bridge** — a computer-use operator that works the hotel's existing PMS in a browser, through the HotelOne Connector on a hotel computer or our isolated cloud browser — or, when the PMS company offers one, **their MCP server**: HotelOne connects and tests it, caches its tools as skills, runs look-ups through read-only tools and changes only after a confirmed plan, and accepts signed events back. Partner guide and tool contract: `/developers/pms` (`src/server/pms`).
+- **The agent on WhatsApp, always on** — owners, managers and front desk link their phone (*Account → Security*) and use the same agent from WhatsApp: look-ups answer at once, changes come back as a plan that runs when they reply YES. The agent also watches each hotel and messages the right people when something needs them (overdue check-outs, arrivals without a room, rooms not ready, guest messages, card disputes, PMS or OTA problems, an 8am brief), with the fix as a one-number reply. Owners choose per hotel what each role may do through the agent and which alerts it gets (*Setup → Agent access*). Meta setup in [WHATSAPP.md](WHATSAPP.md) (`src/server/whatsapp`, `src/server/agent/policy.ts`, `watch.ts`).
 - **AI business advisor** (`/admin/advisor`, owners and admins) — a Claude chat that sees the whole portfolio: each turn starts from a fresh snapshot (every property and room type, occupancy, ADR, RevPAR and revenue vs last year, the next 30/90 days on the books vs the same time last year, 13-month trends, operations), and read-only tools drill into any date range, booking pace, demand patterns, the rate calendar against occupancy, and individual bookings. Guests are anonymised; no names, contact or payment details reach the model. Needs `ANTHROPIC_API_KEY`; conversations stay in the browser (`src/lib/business-agent`).
 - **Channels** — Expedia and Booking.com for hotels on HotelOne: onboarding (sandbox or live), room mapping, rate/availability/restriction sync after every booking and rate change, OTA reservations imported as bookings, promotions, and a Channel Agent that changes OTA rates and promotions from plain-English requests with approval. See [CHANNEL_MANAGER.md](CHANNEL_MANAGER.md) (`src/server/channels`).
 - **Cardholder authorization** — when someone else pays (online or at the desk, there or not), staff send the cardholder a one-time link (email, text, QR code or the desk's device). They enter the card's last four digits (checked against the card that paid), their photo ID with a photo, and a drawn or typed signature; staff verify the ID, and the signed record goes into dispute evidence. Card numbers are never collected; ID photos are encrypted and deleted after a retention period. See [PAYMENTS.md](PAYMENTS.md) (`src/server/payments/cardAuthorization.ts`).
@@ -47,7 +48,9 @@ src/server         Domain layer (server-only)
                    front desk, reservations (at the desk), night audit, organizations,
                    guest self-service, bridge, audit
   agent/           deterministic NLU → resolver → read tools / write planners,
-                   signed plans, NDJSON streaming engine (llm.ts = optional plug-in)
+                   signed plans, NDJSON streaming engine (llm.ts = optional plug-in),
+                   agent access per hotel and role (policy.ts), the always-on rounds (watch.ts)
+  whatsapp/        the agent on WhatsApp: Cloud API, phone linking, chat, block rendering
   voice/           GPT-Live session creation, prompts, tool schemas, guest tools
   bridge/          computer-use operator step + TOTP
   vault.ts         AES-256-GCM sealing for stored PMS logins
@@ -56,8 +59,9 @@ public/downloads   hotelone-connector.mjs (desktop connector / cloud worker);
                    stayos-connector.mjs stays for computers set up before the rename
 connector/         connector docs
 prisma/            schema, migrations, demo seed
-tests/unit         Vitest: pricing, currency, clocks, TOTP, signed plans, SSO state, SCIM filters, authz
-tests/integration  Vitest + PostgreSQL: booking engine, desk reservations, night audit, sign-in, reset, organizations, SCIM
+tests/unit         Vitest: pricing, currency, clocks, TOTP, signed plans, SSO state, SCIM filters, authz, WhatsApp, agent access
+tests/integration  Vitest + PostgreSQL: booking engine, desk reservations, night audit, sign-in, reset, organizations, SCIM,
+                   the agent on WhatsApp and its alerts
 ```
 
 Key rules the code enforces:
@@ -65,7 +69,7 @@ Key rules the code enforces:
 - **Availability is derived from bookings** for every night (no counters to drift); prices come from the rate calendar's exceptions over the base price, and the booking endpoint charges exactly the quote. Booking creation runs in a serializable transaction.
 - **Dates are calendar days** (`YYYY-MM-DD`, stored at 12:00 UTC); each hotel's "today" uses its own time zone (`HOTEL_TIMEZONE` for hotels that haven't set one).
 - **Money is in the hotel's currency**, rounded to that currency's minor unit; the booking stores exactly what Stripe charges (taxes and fees included).
-- **Nothing changes without a person**: agent writes → signed plan → confirm; voice writes → spoken yes → the same plan; bridge changes → confirmed plan → queued task; look-ups only are read-only by design.
+- **Nothing changes without a person**: agent writes → signed plan → confirm (a YES on WhatsApp); voice writes → spoken yes → the same plan; bridge changes → confirmed plan → queued task; look-ups only are read-only by design. The always-on agent only tells people things; its suggested fixes go through the same plan.
 - **Secrets stay server-side**: OpenAI keys never reach browsers or connectors; PMS passwords are sealed and typed by the worker when the model calls `fill_credential` — the model never sees them.
 
 ## Getting started
@@ -137,7 +141,8 @@ Open http://localhost:3000 and use the one-click demo logins on `/demo`, the *Li
 | `TRUSTED_PROXY_HOPS` | | Off Vercel: which X-Forwarded-For entry (counting from the right) is the client for rate limits (default 1). On Vercel its own headers are used |
 | `PMS_MCP_MODEL` | | Model that plans PMS MCP tool calls when the vendor doesn't follow the HotelOne contract (default `OPENAI_VOICE_BACKEND_MODEL`) |
 | `PMS_MCP_ALLOWED_HOSTS` | | Hosts a PMS MCP server may use despite the private-address guard (e.g. a vendor's on-premise gateway) |
-| `CRON_SECRET` | channels | Bearer token for `/api/channels/cron` (OTA reservation import + daily reconciliation; Vercel Cron sends it) |
+| `CRON_SECRET` | channels / alerts | Bearer token for `/api/channels/cron` (OTA reservation import + daily reconciliation; Vercel Cron sends it) and `/api/cron/agent-watch` (the always-on agent's rounds) |
+| `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN` | WhatsApp | The staff agent on WhatsApp (Meta Cloud API); off until all four are set. Optional `WHATSAPP_DISPLAY_NUMBER`, `WHATSAPP_ALERT_TEMPLATE`, `WHATSAPP_ALERT_TEMPLATE_LANG`, `WHATSAPP_GRAPH_VERSION`. See [WHATSAPP.md](WHATSAPP.md) |
 | `CHANNEL_AGENT_MODEL` | | Channel Agent model (default `OPENAI_VOICE_BACKEND_MODEL`); the agent needs `OPENAI_API_KEY` |
 | `EXPEDIA_EQC_BASE_URL`, `EXPEDIA_API_BASE_URL`, `BOOKING_COM_SUPPLY_URL`, `BOOKING_COM_SECURE_URL` | | Point live OTA connections at a certification environment (see CHANNEL_MANAGER.md) |
 | `PMS_EVENTS_SECRET` | | Base secret for PMS event signatures (default: derived from `NEXTAUTH_SECRET`, so rotating that rotates every PMS event secret) |

@@ -7,10 +7,11 @@ import { prisma } from '@/lib/prisma';
 import type { AgentBlock, AgentContextState } from '@/lib/agent/blocks';
 import type { ISODate } from '@/lib/dto';
 import { BOOKING_STATUS } from '@/lib/status';
-import type { Actor } from '../authz';
+import { can, type Actor } from '../authz';
 import { formatDay, toISODate } from '../dates';
+import { CODE_ALPHABET } from '../services/bookings';
 import { bookingInclude, personName, type BookingWithRelations } from '../services/mappers';
-import type { GuestRef } from './nlu';
+import { codeRef, type GuestRef } from './nlu';
 
 export interface ResolveCtx {
   actor: Actor;
@@ -88,12 +89,16 @@ function describe(b: BookingWithRelations, today: ISODate): string {
 }
 
 function replaceRef(message: string, name: string | undefined, code: string): string {
+  const ref = codeRef(code);
   if (name) {
     const re = new RegExp(`\\b(the\\s+)?${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-    if (re.test(message)) return message.replace(re, code);
+    if (re.test(message)) return message.replace(re, ref);
   }
-  return `${message} (${code})`;
+  return `${message} (${ref})`;
 }
+
+/** One word in the letters and digits booking codes are made of (generateBookingCode in services/bookings.ts). */
+const BOOKING_CODE_RE = new RegExp(`^[${CODE_ALPHABET}]{6,8}$`);
 
 const PURPOSE_WORD: Record<BookingPurpose, string> = {
   checkIn: 'arriving today',
@@ -103,6 +108,10 @@ const PURPOSE_WORD: Record<BookingPurpose, string> = {
 };
 
 export async function resolveBooking(ctx: ResolveCtx, ref: GuestRef, purpose: BookingPurpose): Promise<Resolved<BookingWithRelations>> {
+  // Matches and "did you mean" lists show guests' names, codes, rooms and dates: only for people who may look up reservations.
+  if (!can(ctx.actor, 'booking.view')) {
+    return { ok: false, block: { type: 'error', text: 'Your role can’t look up reservations. The owner can change this under Agent access.' } };
+  }
   const base = { propertyId: ctx.propertyId };
 
   if (ref.pronoun && ctx.memory.lastBookingId) {
@@ -175,6 +184,12 @@ export async function resolveBooking(ctx: ResolveCtx, ref: GuestRef, purpose: Bo
     .sort((a, b) => b.score - a.score);
 
   if (scored.length === 0) {
+    // "check in ABCDEF": a code without a digit reads as a name, so try it as a code here before giving up.
+    const asCode = ref.name.toUpperCase();
+    if (!ref.code && BOOKING_CODE_RE.test(asCode)) {
+      const b = await prisma.booking.findFirst({ where: { ...base, code: asCode }, include: bookingInclude });
+      if (b) return { ok: true, value: b };
+    }
     return { ok: false, block: { type: 'error', text: `I couldn’t find a guest called “${ref.name}” at ${ctx.propertyName}.` } };
   }
   const eligible = scored.filter((x) => x.eligible);
@@ -196,7 +211,7 @@ export async function resolveBooking(ctx: ResolveCtx, ref: GuestRef, purpose: Bo
       block: {
         type: 'clarify',
         question: `${personName(top.user)} ${why}.`,
-        options: [{ label: 'Open reservation', hint: `${top.code} · ${describe(top, ctx.today)}`, command: `show reservation ${top.code}` }],
+        options: [{ label: 'Open reservation', hint: `${top.code} · ${describe(top, ctx.today)}`, command: `show reservation ${codeRef(top.code ?? top.id)}` }],
       },
     };
   }
@@ -210,7 +225,7 @@ export async function resolveBooking(ctx: ResolveCtx, ref: GuestRef, purpose: Bo
         options: scored.slice(0, 4).map((x) => ({
           label: personName(x.b.user),
           hint: `${x.b.code} · ${describe(x.b, ctx.today)}`,
-          command: `show reservation ${x.b.code}`,
+          command: `show reservation ${codeRef(x.b.code ?? x.b.id)}`,
         })),
       },
     };

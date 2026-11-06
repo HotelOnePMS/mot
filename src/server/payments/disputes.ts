@@ -18,6 +18,7 @@ import { bookingInclude, toBookingSummary } from '../services/mappers';
 import { cardBrandLabel, countryName, ID_TYPE_LABEL, type CardAuthCheck, type IdType } from '@/lib/card-authorization';
 import { buildEvidenceSummary, renderEvidenceText, stripeEvidenceFields, type EvidenceInput, type EvidenceSummary } from './evidence';
 import { paymentLines, restorePaymentStatus } from './record';
+import { watchSoon } from '../agent/watch';
 
 const OPEN_STATUSES = ['needs_response', 'warning_needs_response'];
 
@@ -81,7 +82,10 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
     return u ? `${u.firstName} ${u.lastName}`.trim() : null;
   };
   const c = booking.checklist;
-  const lastWith = (status: string) => [...booking.statusHistory].reverse().find((h) => h.status === status)?.createdAt.toISOString() ?? null;
+  // When the booking last moved into a status. Rows that only add a note keep the status (a dispute opening
+  // after check-out is one), so they aren't the check-in or check-out.
+  const enteredAt = (status: string) =>
+    booking.statusHistory.filter((h, i, all) => h.status === status && all[i - 1]?.status !== status).at(-1)?.createdAt.toISOString() ?? null;
   const p = booking.property;
   return {
     generatedAt: new Date().toISOString(),
@@ -124,7 +128,7 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
           userAgent: booking.policyAcceptance.userAgent,
         }
       : null,
-    stay: { checkedInAt: lastWith('CHECKED_IN'), roomNumber: booking.room?.roomNumber ?? null, checkedOutAt: lastWith('CHECKED_OUT') },
+    stay: { checkedInAt: enteredAt('CHECKED_IN'), roomNumber: booking.room?.roomNumber ?? null, checkedOutAt: enteredAt('CHECKED_OUT') },
     checklist: c
       ? [
           { item: CHECKLIST_LABELS.idMatched, at: c.idMatchedAt?.toISOString() ?? null, by: nameOf(c.idMatchedById) },
@@ -227,6 +231,8 @@ export async function recordDispute(dispute: Stripe.Dispute): Promise<void> {
   if (OPEN_STATUSES.includes(dispute.status) && !record.evidenceSubmittedAt) await refreshEvidence(record.id);
   if (closed) await restorePaymentStatus(payment.bookingId, dispute.status === 'lost');
   if (!record.ownerNotifiedAt && !closed) await notifyOwner(record.id);
+  // And on WhatsApp, for owners linked there (urgent: sent at night too).
+  if (!before && !closed) watchSoon(record.propertyId);
 }
 
 async function notifyOwner(disputeId: string): Promise<void> {

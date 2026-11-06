@@ -13,7 +13,8 @@ export const maxDuration = 60;
  * only run once; each step re-checks permissions and domain rules.
  */
 export const POST = handleRoute(async (request: NextRequest) => {
-  const actor = await requireStaff('agent.use');
+  // The hotel's agent access is checked in confirmPlan.
+  const actor = await requireStaff();
   const { token } = await parseJson(request, z.object({ token: z.string().min(20).max(20000) }));
   return json(await confirmPlan(actor, token));
 });

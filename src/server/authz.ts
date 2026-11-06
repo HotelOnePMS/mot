@@ -33,6 +33,14 @@ export interface Actor {
   emailVerified: boolean;
   /** Their organization requires two-step sign-in and they haven't set it up (password sessions only). */
   mfaSetupRequired: boolean;
+  /** How this session signed in. */
+  authMethod?: 'password' | 'sso' | 'google';
+  /**
+   * The hotel's agent permissions for this person's role (agent/policy.ts):
+   * set only on the actor an agent run uses, whose propertyIds is narrowed
+   * to that one hotel. Revoked wins over granted; both win over the role.
+   */
+  overrides?: { granted: readonly Permission[]; revoked: readonly Permission[] };
 }
 
 export const PERMISSIONS = {
@@ -77,6 +85,10 @@ export const PERMISSIONS = {
   // AI business advisor: portfolio-wide revenue and performance, read-only.
   'advisor.use': ['ADMIN', 'OWNER'],
   'agent.use': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // The agent on WhatsApp (whatsapp/staff.ts). Owners can grant or revoke it per role, like the agent's other permissions.
+  'whatsapp.use': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // What each role may do through the agent at a hotel, and which alerts it gets (agent/policy.ts).
+  'agent.policy': ['ADMIN', 'OWNER'],
   'mode.setDefault': ['ADMIN', 'OWNER', 'MANAGER'],
   'voice.use': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'voice.manage': ['ADMIN', 'OWNER', 'MANAGER'],
@@ -105,8 +117,15 @@ export const PERMISSIONS = {
 
 export type Permission = keyof typeof PERMISSIONS;
 
-export function can(actor: Pick<Actor, 'role'>, perm: Permission): boolean {
-  return (PERMISSIONS[perm] as readonly string[]).includes(actor.role);
+/** What the role allows by default, before any hotel's agent permissions. */
+export function roleCan(role: string, perm: Permission): boolean {
+  return (PERMISSIONS[perm] as readonly string[]).includes(role);
+}
+
+export function can(actor: Pick<Actor, 'role' | 'overrides'>, perm: Permission): boolean {
+  if (actor.overrides?.revoked.includes(perm)) return false;
+  if (actor.overrides?.granted.includes(perm)) return true;
+  return roleCan(actor.role, perm);
 }
 
 export function requirePermission(actor: Actor, perm: Permission): void {
@@ -118,34 +137,48 @@ function permissionMessage(perm: Permission): string {
   return `This action needs one of these roles: ${roles.join(', ')}.`;
 }
 
+const actorSelect = {
+  id: true,
+  role: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  isActive: true,
+  mustChangePassword: true,
+  mfaEnabled: true,
+  emailVerifiedAt: true,
+  sessionVersion: true,
+  ssoSubject: true,
+  assignedProperties: { select: { propertyId: true } },
+  organizations: {
+    select: { role: true, organizationId: true, organization: { select: { requireMfa: true, properties: { select: { id: true } } } } },
+  },
+} as const;
+
 /** Resolve the signed-in user, or null. Never throws. */
 export async function getActor(): Promise<Actor | null> {
   const session = await auth();
   const userId = session?.user?.id;
   if (!userId) return null;
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: {
-      id: true,
-      role: true,
-      firstName: true,
-      lastName: true,
-      email: true,
-      isActive: true,
-      mustChangePassword: true,
-      mfaEnabled: true,
-      emailVerifiedAt: true,
-      sessionVersion: true,
-      assignedProperties: { select: { propertyId: true } },
-      organizations: {
-        select: { role: true, organizationId: true, organization: { select: { requireMfa: true, properties: { select: { id: true } } } } },
-      },
-    },
-  });
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: actorSelect });
   if (!user || !user.isActive) return null;
   // A newer session version means this session was signed out everywhere.
   if ((session.user.sessionVersion ?? 0) !== user.sessionVersion) return null;
   return actorFromUser(user, session.user.authMethod ?? 'password');
+}
+
+/**
+ * The actor behind a channel that was linked while signed in (the staff agent
+ * on WhatsApp), or null when the account is inactive or was signed out
+ * everywhere since (`sessionVersion` changed). Roles and hotels are read
+ * fresh, so the channel follows every change made in the console. It keeps
+ * the sign-in method of the session that linked it, so the organization's
+ * two-step sign-in rule applies to it as it does to that session.
+ */
+export async function actorForLinkedChannel(userId: string, sessionVersion: number, authMethod: string): Promise<Actor | null> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: actorSelect });
+  if (!user || !user.isActive || user.sessionVersion !== sessionVersion) return null;
+  return actorFromUser(user, authMethod === 'sso' || authMethod === 'google' ? authMethod : 'password');
 }
 
 export interface ActorSource {
@@ -180,6 +213,7 @@ export function actorFromUser(user: ActorSource, authMethod: 'password' | 'sso' 
     mfaEnabled: user.mfaEnabled,
     emailVerified: !!user.emailVerifiedAt,
     mfaSetupRequired: isStaffRole(user.role) && !user.mfaEnabled && authMethod !== 'sso' && user.organizations.some((m) => m.organization.requireMfa),
+    authMethod,
   };
 }
 

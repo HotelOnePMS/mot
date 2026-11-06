@@ -27,7 +27,7 @@ export function RoomsBlock({ block }: { block: Extract<AgentBlock, { type: 'room
         rooms={block.rooms}
         highlight={block.highlight}
         dense={compact}
-        onRoomClick={(r) => send(r.current ? `show reservation ${r.current.code}` : r.arriving ? `show reservation ${r.arriving.code}` : `rooms on floor ${r.floor ?? ''}`)}
+        onRoomClick={(r) => send(r.current?.code ? `show reservation #${r.current.code}` : r.arriving?.code ? `show reservation #${r.arriving.code}` : `rooms on floor ${r.floor ?? ''}`)}
       />
     </BlockCard>
   );

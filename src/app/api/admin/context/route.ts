@@ -4,6 +4,7 @@ import { PERMISSIONS, can, requireStaff, scopeProperties, type Permission } from
 import { hotelToday } from '@/server/dates';
 import { handleRoute, json } from '@/server/http';
 import { LLM_AGENT_AVAILABLE } from '@/server/agent/llm';
+import { watchSoon } from '@/server/agent/watch';
 import { localeOf } from '@/server/services/hotels';
 import { voiceAvailable } from '@/server/voice/provider';
 
@@ -33,6 +34,8 @@ export const GET = handleRoute(async () => {
       : Promise.resolve([]),
   ]);
   const now = new Date();
+  // People are at work: let the always-on agent look over their hotels (throttled; a no-op without WhatsApp).
+  for (const p of properties.slice(0, 5)) watchSoon(p.id, { heartbeat: true });
   const body: StaffContext = {
     user: { id: actor.userId, name: actor.name, email: actor.email, role: actor.role, mfaEnabled: actor.mfaEnabled, emailVerified: actor.emailVerified },
     properties: properties.map((p) => {

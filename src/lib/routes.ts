@@ -66,6 +66,8 @@ export const CONSOLE_ACCESS: { prefix: string; roles: readonly StaffRole[] }[] =
   { prefix: '/admin/voice', roles: ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'] },
   // Same roles as the 'bridge.use' permission (free-text PMS driving is manager/owner by default).
   { prefix: '/admin/connect', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
+  // Same roles as the 'agent.policy' permission: what each role may do through the agent, and its alerts.
+  { prefix: '/admin/agent-access', roles: ['ADMIN', 'OWNER'] },
   // Same roles as the 'skills.view' permission; changes need 'skills.manage'.
   { prefix: '/admin/skills', roles: ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'] },
   // Managers can see and share the hotel's assistant link; keys need 'agentkeys.manage'.
