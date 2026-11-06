@@ -46,10 +46,10 @@ export const metadata: Metadata = {
 const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 
 const TRUST = [
-  { icon: Percent, title: '0% commission', body: 'on bookings through your own site.' },
-  { icon: Clock, title: 'Answers 24/7', body: 'calls and guest questions, day or night.' },
-  { icon: ShieldCheck, title: 'You approve every change', body: 'the agent proposes, your team confirms.' },
-  { icon: Rocket, title: 'Live in days', body: 'not months. Start with one piece if you like.' },
+  { icon: Percent, title: 'Pay 0% commission', body: 'on bookings through your own site.' },
+  { icon: Clock, title: 'Calls and guest questions', body: 'answered around the clock.' },
+  { icon: ShieldCheck, title: 'You approve every change', body: 'the agent proposes, and your team confirms it.' },
+  { icon: Rocket, title: 'Go live in days', body: 'not months. Start with one piece if you like.' },
 ];
 
 /** Systems hotels pick during onboarding; the bridge works them for you. */
@@ -61,7 +61,7 @@ const PATHS: { id: string; icon: LucideIcon; title: string; who: string; body: s
     icon: Hotel,
     ...SETUP_PATH_COPY.FULL,
     who: 'For hotels that want one system.',
-    body: 'Your booking site, front desk, housekeeping, rates, reports, the AI agent and voice front desk — all in one place. Bring your rooms over in an afternoon.',
+    body: 'Your booking site, front desk, housekeeping, rates, reports, the AI agent and voice front desk, all in one place. Bring your rooms over in an afternoon.',
   },
   {
     id: 'bridge',
@@ -88,7 +88,7 @@ const FEATURES: { icon: LucideIcon; title: string; lead: string; points: string[
     icon: Globe,
     title: 'Your own booking site',
     lead: 'Booking platforms take 15–25% of every reservation. A site in your own name keeps it.',
-    points: ['Your name and colours — guests never see ours.', 'Dates, room, details, booked: under two minutes on a phone.', 'Live availability and exact prices, with free changes until the day before.'],
+    points: ['Your name and colours. Guests never see ours.', 'Dates, room, details, booked: under two minutes on a phone.', 'Live availability and exact prices, with free changes until the day before.'],
   },
   {
     icon: PhoneCall,
@@ -115,9 +115,9 @@ const FEATURES: { icon: LucideIcon; title: string; lead: string; points: string[
 ];
 
 const AGENT_POINTS = [
-  { icon: MousePointerClick, title: 'Ask it, see it', body: 'Ask in plain words and the answer arrives as the right screen — a list you can act on, a room map, a price grid — not a wall of text.' },
+  { icon: MousePointerClick, title: 'Ask it, see it', body: 'Ask in plain words and the answer arrives as the right screen, a list you can act on, a room map, a price grid, not a wall of text.' },
   { icon: ShieldCheck, title: 'Nothing changes without you', body: 'Every change is a plan you review first. Plans expire, run once and land in the activity log under your name.' },
-  { icon: LayoutGrid, title: 'Classic screens, one click away', body: 'Prefer dashboards? Switch to Classic any time — same data, same actions. Each person picks their own default.' },
+  { icon: LayoutGrid, title: 'Classic screens, one click away', body: 'Prefer dashboards? Switch to Classic any time. Same data, same actions. Each person picks their own default.' },
 ];
 
 const CHANNELS = [
@@ -127,7 +127,7 @@ const CHANNELS = [
 ];
 
 const STEPS = [
-  { title: 'Tell us about your hotel', body: 'Name, rooms and prices — or connect your current system and skip the typing.' },
+  { title: 'Tell us about your hotel', body: 'Name, rooms and prices. Or connect your current system and skip the typing.' },
   { title: 'Make it yours', body: 'Pick your brand colour, add photos and preview your booking site before anyone else sees it.' },
   { title: 'Go live', body: 'Share your booking link, switch on the voice front desk and run the desk in plain words.' },
 ];
@@ -164,17 +164,17 @@ const SECURITY = [
   { icon: Lock, title: 'Encrypted', body: 'in transit and at rest, kept separate for each hotel.' },
   { icon: KeyRound, title: 'Your logins stay sealed', body: 'with a key only your workspace uses.' },
   { icon: History, title: 'Every change logged', body: 'who asked, who confirmed and when.' },
-  { icon: FileDown, title: 'Your data is yours', body: 'export everything, any time.' },
+  { icon: FileDown, title: 'Your data is yours', body: 'Export everything, any time.' },
 ];
 
 const FAQS = [
   { q: `Will my guests know I’m using ${PRODUCT_NAME}?`, a: 'No. Your booking site and messages carry only your branding. We stay out of sight.' },
   {
     q: 'Do I have to leave my current reservation system?',
-    a: `No. Connect it instead: install the ${PRODUCT_NAME} connector on a front-desk computer, or let the agent use your system in our isolated cloud browser with logins you store encrypted. Most hotels move over later, once they’ve seen it work — and we move your data for you.`,
+    a: `No. Connect it instead: install the ${PRODUCT_NAME} connector on a front-desk computer, or let the agent use your system in our isolated cloud browser with logins you store encrypted. Most hotels move over later, once they’ve seen it work, and we move your data for you.`,
   },
   { q: 'Can the agent do something I didn’t ask for?', a: 'It can only propose. Every change is shown as a plan with exactly what will happen, and runs only when someone with the right role confirms it. Everything is in the activity log.' },
-  { q: 'How does the voice front desk handle complicated requests?', a: 'It answers from your live prices, rooms and policies, and knows when to hand off — anything unusual goes to your front desk with a summary.' },
+  { q: 'How does the voice front desk handle complicated requests?', a: 'It answers from your live prices, rooms and policies, and knows when to hand off. Anything unusual goes to your front desk with a summary.' },
   { q: 'Is my guest data safe?', a: 'Data is kept separate for each property and encrypted in transit and at rest. Stored system logins are encrypted with a key only your workspace uses. You can export everything, any time.' },
   { q: 'What does it cost to get started?', a: 'Nothing up front. Start free, no card needed, and only pay when you go live.' },
 ];
@@ -222,7 +222,7 @@ export default function LandingPage() {
               {PRODUCT_TAGLINE}
             </h1>
             <p className="mt-6 max-w-xl text-pretty text-lg leading-relaxed text-muted-foreground">
-              A booking site under your own name, a front desk you run by simply saying what you need, and a voice agent that picks up every call — with your real rooms and prices behind every answer.
+              A booking site under your own name, a front desk you run by saying what you need, and a voice agent that picks up every call using your real rooms and prices.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Button asChild size="lg">
@@ -235,7 +235,7 @@ export default function LandingPage() {
               </Button>
             </div>
             <ul className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm text-muted-foreground">
-              {['Free to start', 'No card needed', 'Keep your current system'].map((t) => (
+              {['Start free', 'No card needed', 'Keep your current system'].map((t) => (
                 <li key={t} className="flex items-center gap-1.5">
                   <Check className="h-4 w-4 text-primary" /> {t}
                 </li>
@@ -339,7 +339,7 @@ export default function LandingPage() {
               </li>
             ))}
           </ul>
-          <p className="mt-8 text-center text-sm text-muted-foreground">Change paths any time — your rooms, prices and guests come with you.</p>
+          <p className="mt-8 text-center text-sm text-muted-foreground">Change paths any time. Your rooms, prices and guests come with you.</p>
         </div>
       </section>
 
@@ -395,7 +395,7 @@ export default function LandingPage() {
               Run the desk in plain language. Watch the screen build itself.
             </h2>
             <p className="mt-4 text-pretty text-base leading-relaxed text-muted-foreground md:text-lg">
-              “Who’s arriving late?” becomes a list you can act on. “Move the Okafors to an ocean view” becomes a plan you confirm. The agent works on live data — it never guesses a room, a price or a guest.
+              “Who’s arriving late?” becomes a list you can act on. “Move the Okafors to an ocean view” becomes a plan you confirm. The agent works on live data. It never guesses a room, a price or a guest.
             </p>
             <ul className="mt-8 space-y-6">
               {AGENT_POINTS.map((p) => (
@@ -417,7 +417,7 @@ export default function LandingPage() {
             </p>
             <h3 className="relative mt-3 text-balance font-display text-2xl leading-snug sm:text-3xl">A voice that picks up every call.</h3>
             <p className="relative mt-3 text-pretty text-sm leading-relaxed text-agent-gradient-foreground/85 sm:text-base">
-              Your phone line, WhatsApp and a “Talk to us” button on your site — answered by an agent that knows your live rooms and prices, and hands off to your team when it should.
+              Your phone line, WhatsApp and a “Talk to us” button on your site, answered by an agent that knows your live rooms and prices and hands off to your team when it should.
             </p>
             <ul className="relative mt-5 flex flex-wrap gap-2">
               {CHANNELS.map((c) => (
@@ -429,7 +429,7 @@ export default function LandingPage() {
             <figure className="relative mt-6 space-y-2.5 rounded-2xl bg-overlay/25 p-4">
               <figcaption className="text-2xs font-semibold uppercase tracking-wider text-agent-gradient-foreground/80">An example call</figcaption>
               <p className="mr-8 rounded-2xl rounded-tl-md bg-surface px-3.5 py-2.5 text-sm text-foreground">
-                <span className="sr-only">Guest: </span>Hi — do you have a room for two this Friday?
+                <span className="sr-only">Guest: </span>Hi, do you have a room for two this Friday?
               </p>
               <p className="ml-8 rounded-2xl rounded-tr-md bg-agent-gradient-foreground/15 px-3.5 py-2.5 text-sm">
                 <span className="sr-only">Agent: </span>We do. An Ocean King is {usd.format(227)} for Friday night. Shall I text you a link to book it?
