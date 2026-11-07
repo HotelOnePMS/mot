@@ -8,7 +8,7 @@ import * as React from 'react';
  * checkout, confirm a booking). Pages call `useVoicePage(...)`; the dock (in
  * the root layout) reads whichever page registered last.
  */
-export type VoicePageKind = 'home' | 'directory' | 'hotel' | 'checkout' | 'booking' | 'trips' | 'other';
+export type VoicePageKind = 'home' | 'directory' | 'hotel' | 'checkout' | 'booking' | 'trips' | 'tour' | 'other';
 
 export interface VoiceStay {
   checkIn: string;
@@ -95,6 +95,8 @@ export interface VoicePageActions {
   fillGuest?: (details: { name?: string | null; phone?: string | null; notes?: string | null }) => VoiceActionResult | Promise<VoiceActionResult>;
   /** Run the page's own confirm, with its own validation (checkout); refuses unless `expected` is the order on screen. */
   confirmBooking?: (expected: VoiceBookingRequest) => Promise<VoiceActionResult>;
+  /** Owner demo: show one of its stops (an id from config/tour). */
+  showTourStop?: (stop: string) => VoiceActionResult;
 }
 
 export interface VoicePage {
@@ -183,6 +185,7 @@ export function useVoicePage(page: VoicePage): void {
 /** What the dock assumes about a page that hasn't registered (or before it does), from its path. */
 export function pageFromPath(pathname: string): VoicePage {
   if (pathname === '/') return { kind: 'home' };
+  if (pathname === '/demo/tour') return { kind: 'tour' };
   if (pathname === '/properties') return { kind: 'directory' };
   const checkout = pathname.match(/^\/properties\/([^/]+)\/book\/?$/);
   if (checkout) return { kind: 'checkout', propertyId: decodeURIComponent(checkout[1]) };

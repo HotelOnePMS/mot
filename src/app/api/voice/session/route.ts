@@ -11,6 +11,8 @@ const query = z.object({
   propertyId: z.string().min(1).max(64).optional(),
   audience: z.enum(['guest', 'staff']).default('guest'),
   scope: z.enum(['hotel', 'global']).optional(),
+  /** owners: started from the pages for hotel owners (the concierge greets as the product guide). */
+  intro: z.enum(['owners']).optional(),
 });
 
 /**
@@ -24,7 +26,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
   if (voiceProvider() !== 'openai') throw new DomainError(503, 'VOICE_DISABLED', 'The GPT-Live voice line isn’t switched on.');
   const sdp = await request.text();
   if (!sdp.trim().startsWith('v=') || sdp.length > 64_000) throw badRequest('A WebRTC SDP offer is required.');
-  const session = await openVoiceSession(request, { propertyId: q.propertyId, audience: q.audience, scope: q.scope === 'global' ? 'GLOBAL' : 'HOTEL' }, async (ctx) => {
+  const session = await openVoiceSession(request, { propertyId: q.propertyId, audience: q.audience, scope: q.scope === 'global' ? 'GLOBAL' : 'HOTEL', intro: q.intro }, async (ctx) => {
     const live = await createLiveSession({ sdp, voice: ctx.voice, ...ctx.prompts, tools: ctx.tools });
     return { externalId: live.sessionId, result: live.sdp };
   });

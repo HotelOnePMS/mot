@@ -28,7 +28,8 @@ import {
 import { runsOnHotelOne } from '../concierge/facts';
 import { availabilityOptions } from '../concierge/shared';
 import { useSkill as runSkill } from '../skills';
-import { CLIENT_ONLY_TOOLS, type VoiceScope } from './live';
+import { PRODUCT_NAME } from '@/config/product';
+import { CLIENT_ONLY_TOOLS, TOUR_TOOLS, type VoiceScope } from './live';
 import { runGuestTool } from './guestTools';
 import { isISODate } from '../dates';
 
@@ -101,6 +102,9 @@ export async function runWebTool(session: WebVoiceSession, name: string, raw: un
   const args = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const hotel = session.scope === 'HOTEL';
 
+  if (TOUR_TOOLS.has(name)) {
+    return { error: `${name} runs on the visitor’s screen and only in the ${PRODUCT_NAME} concierge.` };
+  }
   if (CLIENT_ONLY_TOOLS.has(name)) {
     return { error: `${name} works on the guest’s screen while checkout is open. Call start_booking first to open checkout.` };
   }

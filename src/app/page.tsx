@@ -33,6 +33,7 @@ import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/primitives';
 import { AgentDemo } from '@/components/marketing/AgentDemo';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
+import { OwnerDemoPrompt } from '@/components/marketing/OwnerDemoPrompt';
 import { cn } from '@/lib/utils';
 import { LABELS, SETUP_PATH_COPY, TERMS } from '@/config/copy';
 import { PRODUCT_NAME, PRODUCT_SUPPORT_EMAIL, PRODUCT_TAGLINE } from '@/config/product';
@@ -234,6 +235,7 @@ export default function LandingPage() {
                 <Link href="/demo">{LABELS.demo}</Link>
               </Button>
             </div>
+            <OwnerDemoPrompt className="mt-6 max-w-xl" />
             <ul className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm text-muted-foreground">
               {['Start free', 'No card needed', 'Keep your current system'].map((t) => (
                 <li key={t} className="flex items-center gap-1.5">
