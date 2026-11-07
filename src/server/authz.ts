@@ -104,6 +104,8 @@ export const PERMISSIONS = {
   // Front desk: new reservations at the desk, and the end-of-day close.
   'booking.create': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'audit.run': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // Front desk reports: reservation lists, occupancy and revenue for the hotel, with CSV export (each export is logged).
+  'reports.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   // Hotel settings that change prices: currency, time zone, taxes and fees.
   'charges.manage': ['ADMIN', 'OWNER', 'MANAGER'],
   // Hotel groups: owners who administer an organization (see canManageOrg), and platform admins.

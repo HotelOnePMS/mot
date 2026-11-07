@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleCheck,
+  FileSpreadsheet,
   Info,
   MoonStar,
   MoreHorizontal,
@@ -305,6 +306,13 @@ export default function FrontDeskPage() {
           <IconButton label="Refresh" variant="outline" onClick={() => mutate()} aria-busy={isValidating || undefined}>
             <RefreshCw className={cn(isValidating && 'motion-safe:animate-spin')} />
           </IconButton>
+          {can('reports.view') && (
+            <Button variant="outline" asChild>
+              <Link href="/admin/reports">
+                <FileSpreadsheet aria-hidden /> Reports
+              </Link>
+            </Button>
+          )}
           {can('audit.run') && (
             <Button variant="outline" onClick={() => setAudit(true)}>
               <MoonStar aria-hidden /> Night audit

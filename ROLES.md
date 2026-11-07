@@ -35,3 +35,7 @@ Refunding cards (`payments.refund`) and handing back cash paid toward the stay a
 ## Free-text PMS driving (`bridge.use`)
 
 `bridge.use` lets someone send free-text instructions to the hotel's own PMS through the connected browser/MCP session, which acts with the hotel's PMS login and bypasses HotelOne's per-action roles. It is **owner/manager/admin only** by default, and so is the *Your PMS* page (`/admin/connect`). The front-desk agent at PMS-bridge hotels will say it can't send work to the PMS. To give a specific front-desk role this access, add `'FRONT_DESK'` to `bridge.use` in `PERMISSIONS` and to `/admin/connect` in `CONSOLE_ACCESS` (owner-configurable roles arrive in the follow-up permissions PR).
+
+## Reports (`reports.view`)
+
+Front desk, managers, owners and platform admins can run reports at `/admin/reports` (also linked from the front desk): arrivals, departures, in house, cancellations and no-shows, occupancy, revenue, or a custom report with their own dates, filters (status, room type, source, payment method) and columns. Housekeepers can't. Every CSV download is written to the hotel's activity log as `REPORT_EXPORTED` (who, which dates, which columns), because it takes guest details off the system. Saved reports live in the browser of the person who saved them.
