@@ -28,7 +28,9 @@ describe('SSO', () => {
     const state = { o: 'org1', s: 'state', n: 'nonce', v: 'verifier', c: '/admin', e: Date.now() + 60_000 };
     const sealed = sealState(state);
     expect(openState(sealed)).toEqual(state);
-    expect(openState(sealed.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')))).toBeNull();
+    // Flip the first signature character: every bit of it is significant, unlike the
+    // last one, whose low bits base64url decoding ignores (so 'A' -> 'B' there is a no-op).
+    expect(openState(sealed.replace(/\.(.)/, (_, c) => `.${c === 'A' ? 'B' : 'A'}`))).toBeNull();
     expect(openState(sealState({ ...state, e: Date.now() - 1 }))).toBeNull();
     expect(openState(undefined)).toBeNull();
   });
