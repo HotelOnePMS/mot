@@ -42,6 +42,9 @@ export const PERMISSIONS = {
   'booking.checkout': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'booking.assignRoom': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'booking.note': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // The hotel's Do Not Rent list: the front desk adds guests with a note, and can take them off again.
+  'dnr.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  'dnr.manage': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'booking.confirm': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'booking.noShow': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'booking.cancel': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
@@ -51,10 +54,20 @@ export const PERMISSIONS = {
   'payments.view': ['ADMIN', 'OWNER', 'MANAGER'],
   'payments.manage': ['ADMIN', 'OWNER'],
   'payments.refund': ['ADMIN', 'OWNER', 'MANAGER'],
+  // Taking money at the desk: card reader, typed-in or OTA virtual card, cash, and the security deposit.
+  'payments.collect': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'disputes.view': ['ADMIN', 'OWNER', 'MANAGER'],
   'disputes.manage': ['ADMIN', 'OWNER'],
   // Third-party payment: send the cardholder an authorization form, see what they signed (ID photo included), verify it.
   'booking.cardAuth': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // Guided check-in records: see the guest's stored ID photo and full details (every view is logged).
+  'guestId.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // The folio (charges, payments, deposits, balance): front desk runs check-in and check-out with it.
+  'folio.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // Lower what a stay costs with an allowance (service recovery, unused nights), with a reason.
+  'folio.adjust': ['ADMIN', 'OWNER', 'MANAGER'],
+  // Check a guest out while money is still owed (billed to a company, paying later), with a reason.
+  'booking.checkoutWithBalance': ['ADMIN', 'OWNER', 'MANAGER'],
   'room.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
   'room.status': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
   'room.outOfOrder': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
@@ -94,6 +107,8 @@ export const PERMISSIONS = {
   // Front desk: new reservations at the desk, and the end-of-day close.
   'booking.create': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'audit.run': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // Front desk reports: reservation lists, occupancy and revenue for the hotel, with CSV export (each export is logged).
+  'reports.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   // Hotel settings that change prices: currency, time zone, taxes and fees.
   'charges.manage': ['ADMIN', 'OWNER', 'MANAGER'],
   // Hotel groups: owners who administer an organization (see canManageOrg), and platform admins.

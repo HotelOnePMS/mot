@@ -5,6 +5,7 @@
  */
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { refreshPaymentStatus } from '../payments/record';
 import { roundMoney } from '@/lib/currency';
 import type { ISODate } from '@/lib/dto';
 import { isStaffRole } from '@/lib/routes';
@@ -117,6 +118,8 @@ export async function cancelOwnBooking(actor: Actor, bookingId: string, reason?:
     },
   });
   scheduleInventorySync(booking.roomTypeId, booking.checkIn, booking.checkOut);
+  // One room type of a reservation cancelled: how its payments are shared changes, and so may the others' statuses.
+  if (booking.groupCode) await refreshPaymentStatus(booking);
   await recordAudit({ actor, source: 'classic' }, booking.propertyId, 'BOOKING_CANCELLED', `${booking.user.firstName} ${booking.user.lastName} cancelled ${booking.code ?? 'their booking'} online`, {
     bookingId: booking.id,
   });
@@ -145,6 +148,11 @@ export async function changeOwnStayDates(actor: Actor, bookingId: string, input:
     if (!isStaff && policyFor(newIn, timezone).passed) throw badRequest('That new check-in is too soon to change online. Please call the hotel.');
   }
   if (newOut <= today) throw badRequest('Check-out must be after today.');
+  // The hotel lowered what this stay costs (an allowance, for unused nights say): a guest shortening it online would
+  // take the same nights off twice, so the hotel does it (staff see the folio). Extensions go ahead.
+  if (!isStaff && (newIn > oldIn || newOut < oldOut) && (await prisma.folioAllowance.count({ where: { bookingId: booking.id, voidedAt: null } }))) {
+    throw badRequest('The hotel has adjusted the price of this stay, so it can’t be shortened online. Please contact the hotel.');
+  }
 
   const inv = await nightlyInventory(prisma, booking.roomTypeId, newIn, newOut, { excludeBookingId: booking.id });
   if (inv.minAvailable < booking.rooms) {

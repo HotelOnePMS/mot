@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleCheck,
+  FileSpreadsheet,
   Info,
   MoonStar,
   MoreHorizontal,
@@ -44,7 +45,8 @@ import { RoomGrid, RoomLegend } from '@/components/hotel/RoomGrid';
 import { useConsole, usePropertyUrl } from '@/components/console/ConsoleProvider';
 import { AskAgentButton } from '@/components/console/AskAgentButton';
 import { PageShell } from '@/components/console/PageShell';
-import { AssignRoomDialog, CheckInDialog, CheckOutDialog, ConfirmDialog, NoteDialog } from '@/components/frontdesk/dialogs';
+import { CheckInWizard } from '@/components/frontdesk/CheckInWizard';
+import { AssignRoomDialog, CheckOutDialog, ConfirmDialog, NoteDialog } from '@/components/frontdesk/dialogs';
 import { RoomSheet } from '@/components/frontdesk/RoomSheet';
 import { useBookingActions } from '@/components/frontdesk/useBookingActions';
 import { NewReservationDialog } from '@/components/frontdesk/NewReservation';
@@ -304,6 +306,13 @@ export default function FrontDeskPage() {
           <IconButton label="Refresh" variant="outline" onClick={() => mutate()} aria-busy={isValidating || undefined}>
             <RefreshCw className={cn(isValidating && 'motion-safe:animate-spin')} />
           </IconButton>
+          {can('reports.view') && (
+            <Button variant="outline" asChild>
+              <Link href="/admin/reports">
+                <FileSpreadsheet aria-hidden /> Reports
+              </Link>
+            </Button>
+          )}
           {can('audit.run') && (
             <Button variant="outline" onClick={() => setAudit(true)}>
               <MoonStar aria-hidden /> Night audit
@@ -443,7 +452,7 @@ export default function FrontDeskPage() {
         )}
       </Card>
 
-      <CheckInDialog booking={dialog?.kind === 'checkin' ? dialog.booking : null} open={dialog?.kind === 'checkin'} onOpenChange={(o) => !o && setDialog(null)} />
+      <CheckInWizard booking={dialog?.kind === 'checkin' ? dialog.booking : null} open={dialog?.kind === 'checkin'} onOpenChange={(o) => !o && setDialog(null)} />
       <CheckOutDialog
         booking={dialog?.kind === 'checkout' ? dialog.booking : null}
         open={dialog?.kind === 'checkout'}

@@ -8,6 +8,7 @@ const paymentRows = {
   orderBy: { createdAt: 'desc' },
   select: {
     id: true,
+    method: true,
     kind: true,
     status: true,
     amount: true,

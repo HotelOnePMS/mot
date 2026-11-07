@@ -10,7 +10,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
  * channel carries captions and delegated tool calls, which we execute in
  * our own code and answer with response.item.create + response.create.
  */
-export function useOpenAIVoice({ propertyId, audience, scope, onToolCall, onStateChange, onTranscript }: VoiceOptions): VoiceController {
+export function useOpenAIVoice({ propertyId, audience, scope, intro, onToolCall, onStateChange, onTranscript }: VoiceOptions): VoiceController {
   const [state, setStateRaw] = React.useState<VoiceState>('idle');
   const [error, setError] = React.useState<string | null>(null);
   const [captions, setCaptions] = React.useState<Caption[]>([]);
@@ -215,7 +215,7 @@ export function useOpenAIVoice({ propertyId, audience, scope, onToolCall, onStat
           }
         });
       });
-      const res = await fetch(`/api/voice/session?${sessionQuery({ propertyId, audience, scope })}`, {
+      const res = await fetch(`/api/voice/session?${sessionQuery({ propertyId, audience, scope, intro })}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/sdp' },
         body: peer.localDescription?.sdp ?? '',
@@ -230,7 +230,7 @@ export function useOpenAIVoice({ propertyId, audience, scope, onToolCall, onStat
       finish('error');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [propertyId, audience, scope, state]);
+  }, [propertyId, audience, scope, intro, state]);
 
   const stop = React.useCallback(() => {
     if (state === 'idle') return;

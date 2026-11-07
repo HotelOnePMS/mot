@@ -6,11 +6,13 @@ import { Prisma } from '@prisma/client';
 import { randomInt } from 'crypto';
 import { prisma } from '@/lib/prisma';
 import type { BookingStatus, BookingSummary, ISODate } from '@/lib/dto';
-import { BOOKING_STATUS } from '@/lib/status';
+import { CARD_NUMBER_REFUSED, containsCardNumber } from '@/lib/desk-payments';
+import { BOOKING_STATUS, money } from '@/lib/status';
 import { MAX_RESERVATION_LINES, MAX_RESERVATION_ROOMS, normalizeLines, splitParty, totalRooms, type BookingLine } from '@/lib/booking-lines';
 import { paymentAmountDue, toCents, fromCents, type PaymentPolicy } from '@/lib/payments';
 import { HOLD_MINUTES } from '../payments/config';
 import { releaseExpiredHolds } from '../payments/expiry';
+import { refreshPaymentStatus } from '../payments/record';
 import { assertPropertyAccess, can, requirePermission, scopeByProperty, type Actor, type Permission } from '../authz';
 import { addDaysISO, atNoonUTC, dayBounds, diffDays, eachNight, formatDay, hotelToday, isISODate, toISODate } from '../dates';
 import { badRequest, conflict, DomainError, notFound } from '../errors';
@@ -18,6 +20,7 @@ import { scheduleInventorySync } from '../channels/sync';
 import { recordAudit, type OpContext } from './audit';
 import { localeOf, todayAt } from './hotels';
 import { nightlyInventory, quoteStay } from './inventory';
+import { attachDoNotRent } from './doNotRent';
 import { bookingInclude, floorNumber, toBookingSummary, type BookingWithRelations } from './mappers';
 
 // ---------------------------------------------------------------------------
@@ -98,7 +101,7 @@ export async function searchBookings(actor: Actor, q: BookingSearch): Promise<Bo
     orderBy: [{ checkIn: 'desc' }],
     take: Math.min(q.limit ?? 50, 200),
   });
-  return rows.map(toBookingSummary);
+  return attachDoNotRent(rows.map(toBookingSummary));
 }
 
 function nameParts(text: string): Prisma.BookingWhereInput[] {
@@ -429,6 +432,13 @@ export interface TransitionOptions {
   roomId?: string;
   /** Allow check-in to a room that is not yet clean (front desk override). */
   allowDirtyRoom?: boolean;
+  /**
+   * Extra writes that must commit or fail together with the transition (the guided check-in's ID,
+   * registration card and deposit). Runs inside the same transaction, after the booking is updated.
+   */
+  inTransaction?: (tx: Prisma.TransactionClient, booking: BookingWithRelations) => Promise<void>;
+  /** Check out with money still owed (managers: booking.checkoutWithBalance), saying why: billed to a company, paying later. */
+  balanceOverride?: { reason: string };
 }
 
 export interface TransitionResult {
@@ -445,7 +455,8 @@ export interface TransitionResult {
 export async function checkTransition(
   actor: Actor,
   booking: BookingWithRelations,
-  to: BookingStatus
+  to: BookingStatus,
+  opts: Pick<TransitionOptions, 'balanceOverride'> = {}
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   const from = booking.status as BookingStatus;
   const rule = TRANSITIONS[from].find((t) => t.to === to);
@@ -463,6 +474,22 @@ export async function checkTransition(
   if (to === 'NO_SHOW' && today < checkIn) {
     return { ok: false, reason: `The guest isn't due until ${formatDay(checkIn, 'weekday')}.` };
   }
+  // A guest checks out only once nothing is left to pay (online, at the desk, or recorded as paid another way), unless a
+  // manager checks them out with it owing and says why.
+  if (to === 'CHECKED_OUT') {
+    const { checkOutDue, currency, reservationCode } = toBookingSummary(booking);
+    if (checkOutDue > 0.004) {
+      const owed = `${money(checkOutDue, { currency })}${reservationCode ? ` on reservation ${reservationCode}` : ''}`;
+      const manager = can(actor, 'booking.checkoutWithBalance');
+      if (!opts.balanceOverride) {
+        return { ok: false, reason: `There’s a balance of ${owed} to collect before the guest can check out.${manager ? ' Or check them out with it owing, saying why, from the check-out screen.' : ' A manager can check them out with it owing.'}` };
+      }
+      if (!manager) return { ok: false, reason: `Only a manager can check a guest out with a balance (${owed} owing).` };
+      const why = opts.balanceOverride.reason.replace(/\s+/g, ' ').trim();
+      if (why.length < 3) return { ok: false, reason: 'Say why the guest checks out with the balance owing (for example “billed to Acme Corp”).' };
+      if (containsCardNumber(why)) return { ok: false, reason: CARD_NUMBER_REFUSED };
+    }
+  }
   return { ok: true };
 }
 
@@ -478,8 +505,11 @@ export async function transitionBooking(
   const rule = TRANSITIONS[from].find((t) => t.to === to);
   if (!rule) throw badRequest(`A ${BOOKING_STATUS[from].label.toLowerCase()} reservation can't move to ${BOOKING_STATUS[to].label.toLowerCase()}.`);
   requirePermission(ctx.actor, rule.perm);
-  const check = await checkTransition(ctx.actor, booking, to);
+  const check = await checkTransition(ctx.actor, booking, to, { balanceOverride: opts.balanceOverride });
   if (!check.ok) throw badRequest(check.reason);
+  // Checking out owing money (a manager said why): what was owed, kept with the reason. The guest's history doesn't say.
+  const owing = to === 'CHECKED_OUT' && opts.balanceOverride ? toBookingSummary(booking).checkOutDue : 0;
+  const owingReason = opts.balanceOverride?.reason.replace(/\s+/g, ' ').trim().slice(0, 200) ?? '';
 
   const today = await todayAt(booking.propertyId);
   const effects: string[] = [];
@@ -515,7 +545,11 @@ export async function transitionBooking(
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    const b = await tx.booking.update({ where: { id: booking.id }, data, include: bookingInclude });
+    // Only from the status we checked: a double tap or an agent plan running at the same moment can't apply it twice.
+    const b = await tx.booking.update({ where: { id: booking.id, status: from }, data, include: bookingInclude }).catch((e: unknown) => {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') throw conflict('This reservation was just changed by someone else. Reload and try again.');
+      throw e;
+    });
     await tx.bookingStatusHistory.create({
       data: {
         bookingId: booking.id,
@@ -525,6 +559,11 @@ export async function transitionBooking(
           .join(' · '),
       },
     });
+    if (opts.inTransaction) await opts.inTransaction(tx, b);
+    if (owing > 0.004) {
+      const record = { amount: owing, currency: booking.currency, reason: owingReason, approvedById: ctx.actor.userId, createdAt: new Date() };
+      await tx.checkoutOverride.upsert({ where: { bookingId: booking.id }, create: { bookingId: booking.id, propertyId: booking.propertyId, ...record }, update: record });
+    }
     if (to === 'CHECKED_OUT' && b.roomId) {
       await tx.room.update({ where: { id: b.roomId }, data: { status: 'DIRTY' } });
       const open = await tx.roomHousekeeping.findFirst({ where: { roomId: b.roomId, status: { in: ['PENDING', 'IN_PROGRESS'] } } });
@@ -544,6 +583,8 @@ export async function transitionBooking(
   }
 
   if (to === 'CHECKED_OUT' && updated.room) effects.push(`Room ${updated.room.roomNumber} marked dirty and queued for housekeeping`);
+  // A room type cancelled, a no-show or reinstated changes how a reservation's payments are shared: each line's status.
+  if (booking.groupCode && occupying(from) !== occupying(to)) await refreshPaymentStatus(booking);
 
   const summary = toBookingSummary(updated);
   await recordAudit(ctx, booking.propertyId, `BOOKING_${to}`, `${VERB[to] ?? to} ${summary.guest.name} (${summary.code})`, {
@@ -552,6 +593,9 @@ export async function transitionBooking(
     to,
     effects,
   });
+  if (owing > 0.004) {
+    await recordAudit(ctx, booking.propertyId, 'CHECKOUT_WITH_BALANCE', `Checked ${summary.guest.name} out with ${money(owing, { currency: booking.currency })} owing (${summary.code}): ${owingReason}`, { bookingId: booking.id });
+  }
   return { booking: summary, from, to, effects };
 }
 
@@ -734,7 +778,7 @@ export async function arrivalsOn(propertyId: string, day: ISODate): Promise<Book
     include: bookingInclude,
     orderBy: [{ checkIn: 'asc' }, { createdAt: 'asc' }],
   });
-  return rows.map(toBookingSummary);
+  return attachDoNotRent(rows.map(toBookingSummary));
 }
 
 export async function departuresOn(propertyId: string, day: ISODate): Promise<BookingSummary[]> {
@@ -750,7 +794,7 @@ export async function departuresOn(propertyId: string, day: ISODate): Promise<Bo
     include: bookingInclude,
     orderBy: [{ checkOut: 'asc' }],
   });
-  return rows.map(toBookingSummary);
+  return attachDoNotRent(rows.map(toBookingSummary));
 }
 
 export async function inHouse(propertyId: string): Promise<BookingSummary[]> {
@@ -759,5 +803,5 @@ export async function inHouse(propertyId: string): Promise<BookingSummary[]> {
     include: bookingInclude,
     orderBy: [{ checkOut: 'asc' }],
   });
-  return rows.map(toBookingSummary);
+  return attachDoNotRent(rows.map(toBookingSummary));
 }

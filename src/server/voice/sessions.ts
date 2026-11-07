@@ -111,11 +111,11 @@ async function reserve<T>(data: Prisma.VoiceSessionUncheckedCreateInput, limits:
  */
 export async function openVoiceSession<T>(
   request: Request,
-  q: { propertyId?: string | null; audience: 'guest' | 'staff'; scope?: VoiceScope },
+  q: { propertyId?: string | null; audience: 'guest' | 'staff'; scope?: VoiceScope; intro?: 'owners' },
   start: (ctx: VoiceSessionContext) => Promise<{ externalId: string | null; result: T }>,
 ): Promise<{ result: T; token: string }> {
   // Guests anywhere but a hotel's own pages talk to the HotelOne concierge.
-  if (q.audience === 'guest' && (q.scope === 'GLOBAL' || !q.propertyId)) return openConciergeSession(request, start);
+  if (q.audience === 'guest' && (q.scope === 'GLOBAL' || !q.propertyId)) return openConciergeSession(request, start, q.intro === 'owners');
   if (!q.propertyId) throw badRequest('propertyId is required.');
   const property = await prisma.property.findFirst({
     where: { id: q.propertyId, isActive: true },
@@ -189,6 +189,8 @@ export async function openVoiceSession<T>(
 async function openConciergeSession<T>(
   request: Request,
   start: (ctx: VoiceSessionContext) => Promise<{ externalId: string | null; result: T }>,
+  /** Started from the pages for hotel owners (home, the owner demo): greet as the product guide. */
+  owners = false,
 ): Promise<{ result: T; token: string }> {
   if (!conciergeVoiceAvailable()) throw new DomainError(403, 'VOICE_OFF', `The ${PRODUCT_NAME} voice concierge isn’t available right now.`);
   const clientKey = createHash('sha256').update(`${clientIp(request)}|GLOBAL`).digest('hex').slice(0, 32);
@@ -197,8 +199,10 @@ async function openConciergeSession<T>(
     scope: 'GLOBAL',
     property: null,
     voice: process.env.VOICE_CONCIERGE_VOICE || 'marin',
-    prompts: conciergePrompts({ product: PRODUCT_NAME, ...guestContext() }),
-    firstMessage: `Hi, I’m ${PRODUCT_NAME}’s AI concierge. Where would you like to stay, and when?`,
+    prompts: conciergePrompts({ product: PRODUCT_NAME, owners, ...guestContext() }),
+    firstMessage: owners
+      ? `Hi, I’m ${PRODUCT_NAME}’s AI guide. I can explain what ${PRODUCT_NAME} does, or show you around a sample hotel’s console. Want the demo?`
+      : `Hi, I’m ${PRODUCT_NAME}’s AI concierge. Where would you like to stay, and when?`,
     tools: CONCIERGE_TOOLS,
   };
   const limits: Limit[] = [

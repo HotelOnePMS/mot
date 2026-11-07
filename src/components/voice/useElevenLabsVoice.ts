@@ -32,7 +32,7 @@ const friendly = (message: string) => message.replace(/^Server error:\s*/i, '').
  * the same HotelOne endpoints as GPT-Live, so permission checks and confirm
  * plans are unchanged.
  */
-export function useElevenLabsVoice({ propertyId, audience, scope, onToolCall, onStateChange, onTranscript }: VoiceOptions): VoiceController {
+export function useElevenLabsVoice({ propertyId, audience, scope, intro, onToolCall, onStateChange, onTranscript }: VoiceOptions): VoiceController {
   const [state, setStateRaw] = React.useState<VoiceState>('idle');
   const [error, setError] = React.useState<string | null>(null);
   const [captions, setCaptions] = React.useState<Caption[]>([]);
@@ -108,7 +108,7 @@ export function useElevenLabsVoice({ propertyId, audience, scope, onToolCall, on
       probe.getTracks().forEach((t) => t.stop());
       if (!current()) return;
 
-      const res = await fetch(`/api/voice/elevenlabs/session?${sessionQuery({ propertyId, audience, scope })}`, { method: 'POST' });
+      const res = await fetch(`/api/voice/elevenlabs/session?${sessionQuery({ propertyId, audience, scope, intro })}`, { method: 'POST' });
       const body = (await res.json().catch(() => ({}))) as SessionResponse;
       if (!res.ok || !body.signedUrl || !body.token) throw new Error(body.error || 'Couldn’t start the voice line.');
       // Hung up while we were connecting: close the usage row and stop here.
@@ -200,7 +200,7 @@ export function useElevenLabsVoice({ propertyId, audience, scope, onToolCall, on
       );
       finish('error');
     }
-  }, [propertyId, audience, scope, state, finish, setState]);
+  }, [propertyId, audience, scope, intro, state, finish, setState]);
 
   const stop = React.useCallback(() => {
     if (state === 'idle') return;

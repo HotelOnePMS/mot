@@ -13,6 +13,8 @@ import OpenAI from 'openai';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { forbidden, DomainError } from '../errors';
 import { logError } from '@/server/log';
+import { PRODUCT_NAME } from '@/config/product';
+import { TOUR_HOTEL, TOUR_STOP_IDS } from '@/config/tour';
 
 export const LIVE_MODEL = process.env.OPENAI_LIVE_MODEL || 'gpt-live-1';
 // Same default the OpenAI playground uses for Live delegation.
@@ -459,6 +461,25 @@ const WEB_USE_SKILL: FunctionToolSpec = {
   strict: true,
 };
 
+const START_OWNER_DEMO: FunctionToolSpec = {
+  type: 'function',
+  name: 'start_owner_demo',
+  description: `Open the owner demo on the visitor’s screen: the ${PRODUCT_NAME} hotel console for a made-up sample hotel, with sample data only. Use when someone asks what ${PRODUCT_NAME} is, how it works, or for a demo, a tour or the owner/manager view. Returns the stops to walk through.`,
+  parameters: obj({}, []),
+  strict: true,
+};
+
+const SHOW_DEMO_STOP: FunctionToolSpec = {
+  type: 'function',
+  name: 'show_demo_stop',
+  description: 'Show one screen of the owner demo and get what to explain about it. Walk the stops in order unless the visitor asks for one (e.g. "show me disputes"). Returns the facts to explain and the next stop.',
+  parameters: obj({ stop: { type: 'string', enum: [...TOUR_STOP_IDS], description: 'Which screen to show' } }, ['stop']),
+  strict: true,
+};
+
+/** The owner demo: run by the browser against the sample console on screen (never real hotel data). */
+export const TOUR_TOOLS = new Set(['start_owner_demo', 'show_demo_stop']);
+
 /** Tools that run in the browser only (the server can't see or change the guest's screen). */
 export const CLIENT_ONLY_TOOLS = new Set(['fill_guest_details', 'confirm_booking']);
 
@@ -493,6 +514,8 @@ export const CONCIERGE_TOOLS: FunctionToolSpec[] = [
   FIND_BOOKING,
   WEB_LEAVE_MESSAGE,
   WEB_USE_SKILL,
+  START_OWNER_DEMO,
+  SHOW_DEMO_STOP,
 ];
 
 /**
@@ -653,10 +676,12 @@ const PAGE_UPDATE_RULE =
  * on the platform's own pages (home, directory, trips). Finds stays,
  * opens hotels and checkout on screen, and books only on a clear yes.
  */
-export function conciergePrompts(p: { product: string; today: string; timezone: string }) {
+export function conciergePrompts(p: { product: string; today: string; timezone: string; owners?: boolean }) {
   const instructions = [
-    `You are the ${p.product} concierge: a friendly voice assistant that helps people find and book a room at the independent hotels on ${p.product}. Warm, calm and brief.`,
-    `Open with a short welcome: say you’re ${p.product}’s AI concierge and ask where and when they’d like to stay.`,
+    `You are the ${p.product} concierge: a friendly voice assistant that helps people find and book a room at the independent hotels on ${p.product}, and shows hotel owners what ${p.product} does for them. Warm, calm and brief.`,
+    p.owners
+      ? `This visitor started on ${p.product}’s pages for hotel owners. Open with a short welcome: say you’re ${p.product}’s AI guide, and offer to explain what it does or show them around a sample hotel’s console.`
+      : `Open with a short welcome: say you’re ${p.product}’s AI concierge and ask where and when they’d like to stay.`,
     'Speak in short sentences. Ask for what is missing — where, which dates, how many guests — one question at a time.',
     'Say prices as natural amounts in the hotel’s currency ("one hundred and eighty-nine dollars a night"; use the currency the tools report). Repeat dates back before acting on them.',
     'Whenever the guest asks about hotels, rooms, prices, availability, policies or a booking, delegate — never answer facts from memory.',
@@ -665,9 +690,10 @@ export function conciergePrompts(p: { product: string; today: string; timezone: 
     'Never ask for card numbers. Bookings are completed on the guest’s screen.',
     'If the guest wants a person, offer to take a message for the hotel’s team.',
     'If asked, say you are an AI assistant.',
+    `If someone asks what ${p.product} is, how it works, or for a demo or tour, offer the owner demo and delegate opening it. During the demo, explain each screen in two or three short sentences in your own words, then ask if they want to see the next one or have a question. Keep it conversational, not a lecture.`,
   ].join('\n');
   const backendInstructions = [
-    `You find and book hotels on ${p.product} for the voice concierge. Today is ${p.today} (${p.timezone}). Resolve relative dates ("this Friday", "next weekend") against today.`,
+    `You find and book hotels on ${p.product} for the voice concierge, and run the owner demo. Today is ${p.today} (${p.timezone}). Resolve relative dates ("this Friday", "next weekend") against today.`,
     'Rules:',
     '- Facts come only from tools. Never invent hotels, prices, availability, amenities or policies.',
     '- Finding a stay: call search_hotels with the place and, once known, check_in, check_out and guests. Present at most three options with their price per night (or stay total). If nothing fits, say so and suggest other dates or a nearby place.',
@@ -679,10 +705,19 @@ export function conciergePrompts(p: { product: string; today: string; timezone: 
     '- Existing bookings: find_booking needs the confirmation code and last name.',
     '- Anything you can’t do (group rates, special arrangements): leave_message with the hotel’s property_id, the guest’s name and a phone number or email.',
     `${PAGE_UPDATE_RULE} When a hotel’s page is open, its property_id is in the update.`,
+    OWNER_DEMO_RULES,
     '- Reply with one or two short sentences for the voice to say.',
   ].join('\n');
   return { instructions, backendInstructions };
 }
+
+/** How the concierge runs the owner demo (start_owner_demo, show_demo_stop). */
+const OWNER_DEMO_RULES = [
+  `- Owner demo: when someone asks what ${PRODUCT_NAME} is, how it works, or for a demo, tour or the owner view, call start_owner_demo. It opens the hotel console for ${TOUR_HOTEL}, a made-up sample hotel; say it is sample data.`,
+  `- Then call show_demo_stop for each stop in order (${TOUR_STOP_IDS.join(', ')}), one at a time. Explain each from its "explain" facts in two or three short sentences, then ask whether to go on. If they ask about a feature ("show me disputes"), jump to that stop.`,
+  '- Explain only what show_demo_stop returns. Never invent features, numbers or prices. The demo has no real hotel’s data: never present it as real.',
+  '- If they want to try it with their own hotel, say they can start free from the Sign up button; for pricing or a call with the team, offer the contact page.',
+].join('\n');
 
 export function staffPrompts(p: { name: string; userName: string; role: string; today: string; timezone: string }) {
   const instructions = [

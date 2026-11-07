@@ -18,6 +18,7 @@ import { Callout, Skeleton } from '@/components/ui/primitives';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useConsole, usePropertyUrl } from '@/components/console/ConsoleProvider';
+import { DoNotRentCallout, useDoNotRentCheck } from './DoNotRent';
 
 interface RoomTypeOption {
   id: string;
@@ -54,6 +55,7 @@ export function NewReservationDialog({ open, onOpenChange, onCreated }: { open: 
   const [busy, setBusy] = React.useState(false);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const formId = React.useId();
+  const doNotRent = useDoNotRentCheck(guest, open);
 
   React.useEffect(() => {
     if (open) {
@@ -214,6 +216,7 @@ export function NewReservationDialog({ open, onOpenChange, onCreated }: { open: 
               <Input id={`${formId}-phone`} type="tel" autoComplete="off" value={guest.phone} onChange={(e) => setGuest({ ...guest, phone: e.target.value })} />
             </Field>
           </div>
+          <DoNotRentCallout match={doNotRent} />
           <Field label="Notes" htmlFor={`${formId}-notes`} optional>
             <Textarea id={`${formId}-notes`} rows={2} maxLength={1000} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Late arrival, cot, anniversary…" />
           </Field>

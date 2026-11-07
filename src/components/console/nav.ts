@@ -1,4 +1,5 @@
 import {
+  Ban,
   Bot,
   Zap,
   BadgeDollarSign,
@@ -7,6 +8,7 @@ import {
   CalendarCheck2,
   ChartLine,
   ConciergeBell,
+  FileSpreadsheet,
   History,
   LayoutDashboard,
   Settings2,
@@ -52,6 +54,8 @@ const GROUPS: NavGroup[] = [
       { label: 'Front desk', href: '/admin/front-desk', icon: ConciergeBell },
       { label: 'Housekeeping', href: '/admin/housekeeping', icon: BrushCleaning },
       { label: 'Reservations', href: '/admin/bookings', icon: CalendarCheck2 },
+      { label: 'Reports', href: '/admin/reports', icon: FileSpreadsheet },
+      { label: 'Do Not Rent', href: '/admin/do-not-rent', icon: Ban },
       { label: TERMS.voice, href: '/admin/voice', icon: AudioLines, paths: ALL },
     ],
   },

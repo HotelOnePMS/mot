@@ -20,6 +20,7 @@ import { recordAudit, type OpContext } from './audit';
 import { assignRoom, confirmPayAtProperty, createBooking, getBookingForStaff, transitionBooking } from './bookings';
 import { todayAt } from './hotels';
 import { propertyAvailability, type RoomTypeAvailability } from './inventory';
+import { attachDoNotRentOne } from './doNotRent';
 import { toBookingSummary } from './mappers';
 
 export interface DeskReservationInput {
@@ -103,6 +104,26 @@ export async function createDeskReservation(ctx: OpContext, input: DeskReservati
     throw e;
   });
   if (guest.guestEmail) await prisma.booking.update({ where: { id: booking.id }, data: { guestEmail: guest.guestEmail } });
+  // Paid in full at the desk: record the money, so every screen agrees the balance is settled. Once only: a resubmitted
+  // form returns the same booking (duplicate), and the id is fixed per booking.
+  if (input.paid && !booking.duplicate) {
+    await prisma.payment.createMany({
+      skipDuplicates: true,
+      data: {
+        id: `desk-paid-${booking.id}`,
+        bookingId: booking.id,
+        propertyId: booking.propertyId,
+        kind: 'PAYMENT',
+        method: 'OTHER',
+        status: 'SUCCEEDED',
+        amount: booking.totalPrice,
+        currency: booking.currency.toLowerCase(),
+        note: 'Paid in full at the desk when booked',
+        recordedById: actor.userId,
+        paidAt: new Date(),
+      },
+    });
+  }
   await confirmPayAtProperty(booking.id);
   await recordAudit(ctx, input.propertyId, 'BOOKING_CREATED', `New reservation ${booking.code} for ${input.guest.firstName} ${input.guest.lastName}`.trim(), {
     bookingId: booking.id,
@@ -134,5 +155,5 @@ export async function createDeskReservation(ctx: OpContext, input: DeskReservati
       paymentStatus: input.paid ? 'PAID' : 'PAY_AT_PROPERTY',
     });
   }
-  return toBookingSummary(await getBookingForStaff(actor, booking.id));
+  return attachDoNotRentOne(toBookingSummary(await getBookingForStaff(actor, booking.id)));
 }

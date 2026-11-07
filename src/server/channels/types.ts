@@ -1,3 +1,4 @@
+import type { OtaPaymentCard } from './cards';
 import type { ChannelMode, OtaChannel, PromotionType } from '@prisma/client';
 import { DomainError } from '../errors';
 
@@ -72,6 +73,9 @@ export interface OtaReservation {
   };
   specialRequests: string | null;
   paymentModel: string | null;
+  /** The card sent with the booking, without its number; read from `raw` when not set (see cards.ts). */
+  paymentCard?: OtaPaymentCard | null;
+  /** The OTA's payload. May hold card numbers: store it only through redactCardData. */
   raw: unknown;
 }
 

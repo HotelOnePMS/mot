@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { ArrowRight, Check, Globe, LayoutDashboard } from 'lucide-react';
+import { ArrowRight, Check, Globe, LayoutDashboard, PlayCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/primitives';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
@@ -10,6 +10,7 @@ import { LABELS, TERMS } from '@/config/copy';
 import { PRODUCT_NAME } from '@/config/product';
 import { prisma } from '@/lib/prisma';
 import { LISTED_PROPERTY } from '@/server/concierge/facts';
+import { TOUR_PATH } from '@/config/tour';
 
 export const revalidate = 300;
 
@@ -106,6 +107,20 @@ export default async function DemoPage() {
               </>
             )}
           </section>
+        </div>
+
+        <div className="mx-auto mt-5 max-w-5xl px-4 sm:px-6">
+          <Link
+            href={TOUR_PATH}
+            className="group flex flex-wrap items-center gap-x-4 gap-y-2 rounded-3xl border bg-card p-5 shadow-soft transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-6"
+          >
+            <IconTile icon={PlayCircle} tone="agent" size="lg" />
+            <span className="min-w-0 flex-1">
+              <span className="block font-display text-xl font-medium tracking-tight">Take the guided owner tour</span>
+              <span className="mt-1 block text-sm text-muted-foreground">A sample hotel’s console, screen by screen: front desk, reservations, rates, channels, payments, a card dispute and reports. Ask the voice guide to talk you through it.</span>
+            </span>
+            <ArrowRight className="size-5 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden />
+          </Link>
         </div>
 
         <section aria-labelledby="demo-next-title" className="mx-auto max-w-3xl px-4 pb-16 pt-12 text-center sm:px-6 sm:pb-24">

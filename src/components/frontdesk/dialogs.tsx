@@ -2,217 +2,23 @@
 
 import * as React from 'react';
 import useSWR from 'swr';
-import { BedDouble, CheckCircle2, LogOut, MessageSquareText, Moon, ShieldAlert } from 'lucide-react';
+import { BedDouble, LogOut } from 'lucide-react';
 import type { RoomOption } from '@/lib/agent/blocks';
+import { CARD_NUMBER_REFUSED, containsCardNumber } from '@/lib/desk-payments';
 import type { BookingSummary } from '@/lib/dto';
 import { fetcher } from '@/lib/fetcher';
 import { fmtRange } from '@/lib/format';
-import { RISK_FLAG_INFO } from '@/lib/risk';
 import { money } from '@/lib/status';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Field } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Callout, Skeleton } from '@/components/ui/primitives';
+import { Callout } from '@/components/ui/primitives';
 import { Textarea } from '@/components/ui/textarea';
+import { useConsole } from '@/components/console/ConsoleProvider';
+import { CollectPaymentDialog, useDeskPayments } from '@/components/payments/DeskPayments';
+import { RoomPicker } from './RoomPicker';
 import { useBookingActions } from './useBookingActions';
-
-type Prefs = { highFloor: boolean; quiet: boolean };
-
-function RoomPicker({
-  booking,
-  value,
-  onChange,
-  readyOnly,
-}: {
-  booking: BookingSummary;
-  value: string | null;
-  onChange: (id: string, option: RoomOption) => void;
-  readyOnly: boolean;
-}) {
-  const [prefs, setPrefs] = React.useState<Prefs>({ highFloor: false, quiet: false });
-  const q = new URLSearchParams();
-  if (prefs.highFloor) q.set('highFloor', '1');
-  if (prefs.quiet) q.set('tags', 'quiet');
-  const { data, isLoading } = useSWR<RoomOption[]>(`/api/admin/bookings/${booking.id}/room?${q}`, fetcher);
-  const options = (data ?? []).filter((o) => !readyOnly || o.ready || o.room.id === value);
-
-  // Preselect the best match.
-  React.useEffect(() => {
-    if (!value && options[0]) onChange(options[0].room.id, options[0]);
-  }, [options, value, onChange]);
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Room preferences">
-        <span className="text-xs text-muted-foreground">Prefer</span>
-        {(
-          [
-            ['highFloor', 'High floor'],
-            ['quiet', 'Quiet'],
-          ] as const
-        ).map(([k, label]) => (
-          <button
-            key={k}
-            type="button"
-            aria-pressed={prefs[k]}
-            onClick={() => setPrefs((p) => ({ ...p, [k]: !p[k] }))}
-            className={cn(
-              'inline-flex h-9 items-center gap-1.5 rounded-full border px-3.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover',
-              prefs[k]
-                ? 'border-primary/50 bg-primary-soft text-primary-soft-foreground'
-                : 'border-border-strong/50 bg-surface text-muted-foreground hover:border-border-strong hover:text-foreground'
-            )}
-          >
-            {prefs[k] && <CheckCircle2 className="size-3.5" aria-hidden />}
-            {label}
-          </button>
-        ))}
-      </div>
-      {isLoading ? (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="status">
-          <span className="sr-only">Finding free rooms…</span>
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-[66px] rounded-xl" />
-          ))}
-        </div>
-      ) : options.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-border-strong/50 p-4 text-center text-sm text-muted-foreground">
-          No {readyOnly ? 'ready ' : ''}
-          {booking.roomType.name} room is free for these nights.
-          {readyOnly ? ' Tick “Show rooms that still need cleaning” to see the rest.' : ''}
-        </p>
-      ) : (
-        <div className="grid max-h-64 grid-cols-2 gap-2 overflow-y-auto p-0.5 pr-1 sm:grid-cols-3" role="radiogroup" aria-label="Room">
-          {options.map((o, i) => {
-            const checked = value === o.room.id;
-            return (
-              <button
-                key={o.room.id}
-                type="button"
-                role="radio"
-                aria-checked={checked}
-                onClick={() => onChange(o.room.id, o)}
-                className={cn(
-                  'relative min-h-[66px] rounded-xl border p-2.5 text-left transition-[border-color,background-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover',
-                  checked ? 'border-primary bg-primary-soft ring-1 ring-primary' : 'border-border-strong/40 hover:border-border-strong',
-                  !o.ready && !checked && 'border-dashed'
-                )}
-              >
-                <span className="flex items-center justify-between gap-1">
-                  <span className="font-semibold tabular">{o.room.number}</span>
-                  {i === 0 && (
-                    <Badge variant="highlight" size="sm">
-                      Best match
-                    </Badge>
-                  )}
-                </span>
-                <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                  {o.room.floor ? `Floor ${o.room.floor}` : 'No floor'} · {o.ready ? (o.room.status === 'INSPECTED' ? 'Inspected' : 'Clean') : 'Needs cleaning'}
-                  {o.room.tags.includes('quiet') && (
-                    <>
-                      <Moon className="ml-auto size-3 shrink-0" aria-hidden />
-                      <span className="sr-only">, quiet</span>
-                    </>
-                  )}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function CheckInDialog({ booking, open, onOpenChange }: { booking: BookingSummary | null; open: boolean; onOpenChange: (o: boolean) => void }) {
-  const { transition, pending } = useBookingActions();
-  const [roomId, setRoomId] = React.useState<string | null>(null);
-  const [option, setOption] = React.useState<RoomOption | null>(null);
-  const [showAll, setShowAll] = React.useState(false);
-  React.useEffect(() => {
-    if (open) {
-      setRoomId(booking?.room?.id ?? null);
-      setOption(null);
-      setShowAll(false);
-    }
-  }, [open, booking]);
-  if (!booking) return null;
-  const onChange = (id: string, o: RoomOption) => {
-    setRoomId(id);
-    setOption(o);
-  };
-  const dirty = option ? !option.ready : false;
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
-          <DialogTitle>Check in {booking.guest.name}</DialogTitle>
-          <DialogDescription>
-            {booking.roomType.name} · {fmtRange(booking.checkIn, booking.checkOut)} · {booking.nights} night{booking.nights === 1 ? '' : 's'} · {booking.guests} guest
-            {booking.guests === 1 ? '' : 's'}
-          </DialogDescription>
-        </DialogHeader>
-        {booking.notes && (
-          <p className="flex items-start gap-2 rounded-xl bg-muted px-3 py-2 text-sm">
-            <MessageSquareText className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
-            <span>
-              <span className="sr-only">Latest note: </span>
-              {booking.notes.split('\n').slice(-1)[0]?.replace(/^\[[^\]]+\]\s*/, '')}
-            </span>
-          </p>
-        )}
-        {booking.riskFlags.length > 0 && (
-          <Callout tone="warning" icon={ShieldAlert}>
-            <p className="font-semibold">Flagged booking: {booking.riskFlags.map((f) => RISK_FLAG_INFO[f]?.label ?? f).join(', ')}</p>
-            <p>
-              Before handing over the key, complete the check-in checklist (ID, card, registration) on the{' '}
-              <a href={`/admin/bookings/${booking.id}`} className="font-medium underline underline-offset-2">
-                reservation page
-              </a>
-              .
-            </p>
-          </Callout>
-        )}
-        <RoomPicker booking={booking} value={roomId} onChange={onChange} readyOnly={!showAll} />
-        <label className="flex min-h-10 cursor-pointer items-center gap-2.5 text-sm text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={showAll}
-            onChange={(e) => setShowAll(e.target.checked)}
-            className="size-4 shrink-0 cursor-pointer rounded-sm border-input accent-[hsl(var(--primary))]"
-          />
-          Show rooms that still need cleaning
-        </label>
-        {dirty && (
-          <Callout tone="warning" role="status">
-            Room {option?.room.number} hasn’t been cleaned yet. The guest will be checked into it anyway.
-          </Callout>
-        )}
-        {booking.paymentStatus === 'AWAITING_PAYMENT' && (
-          <Callout tone="warning">Online payment didn’t complete — collect {money(booking.totalPrice, { currency: booking.currency })} at the desk.</Callout>
-        )}
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            disabled={!roomId}
-            loading={pending === `${booking.id}:CHECKED_IN`}
-            loadingText="Checking in…"
-            onClick={async () => {
-              const r = await transition(booking, 'CHECKED_IN', { roomId: roomId!, allowDirtyRoom: dirty });
-              if (r) onOpenChange(false);
-            }}
-          >
-            <CheckCircle2 aria-hidden /> Check in{option ? ` to room ${option.room.number}` : ''}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 export function AssignRoomDialog({ booking, open, onOpenChange }: { booking: BookingSummary | null; open: boolean; onOpenChange: (o: boolean) => void }) {
   const { assignRoom, pending } = useBookingActions();
@@ -265,12 +71,65 @@ export function AssignRoomDialog({ booking, open, onOpenChange }: { booking: Boo
   );
 }
 
-export function CheckOutDialog({ booking, open, onOpenChange, today }: { booking: BookingSummary | null; open: boolean; onOpenChange: (o: boolean) => void; today: string }) {
+/** Quick picks that fill in a reason box; one is pressed while it's what the box says. */
+export function QuickReasons({ label, options, value, onPick }: { label: string; options: readonly string[]; value: string; onPick: (reason: string) => void }) {
+  const current = value.replace(/\s+/g, ' ').trim();
+  return (
+    <div className="flex flex-wrap gap-2" role="group" aria-label={label}>
+      {options.map((o) => (
+        <button
+          key={o}
+          type="button"
+          aria-pressed={current === o}
+          onClick={() => onPick(o)}
+          className={cn(
+            'inline-flex min-h-9 items-center rounded-full border px-3.5 py-1 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            current === o ? 'border-primary/50 bg-primary-soft text-primary-soft-foreground' : 'border-border-strong/50 bg-surface text-muted-foreground hover:border-border-strong hover:text-foreground'
+          )}
+        >
+          {o}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const OWING_REASONS = ['Billed to company', 'Guest pays later', 'Disputed charges'];
+
+/**
+ * Check-out needs the balance at zero: the guest pays (or the payment is recorded) first. A manager
+ * (booking.checkoutWithBalance) can check the guest out with it owing instead, saying why; it stays collectable.
+ */
+export function CheckOutDialog({ booking: given, open, onOpenChange, today }: { booking: BookingSummary | null; open: boolean; onOpenChange: (o: boolean) => void; today: string }) {
   const { transition, pending } = useBookingActions();
-  if (!booking) return null;
+  const { can } = useConsole();
+  const { data: desk } = useDeskPayments(open ? given?.id : null);
+  // The booking as it is now: a payment taken from this dialog refreshes it (screens may pass a copy from when it opened).
+  const { data: live } = useSWR<{ booking: BookingSummary }>(open && given ? `/api/admin/bookings/${given.id}` : null, fetcher);
+  const [collecting, setCollecting] = React.useState(false);
+  const [owingOk, setOwingOk] = React.useState(false);
+  const [reason, setReason] = React.useState('');
+  React.useEffect(() => {
+    if (open) {
+      setOwingOk(false);
+      setReason('');
+    }
+  }, [open]);
+  if (!given) return null;
+  const booking = live?.booking.id === given.id ? live.booking : given;
   const early = booking.checkOut > today;
-  const balance = Math.max(0, booking.totalPrice - booking.amountPaid);
-  const unpaid = balance > 0.004;
+  // The same figure the server checks: room and extras less allowances and everything paid, online or at the desk (the
+  // reservation's, for a room type of a shared reservation).
+  const due = booking.checkOutDue;
+  const unpaid = due > 0.004;
+  const canCollect = can('payments.collect');
+  const canOwe = can('booking.checkoutWithBalance');
+  const owed = money(due, { currency: booking.currency });
+  // Checking out with the balance owing: a manager ticked it and says why (no card numbers, as the server refuses them).
+  const owing = unpaid && canOwe && owingOk;
+  const why = reason.replace(/\s+/g, ' ').trim();
+  const cardNumber = containsCardNumber(why);
+  const whyOk = why.length >= 3 && !cardNumber;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -283,22 +142,88 @@ export function CheckOutDialog({ booking, open, onOpenChange, today }: { booking
         {(early || unpaid) && (
           <div className="space-y-2">
             {early && <Callout tone="info">Early departure — the unused nights go back on sale.</Callout>}
-            {unpaid && <Callout tone="warning">Balance of {money(balance, { currency: booking.currency })} to settle before the guest leaves.</Callout>}
+            {unpaid && (
+              <Callout
+                tone="warning"
+                role="status"
+                action={
+                  canCollect ? (
+                    <Button size="sm" variant="outline" onClick={() => setCollecting(true)}>
+                      Take payment
+                    </Button>
+                  ) : undefined
+                }
+              >
+                <p className="font-semibold">
+                  Balance of {owed} to pay{booking.reservationCode && due > booking.balance + 0.004 ? ` on reservation ${booking.reservationCode}` : ''}
+                </p>
+                <p>{canCollect ? 'Take the payment, or record one taken another way, before the guest checks out.' : 'Ask someone who can take payments to settle it before the guest checks out.'}</p>
+                {!canOwe && <p>A manager can check the guest out with the balance owing, for example when it’s billed to a company.</p>}
+              </Callout>
+            )}
           </div>
         )}
+        {unpaid && canOwe && (
+          <div className="rounded-xl border p-3">
+            <label htmlFor="checkout-owing" className="flex min-h-10 cursor-pointer items-start gap-3 text-sm">
+              <input
+                id="checkout-owing"
+                type="checkbox"
+                checked={owingOk}
+                onChange={(e) => setOwingOk(e.target.checked)}
+                className="mt-0.5 size-4 shrink-0 cursor-pointer rounded-sm border-input accent-[hsl(var(--primary))]"
+              />
+              <span className="min-w-0">
+                <span className="block font-medium">Check out with the balance owing</span>
+                <span className="block text-xs text-muted-foreground">The {owed} stays on the reservation to collect later. What was owed and why are kept with your name.</span>
+              </span>
+            </label>
+            {owingOk && (
+              <Field
+                label="Why"
+                required
+                htmlFor="checkout-owing-reason"
+                hint="At least 3 characters. The guest doesn’t see it."
+                error={cardNumber ? CARD_NUMBER_REFUSED : undefined}
+                className="mt-3"
+              >
+                <QuickReasons label="Common reasons" options={OWING_REASONS} value={reason} onPick={setReason} />
+                <Textarea
+                  id="checkout-owing-reason"
+                  required
+                  value={reason}
+                  maxLength={200}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="e.g. Billed to Acme Corp, invoice to follow"
+                />
+              </Field>
+            )}
+          </div>
+        )}
+        {desk && desk.deposit.held > 0.004 && (
+          <Callout tone="info">
+            {money(desk.deposit.held, { currency: booking.currency })} security deposit still held. Return it, or keep part of it for incidentals (minibar, damage), from the{' '}
+            <a href={`/admin/bookings/${booking.id}`} className="font-medium underline underline-offset-2">
+              reservation page
+            </a>
+            . Deposit money doesn’t pay the room balance.
+          </Callout>
+        )}
+        <CollectPaymentDialog booking={booking} kind="PAYMENT" open={collecting} onOpenChange={setCollecting} />
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Not yet
           </Button>
           <Button
+            disabled={unpaid && !(owing && whyOk)}
             loading={pending === `${booking.id}:CHECKED_OUT`}
             loadingText="Checking out…"
             onClick={async () => {
-              const r = await transition(booking, 'CHECKED_OUT');
+              const r = await transition(booking, 'CHECKED_OUT', owing ? { balanceOverride: { reason: why } } : {});
               if (r) onOpenChange(false);
             }}
           >
-            <LogOut aria-hidden /> Check out
+            <LogOut aria-hidden /> {owing ? `Check out with ${owed} owing` : 'Check out'}
           </Button>
         </DialogFooter>
       </DialogContent>

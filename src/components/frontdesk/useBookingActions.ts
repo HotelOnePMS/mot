@@ -4,6 +4,7 @@ import * as React from 'react';
 import { toast } from 'sonner';
 import type { BookingStatus, BookingSummary } from '@/lib/dto';
 import { api } from '@/lib/fetcher';
+import { money } from '@/lib/status';
 import { useConsole } from '@/components/console/ConsoleProvider';
 
 const VERB: Partial<Record<BookingStatus, string>> = {
@@ -38,7 +39,12 @@ export function useBookingActions() {
   );
 
   const transition = React.useCallback(
-    (b: Pick<BookingSummary, 'id' | 'guest'>, status: BookingStatus, opts: { roomId?: string; notes?: string; allowDirtyRoom?: boolean } = {}) =>
+    (
+      b: Pick<BookingSummary, 'id' | 'guest'>,
+      status: BookingStatus,
+      /** balanceOverride: check out with money still owed (managers), saying why. */
+      opts: { roomId?: string; notes?: string; allowDirtyRoom?: boolean; balanceOverride?: { reason: string } } = {}
+    ) =>
       run(
         `${b.id}:${status}`,
         () =>
@@ -46,7 +52,11 @@ export function useBookingActions() {
             method: 'PATCH',
             json: { status, ...opts },
           }),
-        (r) => `${b.guest.name} ${VERB[status] ?? 'updated'}${r.booking.room && status === 'CHECKED_IN' ? ` · Room ${r.booking.room.number}` : ''}`
+        (r) =>
+          // Checked out owing: the balance stays on the booking to collect.
+          status === 'CHECKED_OUT' && opts.balanceOverride && r.booking.checkOutDue > 0.004
+            ? `${b.guest.name} checked out with ${money(r.booking.checkOutDue, { currency: r.booking.currency })} owing`
+            : `${b.guest.name} ${VERB[status] ?? 'updated'}${r.booking.room && status === 'CHECKED_IN' ? ` · Room ${r.booking.room.number}` : ''}`
       ),
     [run]
   );

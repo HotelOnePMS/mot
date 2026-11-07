@@ -6,7 +6,8 @@ import { formatDateRange, formatMoney, formatNights, relativeDay } from '@/lib/f
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Avatar } from '@/components/ui/primitives';
-import { BookingStatusBadge, PaymentBadge, RiskFlagList } from './badges';
+import { DoNotRentBadge } from '@/components/frontdesk/DoNotRent';
+import { BookingStatusBadge, RiskFlagList } from './badges';
 
 /** The guest's name; when the row opens something, it stretches over the whole row. */
 const stretched =
@@ -72,6 +73,7 @@ export function BookingRow({
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             {name}
             <span className="font-mono text-2xs text-muted-foreground">{b.code}</span>
+            <DoNotRentBadge match={b.doNotRent} />
             {late && (
               <Badge variant="warning" size="sm">
                 Late arrival
@@ -125,7 +127,7 @@ export function BookingRow({
           </span>
         )}
         <BookingStatusBadge status={b.status} />
-        {variant === 'departures' && b.paymentStatus !== 'PAID' && <PaymentBadge status={b.paymentStatus} />}
+        {variant === 'departures' && b.checkOutDue > 0.004 && <Badge variant="warning">{formatMoney(b.checkOutDue, b.currency, { cents: true })} due</Badge>}
         <span className="hidden w-20 text-right text-sm font-medium tabular md:inline">{formatMoney(b.totalPrice, b.currency, { cents: false })}</span>
         {actions && (
           // Above the stretched link, so these stay clickable.

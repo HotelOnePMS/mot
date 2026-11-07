@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { PRODUCT_NAME } from "@/config/product";
+import { TOUR_PATH, TOUR_STOPS, nextTourStop, tourStop } from "@/config/tour";
 import { fetcher } from "@/lib/fetcher";
 import { isConsolePath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -72,10 +73,15 @@ const NO_LAUNCHER = [
   /^\/login(\/|$)/,
   /^\/register(\/|$)/,
   /^\/onboarding(\/|$)/,
-  // Product pages are for hotels; travellers get the launcher on /properties.
-  /^\/$/,
-  /^\/(about|contact|demo|developers)(\/|$)/,
+  // Product pages are for hotels; travellers get the launcher on /properties. The home page and
+  // the owner demo (/demo/tour) keep it: there the concierge is the product guide and runs the demo.
+  /^\/(about|contact|developers)(\/|$)/,
+  /^\/demo\/?$/,
 ];
+/** Pages for hotel owners: a call started here greets as the product guide (intro=owners). */
+const OWNER_PAGES = new Set<VoicePage["kind"]>(["home", "tour"]);
+/** How long show_demo_stop waits for the owner demo to finish opening. */
+const TOUR_WAIT = 8_000;
 /** Tools that take a property_id the browser can fill in from the hotel on screen (concierge). */
 const PROPERTY_TOOLS = new Set([
   "get_property_info",
@@ -343,6 +349,7 @@ function describePage(page: VoicePage, s: DockSession): string {
     checkout: name ? `checkout at ${name}` : "checkout",
     booking: "their booking page",
     trips: "their trips (My trips)",
+    tour: "the owner demo (a sample hotel’s console, sample data only)",
     other: "another page of the site",
   };
   const place = voiceText(page.summary, 600) || fallback[page.kind];
@@ -639,6 +646,74 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
         return result;
       }
 
+      // The owner demo: runs on screen against the sample console, never the server.
+      if (call.name === "start_owner_demo" || call.name === "show_demo_stop") {
+        if (s?.scope !== "global")
+          return {
+            error: `The owner demo is part of the ${PRODUCT_NAME} concierge, not a hotel’s front desk.`,
+          };
+        const stops = TOUR_STOPS.map((t) => ({ id: t.id, title: t.title }));
+        const onTour = () => currentPage().kind === "tour";
+        if (call.name === "start_owner_demo") {
+          if (!onTour() && !navigating()) {
+            pendingNav.current = {
+              url: TOUR_PATH,
+              from: window.location.pathname + window.location.search,
+              since: Date.now(),
+            };
+            routerRef.current.push(TOUR_PATH);
+          }
+          return {
+            ok: true,
+            message:
+              "The owner demo is opening on the visitor’s screen: the console of a made-up sample hotel, with sample data only. Say so in a few words, then call show_demo_stop with the first stop.",
+            stops,
+            first_stop: stops[0].id,
+          };
+        }
+        const stop = tourStop(args.stop);
+        if (!stop)
+          return {
+            error: "Unknown stop: use one of the ids from start_owner_demo.",
+            stops,
+          };
+        if (!onTour() && !navigating()) {
+          const url = `${TOUR_PATH}?stop=${encodeURIComponent(stop.id)}`;
+          pendingNav.current = {
+            url,
+            from: window.location.pathname + window.location.search,
+            since: Date.now(),
+          };
+          routerRef.current.push(url);
+        }
+        // Wait for the demo to be on screen (it may still be opening), then show the stop.
+        const until = Date.now() + TOUR_WAIT;
+        let show = currentPage().actions?.showTourStop;
+        while (
+          !(onTour() && show) &&
+          Date.now() < until &&
+          sessionRef.current?.startedAt === s.startedAt
+        ) {
+          await new Promise((r) => setTimeout(r, 150));
+          show = currentPage().actions?.showTourStop;
+        }
+        const shown = onTour() && show ? show(stop.id) : null;
+        if (shown && !shown.ok) return shown;
+        return {
+          ok: true,
+          on_screen: !!shown,
+          stop: stop.id,
+          title: stop.title,
+          explain: stop.explain,
+          next_stop: nextTourStop(stop.id),
+          ...(shown
+            ? {}
+            : {
+                note: "The demo didn’t open on the visitor’s screen (they may have moved away). Explain it anyway, or offer to open it again with start_owner_demo.",
+              }),
+        };
+      }
+
       // The call and the page this tool started on: what it may change on screen afterwards.
       const startedAt = s?.startedAt;
       const before = pageToken();
@@ -762,9 +837,13 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
   // The voice SDK is large: fetch it once someone shows intent, not on every page view.
   const [warm, setWarm] = React.useState(false);
   const prepare = React.useCallback(() => setWarm(true), []);
+  // Pages for hotel owners: the concierge greets as the product guide. Read when a call starts.
+  const intro =
+    !busy && OWNER_PAGES.has(page.kind) ? ("owners" as const) : undefined;
   const voice = useLiveVoice({
     propertyId: using?.propertyId ?? undefined,
     scope: using?.scope ?? "global",
+    intro,
     audience: "guest",
     onToolCall,
     onStateChange: setCallState,

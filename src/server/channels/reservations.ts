@@ -8,6 +8,7 @@ import { getAdapter } from './adapters';
 import { ConnectionWithMappings, computeChannelDays, loadConnection, roundPrice } from './ari';
 import { addDays, todayAt, isDateString } from './dates';
 import { errorMessage, logSync, scheduleInventorySync } from './sync';
+import { extractPaymentCard, redactCardData } from './cards';
 import { CHANNEL_LABELS, ChannelApiError, OtaReservation, ReservationConfirmation } from './types';
 
 export interface ImportResult {
@@ -27,6 +28,15 @@ export const OTA_GUEST_DOMAIN = 'ota-guests.hotelone.invalid';
  * see src/server/concierge/booking.ts). The record can't sign in; the email
  * the OTA sent is kept on the booking (Booking.guestEmail).
  */
+/**
+ * The card the OTA sent (virtual card or the guest's), without its number, for
+ * the desk to charge. A modification without a card keeps the one on file.
+ */
+function cardData(channel: OtaChannel, reservation: OtaReservation): { paymentCard?: Prisma.InputJsonValue } {
+  const card = reservation.paymentCard ?? extractPaymentCard(reservation.raw, { channel, ratePlanId: reservation.otaRatePlanId });
+  return card ? { paymentCard: card as unknown as Prisma.InputJsonValue } : {};
+}
+
 async function otaGuest(reservation: OtaReservation): Promise<string> {
   const user = await prisma.user.create({
     data: {
@@ -110,7 +120,7 @@ async function cancelGroup(connection: ConnectionWithMappings, reservation: OtaR
     }
     await prisma.channelReservation.update({
       where: { id: record.id },
-      data: { status: 'CANCELLED', rawPayload: reservation.raw as Prisma.InputJsonValue },
+      data: { status: 'CANCELLED', rawPayload: redactCardData(reservation.raw) as Prisma.InputJsonValue },
     });
     results.push({
       externalId: record.externalId,
@@ -201,7 +211,8 @@ export async function importReservation(
         guestName: `${reservation.guest.firstName} ${reservation.guest.lastName}`,
         totalAmount: totalPrice,
         currency: reservation.currency,
-        rawPayload: reservation.raw as Prisma.InputJsonValue,
+        rawPayload: redactCardData(reservation.raw) as Prisma.InputJsonValue,
+        ...cardData(connection.channel, reservation),
       },
     });
     scheduleInventorySync(booking.roomTypeId, booking.checkIn, booking.checkOut);
@@ -254,9 +265,10 @@ export async function importReservation(
         guestName: `${reservation.guest.firstName} ${reservation.guest.lastName}`,
         totalAmount: totalPrice,
         currency: reservation.currency,
-        rawPayload: reservation.raw as Prisma.InputJsonValue,
+        rawPayload: redactCardData(reservation.raw) as Prisma.InputJsonValue,
+        ...cardData(connection.channel, reservation),
       },
-      update: { bookingId: created.id, status: 'BOOKED' },
+      update: { bookingId: created.id, status: 'BOOKED', ...cardData(connection.channel, reservation) },
     });
     return created;
   }));
@@ -420,7 +432,19 @@ export async function simulateReservation(connectionId: string): Promise<ImportR
       phone: '+1 555 0100',
     },
     specialRequests: 'Late arrival (sandbox test booking)',
-    paymentModel: connection.channel === 'EXPEDIA' ? 'Expedia Collect' : 'Booking.com',
+    paymentModel: connection.channel === 'EXPEDIA' ? 'Expedia Collect (virtual card)' : 'Booking.com',
+    // A virtual card like the OTA's, chargeable from check-in. In Stripe test mode, charge it with 4242 4242 4242 4242.
+    paymentCard: {
+      type: 'VIRTUAL',
+      brand: 'Visa',
+      last4: '4242',
+      expiry: '12/34',
+      holderName: connection.channel === 'EXPEDIA' ? 'Expedia VirtualCard' : 'Booking.com VCC',
+      chargeableFrom: checkIn,
+      chargeableUntil: addDays(checkOut, 30),
+      balance: roundPrice(days.reduce((sum, day) => sum + day.channelRate, 0)),
+      currency: connection.currency,
+    },
     raw: { simulated: true },
   };
 

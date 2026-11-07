@@ -34,11 +34,43 @@ export interface BookingSummary {
   paymentStatus: string;
   /** Collected online and not refunded, in the booking's currency. */
   amountPaid: number;
+  /** Allowances lowering what the stay costs (a manager's, with a reason), positive. */
+  allowances: number;
+  /** What the guest still owes: the total less allowances and everything paid online or at the desk. Negative = the hotel owes the guest. */
+  balance: number;
+  /**
+   * What must be paid before the guest can check out. A single booking: its balance (never negative). A line of a
+   * multi-room-type reservation: nothing once its share is covered, otherwise what the whole reservation still owes,
+   * which is what the desk collects (payments are shared, so a part payment is spread over every room type).
+   */
+  checkOutDue: number;
+  /**
+   * A line of a multi-room-type reservation: what the whole reservation still owes (negative: owed back to the guest),
+   * its room types going ahead after allowances less what was paid toward them. Null for a single booking.
+   */
+  reservationBalance: number | null;
   /** Reasons for the front desk to look twice (staff only; computed on the server). */
   riskFlags: RiskFlag[];
   notes: string | null;
+  /** The guest is on this hotel's Do Not Rent list (staff only; filled by attachDoNotRent on the server, else null). */
+  doNotRent: DoNotRentMatch | null;
   createdAt: string;
 }
+
+/** One guest on a hotel's Do Not Rent list. */
+export interface DoNotRentEntry {
+  id: string;
+  propertyId: string;
+  guestName: string;
+  email: string | null;
+  phone: string | null;
+  reason: string;
+  createdAt: string;
+  createdBy: { id: string; name: string };
+}
+
+/** What the front desk sees on a booking whose guest is on the list. */
+export type DoNotRentMatch = Pick<DoNotRentEntry, 'id' | 'guestName' | 'reason' | 'createdAt' | 'createdBy'>;
 
 export type Occupancy = 'VACANT' | 'OCCUPIED' | 'ARRIVING' | 'DEPARTING' | 'TURNOVER';
 
