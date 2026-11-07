@@ -12,7 +12,7 @@ export const maxDuration = 60;
 
 const schema = z.object({
   propertyId: z.string().min(1),
-  message: z.string().trim().min(1).max(600),
+  message: z.string().trim().min(1).max(6000),
   context: z
     .object({
       lastBookingId: z.string().optional(),

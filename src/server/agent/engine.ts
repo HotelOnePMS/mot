@@ -15,11 +15,12 @@ import type { Actor } from '../authz';
 import { assertPropertyAccess, can } from '../authz';
 import { todayAt } from '../services/hotels';
 import { recordAudit } from '../services/audit';
+import { logError } from '../log';
 import { enqueueTask, getConnection } from '../services/bridge';
 import { runMcpTaskInline } from '../pms/run';
 import { bookingInclude, toBookingSummary } from '../services/mappers';
 import { looksLikeQuestion } from '../skills';
-import { runWithLLM } from './llm';
+import { llmConfigured, runHarness } from './llm';
 import { parseMessage, WRITE_KINDS, type Intent } from './nlu';
 import { claimPlan, signPlan, verifyPlan, type PlanStep } from './plan';
 import {
@@ -127,6 +128,71 @@ async function* finishPlan(
   return undefined;
 }
 
+/** The model reads whole pasted tables; the phrase parser only ever needed a sentence. */
+export const MAX_MODEL_MESSAGE = 6000;
+
+/**
+ * Runs the message through the model harness and signs its writes into one
+ * plan. Returns false (nothing shown yet) when the model is unavailable, so
+ * the deterministic engine can answer instead.
+ */
+async function* runModel(
+  ctx: ToolCtx,
+  input: AgentRunInput,
+  message: string,
+  audit: (summary: string, data: Record<string, unknown>) => Promise<unknown>,
+  started: number
+): AsyncGenerator<AgentEvent, boolean> {
+  const gen = runHarness({ ...ctx, message }, { recent: input.recent });
+  let shown = false;
+  let result: Awaited<ReturnType<typeof gen.next>>;
+  try {
+    for (;;) {
+      result = await gen.next();
+      if (result.done) break;
+      if (result.value.type === 'block') shown = true;
+      yield result.value;
+    }
+  } catch (e) {
+    logError('agent/engine', 'Model engine failed:', e);
+    if (!shown) return false;
+    yield { type: 'block', block: { type: 'error', text: 'I lost my connection partway through. Nothing was changed — please ask again.' } };
+    yield { type: 'done', engine: 'llm', ms: Date.now() - started };
+    return true;
+  }
+  const r = result.value;
+  let planTitle: string | undefined;
+  if (r.steps.length) {
+    const tools = new Set(r.steps.map((s) => s.tool));
+    planTitle =
+      r.steps.length === 1
+        ? r.steps[0].summary
+        : tools.size === 1 && tools.has('set_rates')
+          ? `Update rates (${r.steps.length} changes)`
+          : `${r.steps.length} changes`;
+    const { token, expiresAt } = signPlan({ userId: ctx.actor.userId, propertyId: ctx.propertyId, title: planTitle, steps: r.steps });
+    yield {
+      type: 'block',
+      block: {
+        type: 'plan',
+        plan: {
+          token,
+          title: planTitle,
+          steps: r.steps.map((s) => ({ summary: s.summary, detail: s.detail })),
+          warnings: [...new Set(r.warnings)],
+          risk: r.risk,
+          confirmLabel: r.steps.length === 1 ? 'Confirm' : `Confirm ${r.steps.length} changes`,
+          expiresAt,
+        },
+      },
+    };
+  }
+  yield { type: 'context', context: r.memory };
+  await audit(planTitle ? `Asked: “${message.slice(0, 120)}” → proposed ${planTitle}` : `Asked: “${message.slice(0, 160)}”`, { tools: r.toolsUsed, engine: 'llm' });
+  yield { type: 'done', engine: 'llm', ms: Date.now() - started };
+  return true;
+}
+
 const onlyUnknown = (intents: Intent[]) => intents.length > 0 && intents.every((i) => i.kind === 'unknown');
 
 export async function* runAgent(input: AgentRunInput): AsyncGenerator<AgentEvent> {
@@ -142,7 +208,8 @@ export async function* runAgent(input: AgentRunInput): AsyncGenerator<AgentEvent
     yield { type: 'error', message: 'Property not found.' };
     return;
   }
-  const message = input.message.trim().slice(0, 600);
+  const fullMessage = input.message.trim().slice(0, MAX_MODEL_MESSAGE);
+  const message = fullMessage.slice(0, 600);
   const today = await todayAt(propertyId);
   const ctx: ToolCtx = { actor, propertyId, propertyName: property.name, today, memory: { ...input.memory }, message };
   const bridged = property.setupPath === 'BRIDGE';
@@ -263,12 +330,10 @@ export async function* runAgent(input: AgentRunInput): AsyncGenerator<AgentEvent
     return;
   }
 
-  // Optional language-model engine (same tools, same confirmation contract).
-  const llm = await runWithLLM(ctx);
-  if (llm) {
-    for (const e of llm) yield e;
-    yield done('llm');
-    return;
+  // The model-driven engine (same tools, same confirmation contract).
+  if (llmConfigured()) {
+    const shown = yield* runModel(ctx, input, fullMessage, audit, started);
+    if (shown) return;
   }
 
   const intents = parseMessage(message, today);
@@ -453,7 +518,8 @@ export async function confirmPlan(actor: Actor, token: string): Promise<ConfirmR
   if (tools.has('check_in')) next.push('who else is arriving today?');
   if (tools.has('check_out')) next.push('auto-assign housekeeping', 'who else is leaving today?');
   if (tools.has('assign_cleaning')) next.push('show the housekeeping board');
-  if (tools.has('adjust_rates')) next.push('forecast the next 3 weekends');
+  if (tools.has('adjust_rates') || tools.has('set_rates')) next.push('forecast the next 3 weekends');
+  if (tools.has('create_reservation')) next.push('who’s arriving today?');
   if (tools.has('set_out_of_order')) next.push('show out-of-order rooms');
   if (!next.length) next.push('brief me');
   blocks.push({ type: 'suggestions', items: [...new Set(next)].slice(0, 3) });

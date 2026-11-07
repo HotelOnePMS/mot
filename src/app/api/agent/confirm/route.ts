@@ -14,6 +14,6 @@ export const maxDuration = 60;
  */
 export const POST = handleRoute(async (request: NextRequest) => {
   const actor = await requireStaff('agent.use');
-  const { token } = await parseJson(request, z.object({ token: z.string().min(20).max(20000) }));
+  const { token } = await parseJson(request, z.object({ token: z.string().min(20).max(100000) }));
   return json(await confirmPlan(actor, token));
 });

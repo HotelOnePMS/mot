@@ -22,6 +22,7 @@ import { propertyAvailability } from '../services/inventory';
 import { bookingInclude, floorNumber, toBookingSummary, type BookingWithRelations } from '../services/mappers';
 import { hotelLocale } from '../services/hotels';
 import { changeRates } from '../services/rates';
+import { createDeskReservation } from '../services/reservations';
 import { roomBoard, setOutOfOrder, setRoomStatus } from '../services/rooms';
 import { listTeam } from '../services/team';
 import type { PlanStep } from './plan';
@@ -906,6 +907,34 @@ export async function executeStep(ctx: OpContext, step: PlanStep): Promise<StepR
         const r = await changeRates(ctx, String(a.roomTypeId), String(a.startDate), String(a.endDate), { adjustPercent: Number(a.percent) });
         return { ok: true, line: r.summary };
       }
+      case 'set_rates': {
+        // Nights may be scattered: write each run of consecutive nights as one change.
+        const nights = (a.nights as unknown as string[]) ?? [];
+        const change = a.price !== undefined ? { price: Number(a.price) } : a.reset ? { reset: true as const } : { adjustPercent: Number(a.percent) };
+        const runs: string[][] = [];
+        for (const d of [...nights].sort()) {
+          const run = runs[runs.length - 1];
+          if (run && diffDays(run[run.length - 1], d) === 1) run.push(d);
+          else runs.push([d]);
+        }
+        let count = 0;
+        for (const run of runs) count += (await changeRates(ctx, String(a.roomTypeId), run[0], run[run.length - 1], change)).count;
+        return { ok: true, line: `${step.summary.replace(/: .* → /, ': ')} (${count} night${count === 1 ? '' : 's'} updated)` };
+      }
+      case 'create_reservation': {
+        const b = await createDeskReservation(ctx, {
+          propertyId: String(a.propertyId),
+          roomTypeId: String(a.roomTypeId),
+          checkIn: String(a.checkIn),
+          checkOut: String(a.checkOut),
+          guests: Number(a.guests),
+          rooms: Number(a.rooms),
+          guest: { firstName: String(a.firstName), lastName: String(a.lastName), email: a.email ? String(a.email) : null, phone: a.phone ? String(a.phone) : null },
+          notes: a.notes ? String(a.notes) : null,
+          paid: !!a.paid,
+        });
+        return { ok: true, line: `Booked ${b.guest.name} (${b.code})`, bookingId: b.id };
+      }
       case 'bridge_task': {
         const { task, connection } = await enqueueTask(ctx, String(a.propertyId), { kind: String(a.kind ?? 'ACTION'), instruction: String(a.instruction) });
         return { ok: true, line: `Sent to ${connection.system}: “${task.instruction}”`, bridgeTask: { id: task.id, system: connection.system, instruction: task.instruction, kind: task.kind, mode: connection.mode } };
@@ -954,5 +983,6 @@ export const TOOL_CATALOG = [
   { name: 'assign_cleaning', kind: 'write', description: 'Assign a room to a housekeeper.' },
   { name: 'adjust_rates', kind: 'write', description: 'Raise or lower nightly rates by a percentage for a date range.' },
 ] as const;
+// The model-driven engine has its own, larger catalog with input schemas: HOTEL_TOOLS in harness.ts.
 
 export { allowedTransitions };

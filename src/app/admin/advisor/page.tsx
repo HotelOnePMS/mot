@@ -8,9 +8,20 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { Callout, StatTile } from '@/components/ui/primitives';
-import { BrainCircuit, Building2, Loader2, RotateCcw, Send, Square } from 'lucide-react';
+import { AlertTriangle, BrainCircuit, Building2, CheckCircle2, Loader2, RotateCcw, Send, Square, XCircle } from 'lucide-react';
 
-type ChatTurn = { role: 'user' | 'assistant'; content: string };
+type PlanView = {
+  token: string;
+  title: string;
+  steps: { summary: string; detail?: string }[];
+  warnings: string[];
+  risk: 'low' | 'medium' | 'high';
+  confirmLabel: string;
+  expiresAt: string;
+};
+type AdvisorPlan = { propertyName: string; plan: PlanView };
+// Plans stay on screen with the answer; only role and content are sent back to the server.
+type ChatTurn = { role: 'user' | 'assistant'; content: string; plans?: AdvisorPlan[] };
 
 type AdvisorEvent =
   | { type: 'round' }
@@ -19,6 +30,7 @@ type AdvisorEvent =
   | { type: 'status'; text: string }
   | { type: 'tool'; name: string; label: string }
   | { type: 'error'; message: string }
+  | { type: 'plan'; propertyName: string; plan: PlanView }
   | { type: 'done' };
 
 type Overview = {
@@ -168,9 +180,10 @@ export default function AdvisorPage() {
       abortRef.current = controller;
       let answer = '';
       let roundStart = 0;
+      const plans: AdvisorPlan[] = [];
       const showAnswer = () => {
         if (conversation === conversationRef.current) {
-          setMessages((current) => [...current.slice(0, -1), { role: 'assistant', content: answer }]);
+          setMessages((current) => [...current.slice(0, -1), { role: 'assistant', content: answer, ...(plans.length ? { plans: [...plans] } : {}) }]);
         }
       };
 
@@ -178,7 +191,7 @@ export default function AdvisorPage() {
         const response = await fetch('/api/admin/business-agent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history.slice(-MAX_TURNS_SENT) }),
+          body: JSON.stringify({ messages: history.slice(-MAX_TURNS_SENT).map(({ role, content }) => ({ role, content })) }),
           signal: controller.signal,
         });
         if (!response.ok || !response.body) {
@@ -216,6 +229,9 @@ export default function AdvisorPage() {
               setActivity(event.label);
             } else if (event.type === 'error') {
               setError(event.message);
+            } else if (event.type === 'plan') {
+              plans.push({ propertyName: event.propertyName, plan: event.plan });
+              showAnswer();
             }
           }
         }
@@ -362,6 +378,7 @@ export default function AdvisorPage() {
                       </Markdown>
                     </div>
                   )}
+                  {message.plans?.map((p) => <AdvisorPlanCard key={p.plan.token} propertyName={p.propertyName} plan={p.plan} />)}
                   {streaming && index === messages.length - 1 && activity && (
                     <div className={cn('flex items-center gap-2 text-xs text-muted-foreground', message.content && 'mt-2')}>
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -416,9 +433,91 @@ export default function AdvisorPage() {
           )}
         </form>
         <p className="mx-auto mt-2 hidden max-w-4xl text-xs text-muted-foreground sm:block">
-          Enter to send, Shift+Enter for a new line. The advisor can read your data but cannot change anything. Check important figures before acting on them.
+          Enter to send, Shift+Enter for a new line. The advisor can prepare changes, but nothing changes until you confirm them. Check important figures before acting on them.
         </p>
       </div>
+    </div>
+  );
+}
+
+type ConfirmResponse = { blocks: { type: string; ok?: boolean; title?: string; lines?: string[] }[] };
+
+/** A plan the advisor prepared for one property: nothing changes until the person confirms it. */
+function AdvisorPlanCard({ propertyName, plan }: { propertyName: string; plan: PlanView }) {
+  const [state, setState] = useState<'ready' | 'running' | 'done' | 'failed' | 'dismissed'>('ready');
+  const [result, setResult] = useState<{ ok: boolean; title: string; lines: string[] } | null>(null);
+  const expired = Date.parse(plan.expiresAt) < Date.now();
+
+  const confirm = async () => {
+    setState('running');
+    try {
+      const res = await fetch('/api/agent/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: plan.token }) });
+      const data = (await res.json().catch(() => ({}))) as ConfirmResponse & { error?: string };
+      if (!res.ok) throw new Error(data.error || 'The changes could not be made.');
+      const r = data.blocks.find((b) => b.type === 'result');
+      setResult({ ok: !!r?.ok, title: r?.title ?? 'Done', lines: r?.lines ?? [] });
+      setState(r?.ok ? 'done' : 'failed');
+    } catch (err) {
+      setResult({ ok: false, title: err instanceof Error ? err.message : 'The changes could not be made.', lines: [] });
+      setState('failed');
+    }
+  };
+
+  if (state === 'dismissed') return <p className="mt-2 text-xs text-muted-foreground">Dismissed: {plan.title}. Nothing was changed.</p>;
+  return (
+    <div className="mt-3 rounded-2xl border border-primary/30 bg-card px-4 py-3 shadow-xs">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{propertyName} · ready to confirm</p>
+          <p className="font-semibold text-foreground">{plan.title}</p>
+        </div>
+        <span className={cn('rounded-full px-2 py-0.5 text-xs', plan.risk === 'high' ? 'bg-danger-soft text-danger-soft-foreground' : plan.risk === 'medium' ? 'bg-warning-soft text-warning-soft-foreground' : 'bg-success-soft text-success-soft-foreground')}>
+          {plan.risk === 'high' ? 'High impact' : plan.risk === 'medium' ? 'Review' : 'Routine'}
+        </span>
+      </div>
+      <ul className="mt-2 space-y-1">
+        {plan.steps.map((s, i) => (
+          <li key={i} className="text-sm">
+            <span className="text-foreground">{s.summary}</span>
+            {s.detail && <span className="text-muted-foreground"> · {s.detail}</span>}
+          </li>
+        ))}
+      </ul>
+      {plan.warnings.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {plan.warnings.map((w, i) => (
+            <li key={i} className="flex gap-1.5 text-xs text-muted-foreground">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+              {w}
+            </li>
+          ))}
+        </ul>
+      )}
+      {result ? (
+        <div className="mt-3 text-sm">
+          <p className={cn('flex items-center gap-1.5 font-medium', result.ok ? 'text-success' : 'text-danger')}>
+            {result.ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+            {result.title}
+          </p>
+          {result.lines.map((l, i) => (
+            <p key={i} className="text-xs text-muted-foreground">
+              {l}
+            </p>
+          ))}
+        </div>
+      ) : expired ? (
+        <p className="mt-3 text-xs text-muted-foreground">This plan expired. Ask the advisor again so it uses the latest data.</p>
+      ) : (
+        <div className="mt-3 flex gap-2">
+          <Button size="sm" onClick={confirm} disabled={state === 'running'}>
+            {state === 'running' && <Loader2 className="animate-spin" />}
+            {plan.confirmLabel}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setState('dismissed')} disabled={state === 'running'}>
+            Dismiss
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
