@@ -52,7 +52,7 @@ model User {
   // Channel agent chat sessions started by this user
   channelAgentConversations ChannelAgentConversation[]
   // Do Not Rent entries this staff member added
-  doNotRentAdded     DoNotRent[]              @relation("DoNotRentCreatedBy")
+  doNotRentAdded            DoNotRent[]                @relation("DoNotRentCreatedBy")
   // Pending password-reset links (only a hash of each token is stored)
 
   @@unique([ssoIssuer, ssoSubject])
