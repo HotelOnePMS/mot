@@ -18,6 +18,8 @@ export interface VoiceOptions {
   audience: 'guest' | 'staff';
   /** Guests: 'hotel' (default) talks to that hotel's front desk; 'global' to the HotelOne concierge across all hotels. */
   scope?: 'hotel' | 'global';
+  /** Guest concierge only: 'owners' when started from the pages for hotel owners (greets as the product guide). */
+  intro?: 'owners';
   /** Run a tool the voice asked for and return its JSON-serialisable output. */
   onToolCall: (call: VoiceToolCall, ctx: { token: string }) => Promise<unknown>;
   onStateChange?: (s: VoiceState) => void;
@@ -56,10 +58,12 @@ export interface VoiceController {
 export const MAX_CAPTIONS = 60;
 
 /** The session endpoint's query string for these options. */
-export function sessionQuery({ propertyId, audience, scope }: Pick<VoiceOptions, 'propertyId' | 'audience' | 'scope'>): string {
+export function sessionQuery({ propertyId, audience, scope, intro }: Pick<VoiceOptions, 'propertyId' | 'audience' | 'scope' | 'intro'>): string {
   const q = new URLSearchParams({ audience });
-  if (audience === 'guest' && scope === 'global') q.set('scope', 'global');
-  else if (propertyId) q.set('propertyId', propertyId);
+  if (audience === 'guest' && scope === 'global') {
+    q.set('scope', 'global');
+    if (intro === 'owners') q.set('intro', 'owners');
+  } else if (propertyId) q.set('propertyId', propertyId);
   return q.toString();
 }
 

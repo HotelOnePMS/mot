@@ -11,6 +11,8 @@ const query = z.object({
   propertyId: z.string().min(1).max(64).optional(),
   audience: z.enum(['guest', 'staff']).default('guest'),
   scope: z.enum(['hotel', 'global']).optional(),
+  /** owners: started from the pages for hotel owners (the concierge greets as the product guide). */
+  intro: z.enum(['owners']).optional(),
 });
 
 /**
@@ -23,7 +25,7 @@ const query = z.object({
 export const POST = handleRoute(async (request: NextRequest) => {
   const q = parseQuery(request, query);
   if (voiceProvider() !== 'elevenlabs') throw new DomainError(503, 'VOICE_DISABLED', 'The ElevenLabs voice line isn’t switched on.');
-  const session = await openVoiceSession(request, { propertyId: q.propertyId, audience: q.audience, scope: q.scope === 'global' ? 'GLOBAL' : 'HOTEL' }, async (ctx) => {
+  const session = await openVoiceSession(request, { propertyId: q.propertyId, audience: q.audience, scope: q.scope === 'global' ? 'GLOBAL' : 'HOTEL', intro: q.intro }, async (ctx) => {
     const { conversationId, ...result } = await startElevenLabsConversation({ audience: ctx.audience, prompts: ctx.prompts, firstMessage: ctx.firstMessage, tools: ctx.tools });
     return { externalId: conversationId, result };
   });
