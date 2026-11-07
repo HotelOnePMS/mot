@@ -2,7 +2,7 @@ import { ImageResponse } from 'next/og';
 import { PRODUCT_DOMAIN, PRODUCT_NAME, PRODUCT_TAGLINE } from '@/config/product';
 import { BRAND_HEX, OgMark, loadBrandFonts } from '@/components/brand/og';
 
-export const alt = `${PRODUCT_NAME} — ${PRODUCT_TAGLINE}`;
+export const alt = `${PRODUCT_NAME}: ${PRODUCT_TAGLINE}`;
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
 
