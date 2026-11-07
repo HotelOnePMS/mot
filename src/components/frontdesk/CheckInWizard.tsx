@@ -39,6 +39,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useConsole } from '@/components/console/ConsoleProvider';
 import { CollectPaymentDialog } from '@/components/payments/DeskPayments';
 import { SignaturePad } from '@/components/payments/SignaturePad';
+import { DoNotRentCallout } from './DoNotRent';
 import { FolioSummary, useFolio } from './FolioCard';
 import { RoomPicker } from './RoomPicker';
 
@@ -476,6 +477,7 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
             <>
               {step === 'id' && (
                 <div className="space-y-4">
+                  <DoNotRentCallout match={booking.doNotRent} />
                   {latestNote && (
                     <p className="flex items-start gap-2 rounded-xl bg-muted px-3 py-2 text-sm">
                       <MessageSquareText className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />

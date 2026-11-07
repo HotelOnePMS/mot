@@ -6,6 +6,7 @@ import { can, requireStaff } from '@/server/authz';
 import { handleRoute, json, parseJson } from '@/server/http';
 import { allowedTransitions, getBookingForStaff, transitionBooking } from '@/server/services/bookings';
 import { listActivity } from '@/server/services/audit';
+import { attachDoNotRentOne } from '@/server/services/doNotRent';
 import { toBookingSummary } from '@/server/services/mappers';
 
 type Params = { params: Promise<{ bookingId: string }> };
@@ -24,7 +25,7 @@ export const GET = handleRoute(async (_req: NextRequest, { params }: Params) => 
     can(actor, 'activity.view') ? listActivity(booking.propertyId, 50, { bookingId: booking.id }) : Promise.resolve([]),
   ]);
   return json({
-    booking: toBookingSummary(booking),
+    booking: await attachDoNotRentOne(toBookingSummary(booking)),
     history: history.map((h) => ({ ...h, createdAt: h.createdAt.toISOString() })),
     activity,
     actions: allowedTransitions(booking.status as BookingStatus),

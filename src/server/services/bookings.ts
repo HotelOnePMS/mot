@@ -20,6 +20,7 @@ import { scheduleInventorySync } from '../channels/sync';
 import { recordAudit, type OpContext } from './audit';
 import { localeOf, todayAt } from './hotels';
 import { nightlyInventory, quoteStay } from './inventory';
+import { attachDoNotRent } from './doNotRent';
 import { bookingInclude, floorNumber, toBookingSummary, type BookingWithRelations } from './mappers';
 
 // ---------------------------------------------------------------------------
@@ -100,7 +101,7 @@ export async function searchBookings(actor: Actor, q: BookingSearch): Promise<Bo
     orderBy: [{ checkIn: 'desc' }],
     take: Math.min(q.limit ?? 50, 200),
   });
-  return rows.map(toBookingSummary);
+  return attachDoNotRent(rows.map(toBookingSummary));
 }
 
 function nameParts(text: string): Prisma.BookingWhereInput[] {
@@ -777,7 +778,7 @@ export async function arrivalsOn(propertyId: string, day: ISODate): Promise<Book
     include: bookingInclude,
     orderBy: [{ checkIn: 'asc' }, { createdAt: 'asc' }],
   });
-  return rows.map(toBookingSummary);
+  return attachDoNotRent(rows.map(toBookingSummary));
 }
 
 export async function departuresOn(propertyId: string, day: ISODate): Promise<BookingSummary[]> {
@@ -793,7 +794,7 @@ export async function departuresOn(propertyId: string, day: ISODate): Promise<Bo
     include: bookingInclude,
     orderBy: [{ checkOut: 'asc' }],
   });
-  return rows.map(toBookingSummary);
+  return attachDoNotRent(rows.map(toBookingSummary));
 }
 
 export async function inHouse(propertyId: string): Promise<BookingSummary[]> {
@@ -802,5 +803,5 @@ export async function inHouse(propertyId: string): Promise<BookingSummary[]> {
     include: bookingInclude,
     orderBy: [{ checkOut: 'asc' }],
   });
-  return rows.map(toBookingSummary);
+  return attachDoNotRent(rows.map(toBookingSummary));
 }

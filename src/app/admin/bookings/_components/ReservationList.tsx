@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, Skeleton } from '@/components/ui/primitives';
 import { BookingStatusBadge, PaymentBadge, RiskFlagList } from '@/components/hotel/badges';
+import { DoNotRentBadge } from '@/components/frontdesk/DoNotRent';
 
 export type SortKey = 'guest' | 'checkIn' | 'room' | 'status' | 'total';
 export type Sort = { key: SortKey; dir: 'asc' | 'desc' };
@@ -204,6 +205,11 @@ export function ReservationList({
                         {b.rooms > 1 ? `, ${b.rooms} rooms` : ''}
                       </span>
                     </p>
+                    {b.doNotRent && (
+                      <div className="mt-1">
+                        <DoNotRentBadge match={b.doNotRent} />
+                      </div>
+                    )}
                     <RiskFlagList flags={b.riskFlags} className="mt-1" />
                   </div>
                 </div>
@@ -262,6 +268,7 @@ export function ReservationList({
                 </p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <StatusCell b={b} today={today} />
+                  <DoNotRentBadge match={b.doNotRent} />
                   <RiskFlagList flags={b.riskFlags} />
                 </div>
               </div>

@@ -51,6 +51,8 @@ model User {
   agentAuditLogs            AgentAuditLog[]
   // Channel agent chat sessions started by this user
   channelAgentConversations ChannelAgentConversation[]
+  // Do Not Rent entries this staff member added
+  doNotRentAdded     DoNotRent[]              @relation("DoNotRentCreatedBy")
   // Pending password-reset links (only a hash of each token is stored)
 
   @@unique([ssoIssuer, ssoSubject])
@@ -135,6 +137,7 @@ model Property {
   nightAudits              NightAudit[]
   // OTA connections (Expedia, Booking.com)
   channelConnections       ChannelConnection[]
+  doNotRent                DoNotRent[]
 
   @@index([organizationId])
   @@map("properties")
@@ -1374,4 +1377,28 @@ model NightAudit {
 
   @@unique([propertyId, businessDate])
   @@map("night_audits")
+}
+
+/// A hotel's Do Not Rent list: guests the front desk shouldn't rent to again, matched on email or phone.
+/// Each hotel keeps its own list; nothing is shared with other hotels, even in the same group.
+model DoNotRent {
+  id          String   @id @default(cuid())
+  propertyId  String
+  guestName   String
+  /// Lower-cased email, or null when only a phone is known.
+  email       String?
+  /// Last 10 digits of the phone number (country code and punctuation dropped), or null.
+  phoneKey    String?
+  /// The phone number as staff entered it, for display.
+  phone       String?
+  /// Why: what happened, so the next shift knows.
+  reason      String
+  createdById String
+  createdAt   DateTime @default(now())
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  createdBy   User     @relation("DoNotRentCreatedBy", fields: [createdById], references: [id])
+
+  @@index([propertyId, email])
+  @@index([propertyId, phoneKey])
+  @@map("do_not_rent")
 }

@@ -1,4 +1,5 @@
 import {
+  Ban,
   Bot,
   Zap,
   BadgeDollarSign,
@@ -54,6 +55,7 @@ const GROUPS: NavGroup[] = [
       { label: 'Housekeeping', href: '/admin/housekeeping', icon: BrushCleaning },
       { label: 'Reservations', href: '/admin/bookings', icon: CalendarCheck2 },
       { label: 'Reports', href: '/admin/reports', icon: FileSpreadsheet },
+      { label: 'Do Not Rent', href: '/admin/do-not-rent', icon: Ban },
       { label: TERMS.voice, href: '/admin/voice', icon: AudioLines, paths: ALL },
     ],
   },
