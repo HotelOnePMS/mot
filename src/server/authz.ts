@@ -51,10 +51,20 @@ export const PERMISSIONS = {
   'payments.view': ['ADMIN', 'OWNER', 'MANAGER'],
   'payments.manage': ['ADMIN', 'OWNER'],
   'payments.refund': ['ADMIN', 'OWNER', 'MANAGER'],
+  // Taking money at the desk: card reader, typed-in or OTA virtual card, cash, and the security deposit.
+  'payments.collect': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   'disputes.view': ['ADMIN', 'OWNER', 'MANAGER'],
   'disputes.manage': ['ADMIN', 'OWNER'],
   // Third-party payment: send the cardholder an authorization form, see what they signed (ID photo included), verify it.
   'booking.cardAuth': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // Guided check-in records: see the guest's stored ID photo and full details (every view is logged).
+  'guestId.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // The folio (charges, payments, deposits, balance): front desk runs check-in and check-out with it.
+  'folio.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
+  // Lower what a stay costs with an allowance (service recovery, unused nights), with a reason.
+  'folio.adjust': ['ADMIN', 'OWNER', 'MANAGER'],
+  // Check a guest out while money is still owed (billed to a company, paying later), with a reason.
+  'booking.checkoutWithBalance': ['ADMIN', 'OWNER', 'MANAGER'],
   'room.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
   'room.status': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
   'room.outOfOrder': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],

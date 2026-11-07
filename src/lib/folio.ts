@@ -1,0 +1,176 @@
+/**
+ * The folio: a booking's running account of what the guest owes and what they
+ * have paid. The room and its taxes are derived from the booking every time
+ * (never stored), so a changed stay can't leave a stale room line behind;
+ * payments (online, and at the desk: card reader, typed or virtual card, cash,
+ * recorded another way) and their refunds are passed in. This file holds the
+ * rules both sides share: the derived lines and the totals. Client-safe, no
+ * server imports.
+ *
+ * Amounts are in the hotel's currency and summed in its minor unit, so the
+ * lines always add up to the cent (or yen, or fils).
+ */
+import { currencyDigits, toMinorUnits } from './currency';
+
+/** One line of the folio as staff and the guest see it. */
+export interface FolioLine {
+  /** Stable React key. */
+  key: string;
+  section: 'CHARGES' | 'PAYMENTS';
+  /** ALLOWANCE: lowers the charges (a manager's, with a reason). */
+  kind: 'ROOM' | 'TAX' | 'ALLOWANCE' | 'PAYMENT' | 'REFUND';
+  label: string;
+  detail: string | null;
+  /** Signed effect on the balance: charges and refunds to the guest positive, payments negative. */
+  amount: number;
+  /** ISO timestamp, payment and allowance lines only. */
+  at: string | null;
+}
+
+const TAXES_AND_FEES = 'Taxes and fees';
+
+/** Minor units back to an amount, never -0. */
+const fromMinor = (minor: number, currency: string): number => (minor === 0 ? 0 : minor / 10 ** currencyDigits(currency));
+
+const sumMinor = (taxes: readonly { minor: number }[]): number => taxes.reduce((s, t) => s + t.minor, 0);
+
+/** The positive taxes and fees in Booking.charges, in minor units; whatever isn't one of them is skipped. */
+function parseCharges(charges: unknown, currency: string): { name: string; minor: number }[] {
+  if (!Array.isArray(charges)) return [];
+  const out: { name: string; minor: number }[] = [];
+  for (const c of charges) {
+    if (!c || typeof c !== 'object') continue;
+    const { name, amount } = c as { name?: unknown; amount?: unknown };
+    if (typeof amount !== 'number' || !Number.isFinite(amount)) continue;
+    const minor = toMinorUnits(amount, currency);
+    if (minor <= 0) continue;
+    out.push({ name: typeof name === 'string' && name.trim() ? name.trim() : TAXES_AND_FEES, minor });
+  }
+  return out;
+}
+
+/**
+ * The stay's derived lines: one ROOM line plus one TAX line per tax/fee in `charges` (Booking.charges JSON: an array of { name: string; kind?: string; rate?: number; amount: number }, may be null or malformed).
+ * They add up EXACTLY to totalPrice in the currency's minor unit: the room line absorbs any difference (OTA and legacy bookings whose charges JSON doesn't match total − subtotal).
+ * If charges is missing/invalid/empty but subtotalPrice is set and below totalPrice, emit one TAX line 'Taxes and fees' = total − subtotal. Otherwise only the ROOM line = total.
+ * Room line: label = roomTypeName, detail = '3 nights' / '1 night', plus ' × 2 rooms' when rooms > 1. Tax lines: label = charge name, detail null. Skip zero/negative tax amounts. keys 'room', 'tax-0', 'tax-1'…
+ *
+ * Taxes in the JSON that come to more than the whole stay are ignored as wrong, so the room line is never negative.
+ */
+export function stayLines(input: {
+  totalPrice: number;
+  subtotalPrice: number | null;
+  charges: unknown;
+  roomTypeName: string;
+  nights: number;
+  rooms: number;
+  currency: string;
+}): FolioLine[] {
+  const { currency } = input;
+  const total = toMinorUnits(input.totalPrice, currency) || 0;
+  let taxes = parseCharges(input.charges, currency);
+  if (sumMinor(taxes) > total) taxes = [];
+  if (!taxes.length && input.subtotalPrice != null) {
+    const subtotal = toMinorUnits(input.subtotalPrice, currency);
+    if (subtotal >= 0 && subtotal < total) taxes = [{ name: TAXES_AND_FEES, minor: total - subtotal }];
+  }
+  const nights = `${input.nights} ${input.nights === 1 ? 'night' : 'nights'}`;
+  const rooms = input.rooms > 1 ? ` × ${input.rooms} rooms` : '';
+  const derived = { section: 'CHARGES', at: null } as const;
+  return [
+    { ...derived, key: 'room', kind: 'ROOM', label: input.roomTypeName, detail: nights + rooms, amount: fromMinor(total - sumMinor(taxes), currency) },
+    ...taxes.map((t, i): FolioLine => ({ ...derived, key: `tax-${i}`, kind: 'TAX', label: t.name, detail: null, amount: fromMinor(t.minor, currency) })),
+  ];
+}
+
+export interface FolioTotals {
+  /** Room, taxes and fees, before allowances. */
+  charges: number;
+  /** Allowances, positive: what the charges were lowered by. */
+  allowances: number;
+  paid: number;
+  refunded: number;
+  balance: number;
+}
+
+/** An allowance on the folio, for staff who can remove it. */
+export interface FolioAllowance {
+  id: string;
+  amount: number;
+  reason: string;
+  by: string | null;
+  at: string;
+}
+
+/** A security deposit on the folio: listed apart, never part of the balance. */
+export interface FolioDeposit {
+  id: string;
+  method: string;
+  methodLabel: string;
+  /** HELD (on a card hold or charged/cash, not returned yet), SETTLED (returned, or kept for incidentals), RELEASED. */
+  state: 'HELD' | 'SETTLED' | 'RELEASED';
+  /** A hold on the card rather than money taken. */
+  hold: boolean;
+  amount: number;
+  /** Kept for incidentals when it was settled. */
+  kept: number;
+  card: string | null;
+  at: string;
+  settledAt: string | null;
+}
+
+/** Everything on a booking's folio, as the server sends it (server/services/folio.ts). */
+export interface FolioView {
+  bookingId: string;
+  code: string;
+  currency: string;
+  status: string;
+  lines: FolioLine[];
+  totals: FolioTotals;
+  deposits: FolioDeposit[];
+  /** Security deposit still held for the stay (not part of the balance). */
+  depositHeld: number;
+  /**
+   * Set when one set of payments covers several room types (this folio shows this room type's share). balance: what the
+   * whole reservation still owes (negative: owed back to the guest), its room types going ahead after their allowances,
+   * less everything paid toward it.
+   */
+  reservation: { code: string; roomTypes: number; balance: number } | null;
+  /**
+   * What must be paid before check-out (BookingSummary.checkOutDue). For a room type of a shared reservation it's what
+   * the whole reservation still owes, which can differ from this folio's balance (its share of the payments).
+   */
+  checkOutDue: number;
+  /** Nothing left to pay: the guest can check out. */
+  settled: boolean;
+  /** The allowances lowering the charges (also among the lines), oldest first. */
+  allowances: FolioAllowance[];
+  /** At most this much more can be allowed: the charges less the allowances already given. */
+  maxAllowance: number;
+  /** Checked out while money was still owed, with a manager's reason. */
+  checkoutOverride: { amount: number; reason: string; by: string | null; at: string } | null;
+}
+
+/** Sums lines in the currency's precision: charges = ROOM+TAX, paid = PAYMENT (positive), refunded = REFUND (positive), balance = sum of signed amounts (negative = the hotel owes the guest). */
+export function folioTotals(lines: readonly FolioLine[], currency: string): FolioTotals {
+  let charges = 0;
+  let allowances = 0;
+  let paid = 0;
+  let refunded = 0;
+  let balance = 0;
+  for (const line of lines) {
+    const minor = toMinorUnits(line.amount, currency);
+    balance += minor;
+    if (line.kind === 'ROOM' || line.kind === 'TAX') charges += minor;
+    else if (line.kind === 'ALLOWANCE') allowances -= minor;
+    else if (line.kind === 'PAYMENT') paid -= minor;
+    else refunded += minor;
+  }
+  return {
+    charges: fromMinor(charges, currency),
+    allowances: fromMinor(allowances, currency),
+    paid: fromMinor(paid, currency),
+    refunded: fromMinor(refunded, currency),
+    balance: fromMinor(balance, currency),
+  };
+}

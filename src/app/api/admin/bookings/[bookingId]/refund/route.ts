@@ -16,6 +16,8 @@ const bodySchema = z.object({
   /** Dollars; omit to refund what is left on the payment. */
   amount: z.number().positive().max(1_000_000).optional(),
   reason: z.string().max(200).optional(),
+  /** Also lower what the stay costs by the refunded amount (goodwill, unused nights): managers with folio.adjust. */
+  allowance: z.boolean().optional(),
 });
 
 /** POST — refund part or all of a card payment back to the guest's card. */

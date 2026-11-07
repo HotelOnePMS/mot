@@ -5,6 +5,7 @@ import Link from 'next/link';
 import useSWR, { useSWRConfig } from 'swr';
 import { toast } from 'sonner';
 import { CreditCard, RotateCcw, ShieldAlert } from 'lucide-react';
+import { CARD_NUMBER_REFUSED, RECORDED_METHODS, containsCardNumber, type PaymentMethod } from '@/lib/desk-payments';
 import type { BookingSummary } from '@/lib/dto';
 import { api, fetcher } from '@/lib/fetcher';
 import { formatMoney } from '@/lib/format';
@@ -21,6 +22,7 @@ import { useConsole } from '@/components/console/ConsoleProvider';
 
 interface PaymentRecord {
   id: string;
+  method: string;
   kind: string;
   status: string;
   amount: number;
@@ -54,6 +56,8 @@ interface RefundInfo {
   deadlineLabel: string;
   canRefund: boolean;
   reservation: { code: string; roomTypes: number } | null;
+  /** The stay's balance (the reservation's, when shared); negative: a credit owed back to the guest. */
+  balance: number;
 }
 
 interface ChecklistState {
@@ -78,10 +82,12 @@ const RISK: Record<string, string> = { normal: 'Normal', elevated: 'Elevated', h
 
 function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary; open: boolean; onOpenChange: (o: boolean) => void }) {
   const { mutate } = useSWRConfig();
+  const { can } = useConsole();
   const { data: info } = useSWR<RefundInfo>(open ? `/api/admin/bookings/${booking.id}/refund` : null, fetcher);
   const [paymentId, setPaymentId] = React.useState('');
   const [amount, setAmount] = React.useState('');
   const [reason, setReason] = React.useState('');
+  const [allowance, setAllowance] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
 
@@ -96,21 +102,48 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
       setPaymentId('');
       setAmount('');
       setReason('');
+      setAllowance(false);
       setError('');
     }
   }, [open]);
 
   const payment = info?.payments.find((p) => p.id === paymentId);
   const value = Number(amount);
-  const valid = !!payment && Number.isFinite(value) && value > 0 && value <= payment.refundable + 0.004;
+  // Managers can also take the refund off what the stay costs (an allowance), so it isn't owed again: not on a closed stay.
+  // Already in credit (an allowance lowered the charges after they were paid): that credit is refunded as it is.
+  // The stay's balance (the whole reservation's when shared: a credit on one room type can be owed on another).
+  const stay = info?.balance ?? booking.balance;
+  const inCredit = stay < -0.004;
+  const canAllow = can('folio.adjust') && booking.status !== 'CANCELLED' && booking.status !== 'NO_SHOW' && !inCredit;
+  const allowing = canAllow && allowance;
+  // As the server checks before any money moves: at most the stay's charges less the allowances already given.
+  const allowanceLeft = Math.max(0, Math.round((booking.totalPrice - booking.allowances) * 100) / 100);
+  const overAllowance = allowing && Number.isFinite(value) && value > allowanceLeft + 0.004;
+  // The allowance's reason is the refund's: required with it. Never a card number (it goes to Stripe and the log).
+  const why = reason.replace(/\s+/g, ' ').trim();
+  const cardNumber = containsCardNumber(why);
+  const valid =
+    !!payment && Number.isFinite(value) && value > 0 && value <= payment.refundable + 0.004 && !cardNumber && (!allowing || (why.length >= 3 && !overAllowance));
 
   async function refund() {
     setBusy(true);
     setError('');
     try {
-      await api(`/api/admin/bookings/${booking.id}/refund`, { method: 'POST', json: { paymentId, amount: Math.round(value * 100) / 100, reason: reason.trim() || undefined } });
-      toast.success(`Refunded ${formatMoney(value, booking.currency, { cents: true })} to the guest’s card`);
-      await Promise.all([mutate(`/api/admin/bookings/${booking.id}`), mutate(`/api/admin/bookings/${booking.id}/payment`), mutate(`/api/admin/bookings/${booking.id}/refund`)]);
+      const result = await api<{ allowanceError?: string }>(`/api/admin/bookings/${booking.id}/refund`, {
+        method: 'POST',
+        json: { paymentId, amount: Math.round(value * 100) / 100, reason: why || undefined, allowance: allowing || undefined },
+      });
+      if (result.allowanceError) toast.warning(result.allowanceError);
+      else
+        toast.success(
+          allowing
+            ? `Refunded ${formatMoney(value, booking.currency, { cents: true })} to the guest’s card and took it off the stay`
+            : `Refunded ${formatMoney(value, booking.currency, { cents: true })} to the guest’s card`
+        );
+      // The folio and the desk show the refund (and the allowance) too.
+      await Promise.all(
+        ['', '/payment', '/refund', '/folio', '/desk-payments'].map((path) => mutate(`/api/admin/bookings/${booking.id}${path}`))
+      );
       onOpenChange(false);
     } catch (e) {
       setError((e as Error).message);
@@ -130,6 +163,24 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
           <div className="space-y-4">
+            {(booking.status === 'CHECKED_IN' || booking.status === 'CONFIRMED') && !allowing && !(inCredit && Number.isFinite(value) && value <= -stay + 0.004) && (
+              // Check-out needs the balance at zero, and a refund toward the stay brings the balance back (unless the stay
+              // also costs that much less: an allowance, or the refund only hands back a credit).
+              <Callout tone="warning">
+                {inCredit ? (
+                  <>
+                    {booking.guest.name} hasn’t checked out. Only the part above the credit of {formatMoney(-stay, booking.currency, { cents: true })} is owed again before they can check out.
+                  </>
+                ) : (
+                  <>
+                    {booking.guest.name} hasn’t checked out. A refund on its own is owed again before they can check out.{' '}
+                    {canAllow
+                      ? 'To refund unused nights or as a goodwill gesture, also take the amount off what the stay costs (below).'
+                      : 'To refund unused nights or as a goodwill gesture, check them out first, then refund.'}
+                  </>
+                )}
+              </Callout>
+            )}
             <Callout tone={info.deadlinePassed ? 'warning' : 'info'}>
               {info.deadlinePassed
                 ? `Free cancellation ended at ${info.deadlineLabel}. The policy doesn’t require a refund now; you can still refund any amount.`
@@ -154,8 +205,43 @@ function RefundDialog({ booking, open, onOpenChange }: { booking: BookingSummary
             <Field label={`Amount to refund (${booking.currency})`} htmlFor="refund-amount" hint={payment ? `Up to ${formatMoney(payment.refundable, booking.currency, { cents: true })} on this payment.` : undefined}>
               <Input id="refund-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
             </Field>
-            <Field label="Reason" optional htmlFor="refund-reason" hint="For your records.">
-              <Input id="refund-reason" value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} />
+            {inCredit && can('folio.adjust') && booking.status !== 'CANCELLED' && booking.status !== 'NO_SHOW' && (
+              <p className="text-xs text-muted-foreground">
+                The guest has a credit of {formatMoney(-stay, booking.currency, { cents: true })} on this stay{info?.reservation ? ` (reservation ${info.reservation.code})` : ''}. Check the folio, then refund it as it is (no allowance: the charges are already lower than what was paid).
+              </p>
+            )}
+            {canAllow && (
+              <div className="space-y-1">
+                <label htmlFor="refund-allowance" className="flex min-h-10 cursor-pointer items-start gap-3 text-sm">
+                  <input
+                    id="refund-allowance"
+                    type="checkbox"
+                    checked={allowance}
+                    onChange={(e) => setAllowance(e.target.checked)}
+                    aria-describedby="refund-allowance-hint"
+                    className="mt-0.5 size-4 shrink-0 cursor-pointer rounded-sm border-input accent-[hsl(var(--primary))]"
+                  />
+                  <span>Also take this amount off what the stay costs (goodwill or unused nights)</span>
+                </label>
+                <p id="refund-allowance-hint" className="pl-7 text-xs text-muted-foreground">
+                  The folio shows it as an allowance with the reason, so the refund isn’t owed again. At most {formatMoney(allowanceLeft, booking.currency, { cents: true })}.
+                </p>
+                {overAllowance && (
+                  <p role="alert" className="pl-7 text-xs font-medium text-destructive">
+                    An allowance can take off at most {formatMoney(allowanceLeft, booking.currency, { cents: true })}. Refund that much, or untick the box.
+                  </p>
+                )}
+              </div>
+            )}
+            <Field
+              label="Reason"
+              optional={!allowing}
+              required={allowing}
+              htmlFor="refund-reason"
+              hint={allowing ? 'Shown on the folio with the allowance, for example “left a night early” (at least 3 characters).' : 'For your records.'}
+              error={cardNumber ? CARD_NUMBER_REFUSED : undefined}
+            >
+              <Input id="refund-reason" required={allowing} value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} />
             </Field>
             {error && (
               <Callout tone="danger" role="alert">
@@ -237,10 +323,13 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
   const { data } = useSWR<PaymentInfo>(can('booking.payment.view') ? `/api/admin/bookings/${b.id}/payment` : null, fetcher);
   const [refundOpen, setRefundOpen] = React.useState(false);
   const closed = b.status === 'CANCELLED' || b.status === 'NO_SHOW';
-  const balance = Math.max(0, b.totalPrice - b.amountPaid);
+  const balance = Math.max(0, b.balance);
   const nightly = b.nights ? b.totalPrice / b.nights / Math.max(1, b.rooms) : b.totalPrice;
-  const paid = (data?.payments ?? []).filter((p) => p.status !== 'FAILED' && p.status !== 'PENDING');
-  const canRefund = can('payments.refund') && paid.some((p) => p.status !== 'REFUNDED');
+  // Online payments are listed here; money taken at the desk is in the desk card (DeskPayments).
+  const paid = (data?.payments ?? []).filter((p) => p.method === 'ONLINE' && p.status !== 'FAILED' && p.status !== 'PENDING');
+  // Card payments through Stripe; cash and payments recorded at the desk are handed back from the desk card.
+  const refundable = (data?.payments ?? []).filter((p) => !RECORDED_METHODS.includes(p.method as PaymentMethod) && p.kind !== 'SECURITY_DEPOSIT' && (p.status === 'SUCCEEDED' || p.status === 'PARTIALLY_REFUNDED'));
+  const canRefund = can('payments.refund') && refundable.length > 0;
 
   return (
     <>
@@ -258,11 +347,11 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
         {b.amountPaid > 0 && (
           <dl className="mt-4 grid grid-cols-2 gap-2 text-sm">
             <div className="rounded-xl bg-muted px-3 py-2">
-              <dt className="text-xs text-muted-foreground">Paid online</dt>
+              <dt className="text-xs text-muted-foreground">Paid so far</dt>
               <dd className="font-medium tabular">{formatMoney(b.amountPaid, b.currency, { cents: true })}</dd>
             </div>
             <div className="rounded-xl bg-muted px-3 py-2">
-              <dt className="text-xs text-muted-foreground">Balance at the property</dt>
+              <dt className="text-xs text-muted-foreground">Balance due</dt>
               <dd className="font-medium tabular">{formatMoney(balance, b.currency, { cents: true })}</dd>
             </div>
           </dl>
@@ -270,7 +359,7 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
 
         {data?.reservation && paid.length > 0 && (
           <p className="mt-3 text-xs text-muted-foreground">
-            One card payment for all {data.reservation.roomTypes} room types in reservation {data.reservation.code}. Paid online above is this room type’s share.
+            One card payment for all {data.reservation.roomTypes} room types in reservation {data.reservation.code}. Paid so far is this room type’s share.
           </p>
         )}
 
@@ -316,7 +405,7 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
 
         {canRefund && (
           <Button variant="outline" size="sm" className="mt-4" onClick={() => setRefundOpen(true)}>
-            <RotateCcw aria-hidden /> Refund…
+            <RotateCcw aria-hidden /> Refund a card…
           </Button>
         )}
 

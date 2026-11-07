@@ -20,6 +20,8 @@ export interface EvidenceInput {
     guests: number;
     roomType: string;
     totalPrice: number;
+    /** Allowances the hotel gave (lowering what the stay cost), e.g. "25.00 off: air conditioning broken". */
+    allowances?: string[];
     createdAt: string;
     notes: string | null;
   };
@@ -43,6 +45,8 @@ export interface EvidenceInput {
   checklist: { item: string; at: string | null; by: string | null }[];
   /** Signed cardholder authorizations (someone else paid for the stay). */
   authorizations?: AuthorizationEvidence[];
+  /** What the guided check-in recorded: the photo ID checked, the registration card signed, deposits taken. */
+  checkIn?: CheckInEvidence | null;
   riskFlags: string[];
   history: { status: string; notes: string | null; at: string }[];
   dispute: { stripeId: string; reason: string | null; amount: number; currency: string };
@@ -69,6 +73,32 @@ export interface AuthorizationEvidence {
   textHash: string | null;
   documentHash: string | null;
   text: string | null;
+}
+
+export interface CheckInEvidence {
+  /** One per room type checked in with the guided check-in (a reservation of several room types can have several). */
+  records: CheckInRecordEvidence[];
+  deposits: string[];
+}
+
+export interface CheckInRecordEvidence {
+  /** The room type, when the reservation has several. */
+  roomType: string | null;
+  /** e.g. "Driver’s license issued in United States, number ending 7781, name on ID Jane Sample (matches the booking)". */
+  id: string | null;
+  idCheckedAt: string | null;
+  idCheckedBy: string | null;
+  idPhotoKept: boolean;
+  registration: {
+    signedAt: string;
+    signatureMethod: string;
+    ip: string | null;
+    witnessedBy: string | null;
+    textVersion: string;
+    textHash: string;
+    documentHash: string;
+    text: string;
+  } | null;
 }
 
 export interface EvidenceSection {
@@ -116,6 +146,7 @@ export function buildEvidenceSummary(i: EvidenceInput): EvidenceSummary {
       `Stay: ${i.booking.checkIn} to ${i.booking.checkOut} (${i.booking.nights} ${i.booking.nights === 1 ? 'night' : 'nights'}), ${i.booking.rooms} ${i.booking.rooms === 1 ? 'room' : 'rooms'}, ${i.booking.guests} ${i.booking.guests === 1 ? 'guest' : 'guests'}`,
       `Room type: ${i.booking.roomType}`,
       `Booking total: ${i.booking.totalPrice.toFixed(2)}`,
+      ...(i.booking.allowances ?? []).map((a) => `Allowance given by the hotel: ${a}`),
       `Booking status: ${i.booking.status}`,
       ...(i.booking.notes ? [`Notes on the booking: ${i.booking.notes.replace(/\s*\n\s*/g, ' | ')}`] : []),
     ],
@@ -187,6 +218,31 @@ export function buildEvidenceSummary(i: EvidenceInput): EvidenceSummary {
         : []),
     ],
   });
+
+  if (i.checkIn && (i.checkIn.records.length || i.checkIn.deposits.length)) {
+    const c = i.checkIn;
+    const records = c.records.length ? c.records : [{ roomType: null, id: null, idCheckedAt: null, idCheckedBy: null, idPhotoKept: false, registration: null }];
+    sections.push({
+      title: 'Check-in: photo ID and registration card',
+      lines: [
+        ...records.flatMap((r) => {
+          const on = r.roomType ? ` (${r.roomType})` : '';
+          return [
+            ...(r.id ? [`Photo ID checked at the desk${on}: ${r.id}${r.idCheckedAt ? `, on ${when(r.idCheckedAt)}` : ''}${r.idCheckedBy ? ` by ${r.idCheckedBy}` : ''}${r.idPhotoKept ? '; a photo of the ID is kept by the hotel' : ''}`] : [`No photo ID was recorded at check-in${on}.`]),
+            ...(r.registration
+              ? [
+                  `Registration card${on} signed by the guest on ${when(r.registration.signedAt)} (${r.registration.signatureMethod === 'DRAWN' ? 'signature drawn on screen' : 'typed name adopted as signature'}) at the front desk${r.registration.witnessedBy ? `, with ${r.registration.witnessedBy}` : ''}, from IP ${or(r.registration.ip)}`,
+                  `Record SHA-256: ${r.registration.documentHash} (wording version ${r.registration.textVersion}, SHA-256 ${r.registration.textHash})`,
+                  'Registration card as signed:',
+                  r.registration.text,
+                ]
+              : [`No registration card was signed${on}.`]),
+          ];
+        }),
+        ...c.deposits.map((d) => `Security deposit: ${d}`),
+      ],
+    });
+  }
 
   sections.push({
     title: 'Booking history',

@@ -34,11 +34,18 @@ const COLUMNS: Record<ChecklistItem, { at: 'idMatchedAt' | 'cardShownAt' | 'regi
 };
 
 async function stateFor(booking: { id: string; groupCode: string | null }, required: ChecklistRequirements | null): Promise<ChecklistState> {
-  const [row, authorization] = await Promise.all([
+  const [row, authorization, guestId, card] = await Promise.all([
     prisma.bookingChecklist.findUnique({ where: { bookingId: booking.id } }),
     required?.cardShown ? verifiedAuthorizationFor(booking) : Promise.resolve(null),
+    // The guided check-in records cover "ID matches" and "registration signed" (services/checkin.ts).
+    prisma.guestIdentification.findUnique({ where: { bookingId: booking.id }, select: { confirmedById: true, createdAt: true } }),
+    prisma.registrationCard.findUnique({ where: { bookingId: booking.id }, select: { witnessedById: true, signedAt: true } }),
   ]);
-  const ids = row ? [row.idMatchedById, row.cardShownById, row.registrationSignedById].filter((id): id is string => !!id) : [];
+  const ids = [
+    ...(row ? [row.idMatchedById, row.cardShownById, row.registrationSignedById] : []),
+    guestId?.confirmedById,
+    card?.witnessedById,
+  ].filter((id): id is string => !!id);
   const users = ids.length ? await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, firstName: true, lastName: true } }) : [];
   const nameOf = (id: string | null | undefined) => {
     const u = users.find((x) => x.id === id);
@@ -53,6 +60,12 @@ async function stateFor(booking: { id: string; groupCode: string | null }, requi
       // A tick by staff wins; otherwise the cardholder's verified authorization stands in for seeing the card.
       if (item === 'cardShown' && !at && authorization) {
         return { ...base, done: true, at: authorization.at.toISOString(), by: authorization.by, via: `Covered by ${authorization.signerName || 'the cardholder'}’s signed authorization` };
+      }
+      if (item === 'idMatched' && !at && guestId) {
+        return { ...base, done: true, at: guestId.createdAt.toISOString(), by: nameOf(guestId.confirmedById), via: 'Checked and recorded at check-in' };
+      }
+      if (item === 'registrationSigned' && !at && card) {
+        return { ...base, done: true, at: card.signedAt.toISOString(), by: nameOf(card.witnessedById), via: 'Signed on the device at check-in' };
       }
       return { ...base, done: !!at, at: at?.toISOString() ?? null, by: nameOf(row?.[COLUMNS[item].by]), via: null };
     });

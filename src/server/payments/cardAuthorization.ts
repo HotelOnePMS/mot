@@ -49,7 +49,7 @@ import { logError } from '../log';
 import { publicSiteUrl } from '../public-url';
 import { recordAudit, type OpContext } from '../services/audit';
 import { getBookingForStaff } from '../services/bookings';
-import { personName, toBookingSummary } from '../services/mappers';
+import { owedAfterAllowances, personName, toBookingSummary } from '../services/mappers';
 import { open, randomToken, seal, sha256, vaultAvailable } from '../vault';
 import { hashPolicy } from './policy';
 import { paymentLines } from './record';
@@ -68,6 +68,15 @@ export function idPhotoRetentionDays(): number {
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 180;
 }
 
+/**
+ * Bookings whose ID photos and sealed ID details can be deleted: checked out before `cutoff`, with no open dispute
+ * on the booking or on its reservation's lead line (a reservation of several room types is paid, and so disputed, there).
+ */
+export function idRetentionOver(cutoff: Date): Prisma.BookingWhereInput {
+  const noOpenDispute = { disputes: { none: { closedAt: null } } };
+  return { checkOut: { lt: cutoff }, ...noOpenDispute, OR: [{ reservationLead: { is: null } }, { reservationLead: { is: noOpenDispute } }] };
+}
+
 const tokenHashOf = (token: string) => sha256(`card-auth:${token}`);
 const photoAad = (id: string) => `card-auth-id:${id}`;
 
@@ -82,14 +91,18 @@ async function reservationOf(booking: { id: string; groupCode: string | null }) 
   const lines = await paymentLines(booking);
   const lead = lines[0];
   const live = lines.filter((l) => !ENDED.includes(l.status));
-  const totalCents = (live.length ? live : lines).reduce((s, l) => s + toCents(Number(l.totalPrice)), 0);
+  // What the stay costs after any allowances, as the desk and the folio count it.
+  const totalCents = (live.length ? live : lines).reduce((s, l) => s + owedAfterAllowances(l.totalPrice, l.allowances), 0);
   return { lead, lines, amount: fromCents(totalCents) };
 }
 
-/** The card that paid online for the reservation (its first successful payment), if any. */
+/**
+ * The card that paid remotely for the reservation (its first successful online or typed-in payment), if any.
+ * Security deposits and cards presented at the desk are left out: the cardholder was there.
+ */
 async function paidCard(leadId: string) {
   return prisma.payment.findFirst({
-    where: { bookingId: leadId, status: { in: PAID }, cardLast4: { not: null } },
+    where: { bookingId: leadId, status: { in: PAID }, cardLast4: { not: null }, kind: { not: 'SECURITY_DEPOSIT' }, method: { in: ['ONLINE', 'CARD_ENTRY'] } },
     orderBy: { createdAt: 'asc' },
     select: { id: true, cardBrand: true, cardLast4: true, cardholderName: true, billingCountry: true, billingEmail: true },
   });
@@ -475,11 +488,11 @@ export async function verifiedAuthorizationFor(booking: { id: string; groupCode:
   return { signerName: row.signerName ?? '', at: row.reviewedAt, by: names.get(row.reviewedById ?? '') ?? null };
 }
 
-/** Delete ID photos past the retention period (CARD_AUTH_ID_PHOTO_DAYS after check-out), keeping any whose booking has an open dispute. */
+/** Delete ID photos past the retention period (CARD_AUTH_ID_PHOTO_DAYS after check-out), keeping any whose reservation has an open dispute. */
 export async function purgeExpiredIdPhotos(now = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - idPhotoRetentionDays() * DAY);
   const due = await prisma.cardAuthorizationIdPhoto.findMany({
-    where: { authorization: { booking: { checkOut: { lt: cutoff }, disputes: { none: { closedAt: null } } } } },
+    where: { authorization: { booking: idRetentionOver(cutoff) } },
     select: { authorizationId: true },
     take: 500,
   });

@@ -31,7 +31,7 @@ export interface NightAuditPreview {
   noShows: BookingSummary[];
   /** Past their check-out, still checked in. */
   overdueDepartures: BookingSummary[];
-  /** In house with nothing paid yet. */
+  /** In house with something left to pay on their folio. */
   unpaidInHouse: BookingSummary[];
   rooms: { total: number; occupied: number; dirty: number; outOfOrder: number; ready: number };
   numbers: { roomsSold: number; totalRooms: number; occupancyPct: number; roomRevenue: number; adr: number; arrivals: number; departures: number };
@@ -93,11 +93,8 @@ export async function nightAuditPreview(actor: Actor, propertyId: string, reques
       orderBy: { checkIn: 'asc' },
     }),
     prisma.booking.findMany({ where: { propertyId, status: 'CHECKED_IN', checkOut: { lt: dayBounds(next).gte } }, include: bookingInclude, orderBy: { checkOut: 'asc' } }),
-    prisma.booking.findMany({
-      where: { propertyId, status: 'CHECKED_IN', OR: [{ paymentStatus: null }, { paymentStatus: { not: 'PAID' } }] },
-      include: bookingInclude,
-      orderBy: { checkOut: 'asc' },
-    }),
+    // Everyone in house; those with something left to pay are picked below from their folio balance.
+    prisma.booking.findMany({ where: { propertyId, status: 'CHECKED_IN' }, include: bookingInclude, orderBy: { checkOut: 'asc' } }),
     prisma.room.findMany({ where: { propertyId }, select: { id: true, status: true, isOutOfOrder: true } }),
     prisma.booking.findMany({
       where: { propertyId, status: 'CHECKED_IN', roomId: { not: null }, checkIn: { lte: atNoonUTC(businessDate) }, checkOut: { gt: atNoonUTC(businessDate) } },
@@ -120,7 +117,7 @@ export async function nightAuditPreview(actor: Actor, propertyId: string, reques
     closed,
     noShows: noShows.map(toBookingSummary),
     overdueDepartures: overdue.map(toBookingSummary),
-    unpaidInHouse: unpaid.map(toBookingSummary),
+    unpaidInHouse: unpaid.map(toBookingSummary).filter((b) => b.checkOutDue > 0.004),
     rooms: {
       total: rooms.length,
       occupied: occupied.size,

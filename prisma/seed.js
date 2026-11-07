@@ -269,7 +269,7 @@ async function main() {
     if (status === 'CANCELLED') history.push({ status: 'CANCELLED', notes: 'Cancelled by guest', createdAt: hoursAfter(bookedAt, 30) });
     if (status === 'NO_SHOW') history.push({ status: 'NO_SHOW', notes: 'Marked no-show by night audit', createdAt: hoursAfter(noon(checkIn), 14) });
     const roomNumber = room ?? (status === 'CHECKED_OUT' ? roomOfType(rt) : undefined);
-    return prisma.booking.create({
+    const booking = await prisma.booking.create({
       data: {
         createdAt: bookedAt,
         userId: (guest || nextGuest()).id,
@@ -288,6 +288,13 @@ async function main() {
         statusHistory: { create: history },
       },
     });
+    // The money behind "paid", so the balance is zero (check-out needs a zero balance).
+    if (booking.paymentStatus === 'PAID') {
+      await prisma.payment.create({
+        data: { bookingId: booking.id, propertyId: inn.id, kind: 'PAYMENT', method: 'OTHER', status: 'SUCCEEDED', amount: booking.totalPrice, currency: booking.currency.toLowerCase(), note: 'Paid when booked (demo data)', paidAt: bookedAt, createdAt: bookedAt },
+      });
+    }
+    return booking;
   };
 
   // In house, leaving today (departures).

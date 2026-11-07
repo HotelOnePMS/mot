@@ -10,6 +10,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getStripe, webhookSecrets } from '@/lib/stripe';
 import { syncAccountStatus } from './connect';
+import { applyDeskIntent, applyDeskSession } from './desk';
 import { recordDispute } from './disputes';
 import { expireUnpaidBooking } from './expiry';
 import { applyRefundState, recordPaymentFailed, recordPaymentSucceeded } from './record';
@@ -31,8 +32,30 @@ export function constructEvent(body: string, signature: string): Stripe.Event {
   throw last;
 }
 
+/** Payments taken at the front desk (card reader, typed-in or virtual card) carry the id of their Payment row. */
+async function handleDesk(event: Stripe.Event, account: string | null): Promise<boolean> {
+  if (event.type.startsWith('payment_intent.')) {
+    const intent = event.data.object as Stripe.PaymentIntent;
+    const id = intent.metadata?.deskPaymentId;
+    if (!id) return false;
+    // Re-read with the charge (card details, capture deadline, refunds); events can arrive out of order.
+    const fresh = await getStripe().paymentIntents.retrieve(intent.id, { expand: ['latest_charge'] }, account ? { stripeAccount: account } : undefined);
+    await applyDeskIntent(id, fresh, account);
+    return true;
+  }
+  if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.expired' || event.type === 'checkout.session.async_payment_succeeded') {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const id = session.metadata?.deskPaymentId;
+    if (!id) return false;
+    await applyDeskSession(id, session, account);
+    return true;
+  }
+  return false;
+}
+
 async function handle(event: Stripe.Event): Promise<void> {
   const account = event.account ?? null;
+  if (await handleDesk(event, account)) return;
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object as Stripe.Checkout.Session;

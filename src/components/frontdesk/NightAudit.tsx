@@ -259,7 +259,7 @@ export function NightAuditSheet({ open, onOpenChange }: { open: boolean; onOpenC
                         <span>
                           {b.guest.name} <span className="text-muted-foreground">· room {b.room?.number ?? '—'}</span>
                         </span>
-                        <span className="tabular">{money(b.totalPrice, { currency: b.currency })}</span>
+                        <span className="tabular">{money(b.checkOutDue, { currency: b.currency })}</span>
                       </li>
                     ))}
                   </ul>

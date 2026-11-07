@@ -23,6 +23,15 @@ Housekeepers may change a room's status only for rooms with an open cleaning tas
 
 `users.view` (emails and phone numbers, guests) is owner/manager/admin. Front desk and housekeepers use `/api/admin/team` for assignment pickers: names of the housekeeping team only, no emails.
 
+## Front desk money
+
+Front desk takes payments and deposits (`payments.collect`), sees the folio (`folio.view`) and runs the guided check-in, including the guest's ID photo (`guestId.view`, every view logged). Check-out needs the balance at zero. Two exceptions are **owner/manager/admin only**, each with a required reason and an audit entry:
+
+- `folio.adjust`: lower what a stay costs with an allowance (service recovery, unused nights, a rate correction), or remove one. A refund can add a matching allowance.
+- `booking.checkoutWithBalance`: check a guest out while money is still owed (billed to a company, paying later). What was owed and why is kept with the booking; the balance can still be collected afterwards.
+
+Refunding cards (`payments.refund`) and handing back cash paid toward the stay are owner/manager/admin too.
+
 ## Free-text PMS driving (`bridge.use`)
 
 `bridge.use` lets someone send free-text instructions to the hotel's own PMS through the connected browser/MCP session, which acts with the hotel's PMS login and bypasses HotelOne's per-action roles. It is **owner/manager/admin only** by default, and so is the *Your PMS* page (`/admin/connect`). The front-desk agent at PMS-bridge hotels will say it can't send work to the PMS. To give a specific front-desk role this access, add `'FRONT_DESK'` to `bridge.use` in `PERMISSIONS` and to `/admin/connect` in `CONSOLE_ACCESS` (owner-configurable roles arrive in the follow-up permissions PR).
