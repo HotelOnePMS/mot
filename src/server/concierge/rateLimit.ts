@@ -33,7 +33,7 @@ export interface RateLimitResult {
  * when that makes more than `max` hits within the last `windowMs` (capped at
  * 24 hours). The raw key is never stored, only its SHA-256.
  */
-export async function consumeRateLimit(key: string, max: number, windowMs: number, message = 'Too many requests — please slow down and try again shortly.'): Promise<RateLimitResult> {
+export async function consumeRateLimit(key: string, max: number, windowMs: number, message = 'Too many requests. Please slow down and try again shortly.'): Promise<RateLimitResult> {
   const window = Math.min(Math.max(windowMs, 1000), MAX_WINDOW_MS);
   const clientKey = `rl:${createHash('sha256').update(key).digest('hex')}`;
   const now = new Date();

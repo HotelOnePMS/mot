@@ -32,7 +32,7 @@ function validate(form: FormState): Errors {
   if (!form.lastName.trim()) e.lastName = 'Enter your last name.';
   if (!form.email.trim()) e.email = 'Enter your email address.';
   else if (!EMAIL_RE.test(form.email.trim())) e.email = 'Enter an email address like name@example.com.';
-  else if (isDemoEmail(form.email)) e.email = 'That address belongs to the public demo — use your own email.';
+  else if (isDemoEmail(form.email)) e.email = 'That address belongs to the public demo. Use your own email.';
   if (form.password.length < 10) e.password = 'Use at least 10 characters.';
   return e;
 }

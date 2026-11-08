@@ -141,7 +141,7 @@ export function CheckOutDialog({ booking: given, open, onOpenChange, today }: { 
         </DialogHeader>
         {(early || unpaid) && (
           <div className="space-y-2">
-            {early && <Callout tone="info">Early departure — the unused nights go back on sale.</Callout>}
+            {early && <Callout tone="info">Early departure: the unused nights go back on sale.</Callout>}
             {unpaid && (
               <Callout
                 tone="warning"
@@ -246,7 +246,7 @@ export function NoteDialog({ booking, open, onOpenChange }: { booking: BookingSu
           <DialogDescription>Visible to the whole team on this reservation, stamped with your name.</DialogDescription>
         </DialogHeader>
         <Field label="Note" htmlFor="booking-note" hint={`${note.length}/1000 characters`}>
-          <Textarea id="booking-note" autoFocus value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Celebrating an anniversary — leave a card in the room" maxLength={1000} />
+          <Textarea id="booking-note" autoFocus value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Celebrating an anniversary, leave a card in the room" maxLength={1000} />
         </Field>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>

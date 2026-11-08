@@ -8,7 +8,7 @@
 import { prisma } from '@/lib/prisma';
 import { scheduleInventorySync } from '@/server/channels/sync';
 
-const RELEASE_NOTE = 'Online payment not completed — rooms released';
+const RELEASE_NOTE = 'Online payment not completed, so the rooms were released';
 
 /**
  * Cancel a still-unpaid held booking. Several room types booked together are

@@ -99,7 +99,7 @@ export async function agentKeyFromRequest(request: Request): Promise<AgentKeyCon
   const match = /^Bearer\s+(\S+)\s*$/i.exec(header.trim());
   if (!match) throw invalidKey('Send the API key as "Authorization: Bearer ho_live_…".');
   const key = match[1];
-  if (!KEY_PATTERN.test(key)) throw invalidKey('That isn’t a HotelOne API key. Keys start with "ho_live_" — the hotel owner can create one in the HotelOne console under AI assistants.');
+  if (!KEY_PATTERN.test(key)) throw invalidKey('That isn’t a HotelOne API key. Keys start with "ho_live_". The hotel owner can create one in the HotelOne console under AI assistants.');
   const hash = hashAgentKey(key);
   const row = await prisma.agentApiKey.findUnique({ where: { keyHash: hash } });
   // The lookup is by hash; compare again in constant time so a match never depends on string comparison timing.
@@ -185,9 +185,9 @@ export async function createAgentKey(input: { propertyId: string | null; name: s
     prisma.agentApiKey.count({ where: { propertyId: input.propertyId, revokedAt: null } }),
     prisma.agentApiKey.count({ where: { propertyId: input.propertyId, createdAt: { gte: new Date(Date.now() - DAY_MS) } } }),
   ]);
-  if (active >= MAX_ACTIVE_KEYS) throw conflict(`There are already ${MAX_ACTIVE_KEYS} active keys — revoke one you no longer use first.`);
+  if (active >= MAX_ACTIVE_KEYS) throw conflict(`There are already ${MAX_ACTIVE_KEYS} active keys. Revoke one you no longer use first.`);
   const perDay = maxKeysPerDay();
-  if (createdToday >= perDay) throw new DomainError(429, 'RATE_LIMITED', `${perDay} API keys have been created here in the last 24 hours, which is the most allowed — try again tomorrow, or keep using a key you already have.`);
+  if (createdToday >= perDay) throw new DomainError(429, 'RATE_LIMITED', `${perDay} API keys have been created here in the last 24 hours, which is the most allowed. Try again tomorrow, or keep using a key you already have.`);
   const key = generateAgentKey();
   const row = await prisma.agentApiKey.create({
     data: {

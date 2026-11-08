@@ -60,8 +60,8 @@ export default function ContactPage() {
       refs.current[first]?.focus();
       return;
     }
-    const subject = `${PRODUCT_NAME} — ${form.hotel.trim() || form.name.trim()}`;
-    const body = `${form.message.trim()}\n\n— ${form.name.trim()}${form.hotel.trim() ? `, ${form.hotel.trim()}` : ''}\n${form.email.trim()}`;
+    const subject = `${PRODUCT_NAME}: ${form.hotel.trim() || form.name.trim()}`;
+    const body = `${form.message.trim()}\n\n${form.name.trim()}${form.hotel.trim() ? `, ${form.hotel.trim()}` : ''}\n${form.email.trim()}`;
     window.location.href = `mailto:${PRODUCT_SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     setOpened(true);
   }
@@ -108,7 +108,7 @@ export default function ContactPage() {
               >
                 {LABELS.myTrips}
               </Link>
-              . For questions about your stay, contact the hotel — its details are on your confirmation.
+              . For questions about your stay, contact the hotel. Its details are on your confirmation.
             </span>
           </p>
         </div>

@@ -119,7 +119,7 @@ export async function skillCatalogText(propertyId: string | null, audience: Agen
   for (const [i, s] of entries.entries()) {
     const required = new Set(s.parameters?.required ?? []);
     const inputs = Object.keys(s.parameters?.properties ?? {}).map((p) => (required.has(p) ? `${p} (required)` : p));
-    let line = `- ${s.key}: ${promptSafe(s.title, 120)}${s.kind === 'ANSWER' ? '' : ` [${s.kind.toLowerCase()}]`} — ${promptSafe(s.description, 220)}${inputs.length ? ` Inputs: ${inputs.join(', ')}.` : ''}`;
+    let line = `- ${s.key}: ${promptSafe(s.title, 120)}${s.kind === 'ANSWER' ? '' : ` [${s.kind.toLowerCase()}]`}: ${promptSafe(s.description, 220)}${inputs.length ? ` Inputs: ${inputs.join(', ')}.` : ''}`;
     if (line.length > 300) line = `${line.slice(0, 299)}…`;
     // Keep room for the "…and N more" line unless this is the last skill.
     const more = entries.length - i - 1;
@@ -162,7 +162,7 @@ export type UseSkillResult =
 export async function useSkill(propertyId: string | null, key: string, args: unknown, ctx: { audience: AgentAudience }): Promise<UseSkillResult> {
   const skill = await getSkill(propertyId, key);
   if (!skill) throw notFound(`Skill "${key}"`);
-  if (skill.status !== 'ACTIVE') throw new DomainError(409, 'SKILL_INACTIVE', `The skill "${key}" isn’t active${skill.status === 'SUGGESTED' ? ' yet — a manager needs to approve it' : ''}.`);
+  if (skill.status !== 'ACTIVE') throw new DomainError(409, 'SKILL_INACTIVE', `The skill "${key}" isn’t active${skill.status === 'SUGGESTED' ? ' yet (a manager needs to approve it)' : ''}.`);
   if (skill.audience !== 'ALL' && skill.audience !== ctx.audience) throw forbidden(`The skill "${key}" is for ${skill.audience.toLowerCase()} agents.`);
   // Tools discovered on the hotel's PMS (src/server/pms) run as PMS tasks, with their own safety rules — not here.
   if ((skill.kind as string) === 'PMS_TOOL') throw new DomainError(409, 'PMS_TOOL', `"${key}" is a tool of the hotel’s PMS. Ask the staff agent and it runs it through the PMS connection.`);
@@ -272,7 +272,7 @@ export async function upsertSkill(input: UpsertSkillInput): Promise<Skill> {
     });
     return toSkill(row);
   } catch (e) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new DomainError(409, 'CONFLICT', `A skill with the key "${v.key}" was just created — try again.`);
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new DomainError(409, 'CONFLICT', `A skill with the key "${v.key}" was just created. Try again.`);
     throw e;
   }
 }
@@ -419,7 +419,7 @@ export async function updateSkill(id: string, patch: SkillPatch): Promise<Skill>
     if (current.key.startsWith('answer-') && key !== current.key) {
       validated(input); // nothing moves unless the whole edit is valid
       const taken = await prisma.agentSkill.findFirst({ where: { propertyId: current.propertyId, key }, select: { id: true } });
-      const inUse = () => new DomainError(409, 'CONFLICT', 'There’s already an answer to that question — edit it instead.');
+      const inUse = () => new DomainError(409, 'CONFLICT', 'There’s already an answer to that question. Edit it instead.');
       if (taken) throw inUse();
       await prisma.agentSkill.update({ where: { id }, data: { key } }).catch((e) => {
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw inUse();

@@ -495,14 +495,14 @@ export async function shortcutListBlocks(actor: Actor, propertyId: string, opts:
     if (opts.forHelp) {
       blocks.push({ type: 'text', text: '**Shortcuts:** do something once, then say “save that as a shortcut called late checkout”. Next time just say “late checkout for Smith”.' });
     } else {
-      blocks.push({ type: 'text', text: 'There are no shortcuts here yet. Do something once — like “check out room 201” — then say “save that as a shortcut called quick checkout”. Next time just say “quick checkout for room 305”.' });
+      blocks.push({ type: 'text', text: 'There are no shortcuts here yet. Do something once, like “check out room 201”, then say “save that as a shortcut called quick checkout”. Next time just say “quick checkout for room 305”.' });
     }
   } else {
     blocks.push({
       type: 'text',
       text: [
-        opts.forHelp ? '**Your shortcuts** — say the name, or tap one:' : `**${all.length} shortcut${all.length === 1 ? '' : 's'}** — say the name, or tap one:`,
-        ...hints.map((h) => `• **${h.title}** — “${h.example}”${h.steps > 1 ? ` · ${h.steps} steps` : ''}`),
+        opts.forHelp ? '**Your shortcuts**: say the name, or tap one:' : `**${all.length} shortcut${all.length === 1 ? '' : 's'}**: say the name, or tap one:`,
+        ...hints.map((h) => `• **${h.title}**: “${h.example}”${h.steps > 1 ? ` · ${h.steps} steps` : ''}`),
         ...(all.length > hints.length ? [`…and ${all.length - hints.length} more on the Skills page.`] : []),
         opts.forHelp ? 'Save a new one: do something, then say “save that as a shortcut called …”.' : 'Changes from a shortcut still wait for your OK.',
       ].join('\n'),
@@ -584,14 +584,14 @@ export async function saveShortcut(input: { actor: Actor; propertyId: string; na
   const { actor, propertyId, today } = input;
   const commands = pickCommands(input.recent, input.count, today);
   if (!commands.length) {
-    return [{ type: 'error', text: 'There’s nothing to save yet. Run a command first — like “check out room 201” — then say “save that as a shortcut called quick checkout”.' }];
+    return [{ type: 'error', text: 'There’s nothing to save yet. Run a command first, like “check out room 201”, then say “save that as a shortcut called quick checkout”.' }];
   }
   if (!input.name) {
-    return [{ type: 'error', text: `What should I call it? Say “save that as a shortcut called …” — for example “save that as a shortcut called ${commands.length > 1 ? 'morning routine' : 'late checkout'}”.` }];
+    return [{ type: 'error', text: `What should I call it? Say “save that as a shortcut called …”. For example: “save that as a shortcut called ${commands.length > 1 ? 'morning routine' : 'late checkout'}”.` }];
   }
   const title = capitalize(input.name);
   if (reservedShortcutName(input.name)) {
-    return [{ type: 'error', text: `“${title}” is already something I understand, so it can’t be a shortcut name — the shortcut would take it over. Pick a name that doesn’t start like a command, such as “morning routine” or “VIP checkout”.` }];
+    return [{ type: 'error', text: `“${title}” is already something I understand, so it can’t be a shortcut name (the shortcut would take it over). Pick a name that doesn’t start like a command, such as “morning routine” or “VIP checkout”.` }];
   }
   const manage = can(actor, 'skills.manage');
   const skillsLink: AgentBlock[] = can(actor, 'skills.view') ? [{ type: 'navigate', label: 'Open the Skills page', href: '/admin/skills' }] : [];
@@ -660,7 +660,7 @@ export async function saveShortcut(input: { actor: Actor; propertyId: string; na
       : `Saved **${skill.title}** as a shortcut. It runs:`,
     ...skill.body.steps.map((s, i) => `• ${n > 1 ? `${i + 1}. ` : ''}${s.command}`),
     inputs.length
-      ? `${pending ? 'Once it’s approved, say' : 'Next time say'} “${hint.example}” — I’ll fill in ${inputs.map((p) => `{${p}}`).join(', ')}${Object.keys(g.examples).length ? ` (this time: ${Object.entries(g.examples).map(([k, v]) => `${k} = ${v}`).join(', ')})` : ''}.`
+      ? `${pending ? 'Once it’s approved, say' : 'Next time say'} “${hint.example}”. I’ll fill in ${inputs.map((p) => `{${p}}`).join(', ')}${Object.keys(g.examples).length ? ` (this time: ${Object.entries(g.examples).map(([k, v]) => `${k} = ${v}`).join(', ')})` : ''}.`
       : `${pending ? 'Once it’s approved, just say' : 'Next time just say'} “${hint.example}”.`,
     ...(g.usesPronoun ? ['It says “them” or “that”, so it acts on whoever we were just talking about.'] : []),
     'Changes it makes still wait for your OK.',
@@ -768,7 +768,7 @@ export function suggestionBlocks(actor: Actor, skill: Skill): AgentBlock[] {
   const blocks: AgentBlock[] = [
     {
       type: 'text',
-      text: `You often run “${steps[0] ?? skill.title}”. I’ve suggested it as a shortcut${can(actor, 'skills.manage') ? ' — approve it on the Skills page, or save it now with a name you like' : ' for a manager to approve'}.`,
+      text: `You often run “${steps[0] ?? skill.title}”. I’ve suggested it as a shortcut${can(actor, 'skills.manage') ? '. Approve it on the Skills page, or save it now with a name you like' : ' for a manager to approve'}.`,
     },
   ];
   if (can(actor, 'skills.view')) blocks.push({ type: 'navigate', label: 'Review suggested shortcuts', href: '/admin/skills#suggested' });

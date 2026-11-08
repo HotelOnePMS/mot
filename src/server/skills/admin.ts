@@ -14,7 +14,7 @@ import { inputNames } from './params';
 import { SKILL_KINDS, isSkillKind, type Skill } from './types';
 
 /** Why guest-facing answers stay as seeded in the public demo. */
-export const SKILLS_DEMO_LOCKED = 'Demo hotels keep what guests hear the same for every visitor. Shortcuts and staff-only answers are yours to try — set up your own hotel to change guest answers.';
+export const SKILLS_DEMO_LOCKED = 'Demo hotels keep what guests hear the same for every visitor. Shortcuts and staff-only answers are yours to try. Set up your own hotel to change guest answers.';
 
 /** Why a shortcut can't be named like one of the agent's own commands (src/server/agent/skills.ts `reservedShortcutName`). */
 export const SHORTCUT_NAME_RESERVED =

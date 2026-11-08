@@ -168,9 +168,9 @@ export function RoomSheet({ room, onOpenChange }: { room: RoomSummary | null; on
                         label="Reason"
                         optional
                         className="mt-3"
-                        hint={room.occupancy === 'OCCUPIED' || room.occupancy === 'DEPARTING' ? 'Someone is staying here — move them to another room first.' : undefined}
+                        hint={room.occupancy === 'OCCUPIED' || room.occupancy === 'DEPARTING' ? 'Someone is staying here. Move them to another room first.' : undefined}
                       >
-                        <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. AC not cooling — vendor booked" />
+                        <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. AC not cooling, vendor booked" />
                       </Field>
                       <Button
                         className="mt-3"

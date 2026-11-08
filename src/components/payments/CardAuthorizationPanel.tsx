@@ -556,7 +556,7 @@ function AuthorizationItem({
       {a.review && (
         <p className={cn('mt-3 text-xs', a.review.decision === 'VERIFIED' ? 'text-success-soft-foreground' : 'text-destructive')}>
           {a.review.decision === 'VERIFIED' ? 'Verified' : 'Rejected'} by {a.review.by ?? 'staff'} · {formatDateTime(a.review.at)}
-          {a.review.note ? ` — ${a.review.note}` : ''}
+          {a.review.note ? `: ${a.review.note}` : ''}
         </p>
       )}
     </div>

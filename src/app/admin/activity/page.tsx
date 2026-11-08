@@ -141,13 +141,13 @@ export default function ActivityPage() {
   return (
     <div className={FRAME}>
       <div className="max-w-4xl space-y-6">
-        <PageHeader title="Activity" description="Every change, by every person — and every action the agent took on someone’s behalf." />
+        <PageHeader title="Activity" description="Every change, by every person, and every action the agent took on someone’s behalf." />
 
         <section aria-label="Summary" className="space-y-3">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
-            <StatTile label="Today" value={data ? formatNumber(todayCount) : '—'} hint={data ? `${formatNumber(data.length)} recent in all` : ''} icon={History} />
-            <StatTile label="Done through the agent" value={data ? formatNumber(agentActions) : '—'} hint="Each one confirmed" icon={Sparkles} tone="agent" />
-            <StatTile label="People" value={data ? formatNumber(people) : '—'} hint="Made changes recently" icon={UserCog} className="col-span-2 sm:col-span-1" />
+            <StatTile label="Today" value={data ? formatNumber(todayCount) : '…'} hint={data ? `${formatNumber(data.length)} recent in all` : ''} icon={History} />
+            <StatTile label="Done through the agent" value={data ? formatNumber(agentActions) : '…'} hint="Each one confirmed" icon={Sparkles} tone="agent" />
+            <StatTile label="People" value={data ? formatNumber(people) : '…'} hint="Made changes recently" icon={UserCog} className="col-span-2 sm:col-span-1" />
           </div>
           <p className="flex items-start gap-2 text-sm text-muted-foreground">
             <ShieldCheck className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
@@ -180,7 +180,7 @@ export default function ActivityPage() {
         {/* overflow-clip (not hidden) keeps the sticky day headings pinned to the window. */}
         <Card className="overflow-clip p-0 shadow-xs">
           {error && !data ? (
-            <EmptyState icon={History} title="Couldn’t load activity" description="Check your connection — the list refreshes on its own every 30 seconds." />
+            <EmptyState icon={History} title="Couldn’t load activity" description="Check your connection. The list refreshes on its own every 30 seconds." />
           ) : isLoading ? (
             <div aria-busy>
               <div className="h-8 border-b bg-surface-sunken/60" />

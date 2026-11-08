@@ -151,7 +151,7 @@ export function RoomGrid({
 }) {
   const floors = React.useMemo(() => {
     const map = new Map<string, RoomSummary[]>();
-    for (const r of rooms) map.set(r.floor ?? '—', [...(map.get(r.floor ?? '—') ?? []), r]);
+    for (const r of rooms) map.set(r.floor ?? '', [...(map.get(r.floor ?? '') ?? []), r]);
     return [...map.entries()].sort((a, b) => (parseInt(b[0]) || 0) - (parseInt(a[0]) || 0));
   }, [rooms]);
   if (!rooms.length) {
@@ -164,9 +164,9 @@ export function RoomGrid({
   return (
     <div className="space-y-4">
       {floors.map(([floor, list]) => (
-        <section key={floor} aria-label={floor === '—' ? 'Rooms without a floor' : `Floor ${floor}`} className="flex flex-col gap-1.5 sm:flex-row sm:gap-3">
+        <section key={floor} aria-label={floor === '' ? 'Rooms without a floor' : `Floor ${floor}`} className="flex flex-col gap-1.5 sm:flex-row sm:gap-3">
           <div className="shrink-0 text-2xs font-semibold uppercase tracking-wider whitespace-nowrap text-muted-foreground sm:w-14 sm:pt-2.5 sm:text-right" aria-hidden>
-            {floor === '—' ? '' : `Floor ${floor}`}
+            {floor === '' ? '' : `Floor ${floor}`}
           </div>
           <div className={cn('grid flex-1 gap-2', dense ? 'grid-cols-[repeat(auto-fill,minmax(96px,1fr))]' : 'grid-cols-[repeat(auto-fill,minmax(108px,1fr))]')}>
             {list.map((r) => (

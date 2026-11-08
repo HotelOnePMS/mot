@@ -56,7 +56,7 @@ export function verifyEventSignature(input: { connectionId: string; rawBody: Buf
   const ts = input.timestamp?.trim() ?? '';
   if (!/^\d{9,11}$/.test(ts)) return { ok: false, status: 401, code: 'BAD_TIMESTAMP', message: `Missing or malformed ${EVENT_TIMESTAMP_HEADER} (Unix seconds).` };
   const age = Math.abs((input.now ?? Date.now()) / 1000 - Number(ts));
-  if (age > EVENT_TOLERANCE_SECONDS) return { ok: false, status: 401, code: 'STALE', message: `Timestamp is more than ${EVENT_TOLERANCE_SECONDS / 60} minutes from our clock — check the sender’s clock and sign each delivery fresh.` };
+  if (age > EVENT_TOLERANCE_SECONDS) return { ok: false, status: 401, code: 'STALE', message: `Timestamp is more than ${EVENT_TOLERANCE_SECONDS / 60} minutes from our clock. Check the sender’s clock and sign each delivery fresh.` };
   const expected = Buffer.from(signEvent(eventsSecret(input.connectionId), ts, input.rawBody));
   // Allow several signatures ("sha256=a, sha256=b") for secret rotation on the sender's side.
   const given = (input.signature ?? '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -150,13 +150,13 @@ export function summariseEvent(type: string, data: Rec = {}): string {
   let s: string;
   switch (type) {
     case 'reservation.created':
-      s = `PMS: reservation created — ${[who, range, f.roomType].filter(Boolean).join(', ')}${ref}`;
+      s = `PMS: reservation created, ${[who, range, f.roomType].filter(Boolean).join(', ')}${ref}`;
       break;
     case 'reservation.updated':
-      s = `PMS: reservation updated — ${who}${ref}${f.changes.length ? `: ${f.changes.join(', ')} changed` : range ? `, now ${range}` : ''}`;
+      s = `PMS: reservation updated, ${who}${ref}${f.changes.length ? `: ${f.changes.join(', ')} changed` : range ? `, now ${range}` : ''}`;
       break;
     case 'reservation.cancelled':
-      s = `PMS: reservation cancelled — ${who}${ref}${range ? `, ${range}` : ''}`;
+      s = `PMS: reservation cancelled, ${who}${ref}${range ? `, ${range}` : ''}`;
       break;
     case 'reservation.checked_in':
       s = `PMS: ${who}${ref} checked in${f.room ? ` to room ${f.room}` : ''}`;
@@ -168,13 +168,13 @@ export function summariseEvent(type: string, data: Rec = {}): string {
       s = `PMS: room ${f.room ?? '?'} is now ${f.status ? humanStatus(f.status) : 'updated'}${f.previousStatus ? ` (was ${humanStatus(f.previousStatus)})` : ''}`;
       break;
     case 'rates.updated':
-      s = `PMS: rates updated${[f.roomType, range, f.amount].filter(Boolean).length ? ` — ${[f.roomType, range, f.amount].filter(Boolean).join(', ')}` : ''}`;
+      s = `PMS: rates updated${[f.roomType, range, f.amount].filter(Boolean).length ? `, ${[f.roomType, range, f.amount].filter(Boolean).join(', ')}` : ''}`;
       break;
     case 'availability.changed':
-      s = `PMS: availability changed${[f.roomType, range].filter(Boolean).length ? ` — ${[f.roomType, range].filter(Boolean).join(', ')}` : ''}`;
+      s = `PMS: availability changed${[f.roomType, range].filter(Boolean).length ? `, ${[f.roomType, range].filter(Boolean).join(', ')}` : ''}`;
       break;
     default:
-      s = `PMS: ${humanStatus(type.replace(/\./g, ' '))}${f.guest || f.code ? ` — ${who}${ref}` : f.room ? ` — room ${f.room}` : ''}`;
+      s = `PMS: ${humanStatus(type.replace(/\./g, ' '))}${f.guest || f.code ? `, ${who}${ref}` : f.room ? `, room ${f.room}` : ''}`;
   }
   return s.slice(0, 300);
 }

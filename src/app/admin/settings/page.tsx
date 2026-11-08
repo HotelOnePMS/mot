@@ -218,7 +218,7 @@ export default function SettingsPage() {
                     <p className="font-medium">{ctx?.agent.llmEnabled ? 'Language model connected' : 'Built-in command understanding'}</p>
                     <p className="mt-0.5 text-muted-foreground">
                       {ctx?.agent.llmEnabled
-                        ? 'Free-form requests the built-in parser can’t handle are interpreted by the connected model — it never touches data directly.'
+                        ? 'Free-form requests the built-in parser can’t handle are interpreted by the connected model. It never touches data directly.'
                         : 'Runs entirely on your server: fast, private and deterministic. Every answer comes from live reservations, rooms and rates.'}
                     </p>
                   </div>

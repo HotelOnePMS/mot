@@ -20,7 +20,7 @@ export const metadata: Metadata = {
   alternates: { canonical: '/demo' },
 };
 
-const GUEST_POINTS = ['Your name and colours — guests never see ours.', 'Live availability and exact prices.', 'Dates, room, details, booked: under two minutes on a phone.'];
+const GUEST_POINTS = ['Your name and colours. Guests never see ours.', 'Live availability and exact prices.', 'Dates, room, details, booked: under two minutes on a phone.'];
 
 const CONSOLE_POINTS = [`Ask the ${TERMS.agent} in plain words; it shows the right screen.`, 'Arrivals, check-in, housekeeping and rates.', 'Each role sees only what it needs.'];
 
@@ -91,7 +91,7 @@ export default async function DemoPage() {
             <h2 id="demo-console-title" className="mt-5 font-display text-2xl font-medium tracking-tight">
               Your hotel console
             </h2>
-            <p className="mt-2 text-pretty leading-relaxed text-muted-foreground">Where your team works, from the owner to housekeeping — every change confirmed by a person and logged.</p>
+            <p className="mt-2 text-pretty leading-relaxed text-muted-foreground">Where your team works, from the owner to housekeeping. Every change is confirmed by a person and logged.</p>
             {DEMO_ENABLED ? (
               <DemoLogins className="mt-6" />
             ) : (

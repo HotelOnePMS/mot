@@ -51,7 +51,7 @@ interface RoomDraft {
 type Errors = Record<string, string>;
 
 const PATHS: { id: Path; icon: LucideIcon; title: string; text: string; badge: string }[] = [
-  { id: 'FULL', icon: Hotel, title: SETUP_PATH_COPY.FULL.title, text: 'Booking site, front desk, housekeeping, rates, the agent and voice — all in one place.', badge: SETUP_PATH_COPY.FULL.badge },
+  { id: 'FULL', icon: Hotel, title: SETUP_PATH_COPY.FULL.title, text: 'Booking site, front desk, housekeeping, rates, the agent and voice, all in one place.', badge: SETUP_PATH_COPY.FULL.badge },
   { id: 'BRIDGE', icon: ServerCog, title: SETUP_PATH_COPY.BRIDGE.title, text: 'The agent and voice work your current reservation system for you. Move over any time.', badge: SETUP_PATH_COPY.BRIDGE.badge },
   { id: 'VOICE', icon: AudioLines, title: SETUP_PATH_COPY.VOICE.title, text: 'A voice front desk that answers calls with your real rooms and prices.', badge: SETUP_PATH_COPY.VOICE.badge },
 ];
@@ -145,7 +145,7 @@ function serverProblem(e: ApiError, path: Path, sentRooms: number[], hasLoginUrl
   return { step: found.step, key: found.key, message: SERVER_MESSAGES[found.kind] ?? 'Check this entry and try again.' };
 }
 
-const formatPrice = (v: string) => (v !== '' && Number.isFinite(Number(v)) ? usd.format(Number(v)) : '—');
+const formatPrice = (v: string) => (v !== '' && Number.isFinite(Number(v)) ? usd.format(Number(v)) : 'No price yet');
 const focusRing = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 /** A selectable card wrapping a visually hidden native radio. */
 const choiceCard = (selected: boolean) =>
@@ -231,7 +231,7 @@ function Preview({ path, name, tagline, color, rooms, greeting, system, mode }: 
           <AudioLines className="relative h-10 w-10 text-agent-gradient-foreground" />
         </span>
         <p className="mt-8 text-sm text-inverse-foreground/70">Callers hear</p>
-        <p className="mt-2 max-w-sm text-balance font-display text-2xl leading-snug">“{greeting || `Thanks for calling ${hotel} — how can I help?`}”</p>
+        <p className="mt-2 max-w-sm text-balance font-display text-2xl leading-snug">“{greeting || `Thanks for calling ${hotel}, how can I help?`}”</p>
         <p className="mt-6 max-w-xs text-sm leading-relaxed text-inverse-foreground/75">Then it quotes your prices, takes booking requests and messages, and emails each one to you to confirm.</p>
         <p className="mt-6 inline-flex items-center gap-1.5 rounded-full border border-inverse-foreground/15 bg-inverse-foreground/10 px-3 py-1 text-xs font-medium">
           <Sparkles className="h-3.5 w-3.5" /> Answers 24/7 · says it’s a virtual assistant
@@ -296,7 +296,7 @@ function Preview({ path, name, tagline, color, rooms, greeting, system, mode }: 
           </div>
         </div>
       </div>
-      <p className="mt-4 text-center text-sm text-inverse-foreground/70">A preview of your booking site — your name, never ours.</p>
+      <p className="mt-4 text-center text-sm text-inverse-foreground/70">A preview of your booking site. Your name, never ours.</p>
     </div>
   );
 }
@@ -450,12 +450,12 @@ function Onboarding() {
       if (!account.firstName.trim()) e.firstName = 'Enter your first name.';
       if (!account.lastName.trim()) e.lastName = 'Enter your last name.';
       if (!/^\S+@\S+\.\S+$/.test(account.email.trim())) e.email = 'Enter an email address, like name@yourhotel.com.';
-      else if (isDemoEmail(account.email)) e.email = 'That address belongs to the public demo — use your own email.';
+      else if (isDemoEmail(account.email)) e.email = 'That address belongs to the public demo. Use your own email.';
       if (account.password.length < 10) e.password = 'Use at least 10 characters.';
     }
     if (s === 2) {
       if (prop.name.trim().length < 2) e.name = 'Add your property’s name.';
-      if (prop.address.trim().length < 3) e.address = 'Add the street address — guests use it to find you.';
+      if (prop.address.trim().length < 3) e.address = 'Add the street address. Guests use it to find you.';
       if (!prop.city.trim()) e.city = 'Add the city.';
       if (!prop.state.trim()) e.state = 'Add the state or region.';
       if (prop.zipCode.trim().length < 2) e.zipCode = 'Add the postal code.';
@@ -470,10 +470,10 @@ function Onboarding() {
     }
     if (s === 3 && path === 'VOICE') {
       // The voice quotes these prices, so it needs at least one.
-      if (!rooms.some((r) => r.name.trim())) e['room-0-name'] = 'Add at least one room type with its price — the voice quotes it to callers.';
+      if (!rooms.some((r) => r.name.trim())) e['room-0-name'] = 'Add at least one room type with its price. The voice quotes it to callers.';
       const transfer = voice.transferNumber.trim();
       if (transfer && !toE164(transfer)) e.transferNumber = 'Use the international format with the country code, like +1 831 555 0100.';
-      else if (transfer && toE164(transfer) === toE164(prop.phone)) e.transferNumber = 'Use a different number from your front desk line — forwarded calls would loop back to the assistant.';
+      else if (transfer && toE164(transfer) === toE164(prop.phone)) e.transferNumber = 'Use a different number from your front desk line, forwarded calls would loop back to the assistant.';
     }
     // The PMS path has no room rows (the hotel's system already has its rooms), so rows typed on another path don't count.
     if (s === 3 && path !== 'BRIDGE') {
@@ -602,7 +602,7 @@ function Onboarding() {
     path === 'FULL'
       ? 'Next: your dashboard, with a short checklist to go live.'
       : path === 'BRIDGE'
-        ? `Next: connect ${systemName || 'your system'} — it takes about two minutes.`
+        ? `Next: connect ${systemName || 'your system'}. It takes about two minutes.`
         : 'Next: hear it with a test call, then connect your phone number.';
 
   return (
@@ -752,7 +752,7 @@ function Onboarding() {
                 {step === 3 && path === 'BRIDGE' && (
                   <>
                     <StepIntro headingRef={headingRef} title="Which system do you use today?">
-                      You’ll finish connecting it right after this — it takes about two minutes.
+                      You’ll finish connecting it right after this. It takes about two minutes.
                     </StepIntro>
                     <fieldset className="mt-6" aria-labelledby="onb-title" aria-describedby={errors.system ? 'o-sys-error' : undefined}>
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -887,14 +887,14 @@ function Onboarding() {
                         />
                       </Field>
                       <Field label="Greeting" optional htmlFor="o-greet" error={errors.greeting} hint="The first thing callers hear. Leave it blank to use the example.">
-                        <Input id="o-greet" maxLength={300} value={voice.greeting} onChange={(e) => setV({ greeting: e.target.value }, 'greeting')} placeholder={`Thanks for calling ${prop.name || 'us'} — how can I help?`} />
+                        <Input id="o-greet" maxLength={300} value={voice.greeting} onChange={(e) => setV({ greeting: e.target.value }, 'greeting')} placeholder={`Thanks for calling ${prop.name || 'us'}, how can I help?`} />
                       </Field>
                       <Field
                         label="Put callers through to"
                         optional
                         htmlFor="o-transfer"
                         error={errors.transferNumber}
-                        hint="A mobile or direct line for when a caller asks for a person — not a number that forwards to the assistant. Leave it blank to take messages instead."
+                        hint="A mobile or direct line for when a caller asks for a person, not a number that forwards to the assistant. Leave it blank to take messages instead."
                       >
                         <div className="relative">
                           <Phone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
@@ -918,7 +918,7 @@ function Onboarding() {
                 {step === 3 && path === 'FULL' && (
                   <>
                     <StepIntro headingRef={headingRef} title="Your rooms and brand">
-                      Add your room types now or later — you can set different prices for each night afterwards.
+                      Add your room types now or later. You can set different prices for each night afterwards.
                     </StepIntro>
                     <div className="mt-6">
                       <RoomRows rooms={rooms} errors={errors} setRoom={setRoom} removeRoom={removeRoom} addRoom={addRoom} />

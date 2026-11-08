@@ -76,12 +76,12 @@ function Hero({ send }: { send: (cmd: string) => void }) {
         <p className="mt-2 max-w-xl text-pretty text-base leading-relaxed text-muted-foreground">
           {bridged ? (
             <>
-              I’m the {TERMS.agent} for <span className="font-medium text-foreground">{property?.name}</span>. I work in your own PMS for you — look-ups go
+              I’m the {TERMS.agent} for <span className="font-medium text-foreground">{property?.name}</span>. I work in your own PMS for you: look-ups go
               straight through, and I <span className="font-medium text-foreground">ask before changing anything</span>.
             </>
           ) : (
             <>
-              I’m the {TERMS.agent} for <span className="font-medium text-foreground">{property?.name}</span>. Ask in plain words — I answer from live data, show
+              I’m the {TERMS.agent} for <span className="font-medium text-foreground">{property?.name}</span>. Ask in plain words. I answer from live data, show
               you the right screen for it, and <span className="font-medium text-foreground">ask before changing anything</span>.
             </>
           )}

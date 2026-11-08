@@ -160,7 +160,7 @@ export function PlanCard({ block }: { block: Extract<AgentBlock, { type: 'plan' 
         {decided ? (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
             {state === 'dismissed' ? <Ban className="size-3.5" aria-hidden /> : <ShieldCheck className="size-3.5 text-success" aria-hidden />}
-            {state === 'dismissed' ? 'Cancelled — nothing was changed.' : state === 'failed' ? 'Some steps didn’t go through — see below. Logged to the activity trail.' : 'Done and logged to the activity trail.'}
+            {state === 'dismissed' ? 'Cancelled. Nothing was changed.' : state === 'failed' ? 'Some steps didn’t go through (see below). Logged to the activity trail.' : 'Done and logged to the activity trail.'}
           </p>
         ) : expired ? (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">

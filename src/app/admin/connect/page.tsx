@@ -169,7 +169,7 @@ function Setup({ data, initial, onDone }: { data: BridgeData; initial?: Connecti
     try {
       await api('/api/admin/bridge', { method: 'PUT', json: { propertyId, system: chosen, mode, loginUrl: loginUrl.trim() || null } });
       await mutate('/api/admin/context');
-      toast.success(`${chosen} added — finish connecting below`);
+      toast.success(`${chosen} added. Finish connecting below`);
       onDone();
     } catch (e) {
       toast.error((e as Error).message);
@@ -196,7 +196,7 @@ function Setup({ data, initial, onDone }: { data: BridgeData; initial?: Connecti
       const r = await api<McpStatus>('/api/admin/pms/connect', { method: 'POST', json: { propertyId, system: chosen, url: mcpForm.url.trim(), auth: authPayload(mcpForm) } });
       await mutate('/api/admin/context');
       if (statusUrl) await mutate(statusUrl, r, { revalidate: false });
-      toast.success(`Connected to ${chosen} — ${r.mcp?.toolCount ?? 0} tools found`);
+      toast.success(`Connected to ${chosen}, ${r.mcp?.toolCount ?? 0} tools found`);
       onDone();
     } catch (e) {
       setTest({ result: null, error: (e as Error).message });
@@ -240,7 +240,7 @@ function Setup({ data, initial, onDone }: { data: BridgeData; initial?: Connecti
             </Field>
           )}
           {mode !== 'MCP' && (
-            <Field label="Sign-in address" optional hint="Where you log in to it, like https://hotels.cloudbeds.com — the operator starts there." className={system === 'Other' ? '' : 'sm:col-span-2 sm:max-w-xl'}>
+            <Field label="Sign-in address" optional hint="Where you log in to it, like https://hotels.cloudbeds.com. The operator starts there." className={system === 'Other' ? '' : 'sm:col-span-2 sm:max-w-xl'}>
               <Input type="url" inputMode="url" value={loginUrl} onChange={(e) => setLoginUrl(e.target.value)} placeholder="https://" />
             </Field>
           )}
@@ -262,7 +262,7 @@ function Setup({ data, initial, onDone }: { data: BridgeData; initial?: Connecti
                   m: 'DESKTOP',
                   icon: Laptop,
                   title: 'From a front-desk computer',
-                  text: `Run the small ${PRODUCT_NAME} Connector on a computer at the hotel. It uses a browser that’s already signed in — your logins never leave the building.`,
+                  text: `Run the small ${PRODUCT_NAME} Connector on a computer at the hotel. It uses a browser that’s already signed in. Your logins never leave the building.`,
                   tag: 'Most private',
                 },
                 {
@@ -276,7 +276,7 @@ function Setup({ data, initial, onDone }: { data: BridgeData; initial?: Connecti
                   m: 'MCP',
                   icon: Plug,
                   title: 'Through your PMS’s MCP server',
-                  text: `If ${chosen || 'your PMS'} offers an MCP server, paste its address and token. ${PRODUCT_NAME} works with your PMS directly — no browser, answers in seconds.`,
+                  text: `If ${chosen || 'your PMS'} offers an MCP server, paste its address and token. ${PRODUCT_NAME} works with your PMS directly: no browser, answers in seconds.`,
                   tag: 'Fastest',
                 },
               ] as const
@@ -383,14 +383,14 @@ function DesktopPanel({ c, onChange }: { c: Connection; onChange: () => void }) 
               <span className="sr-only">{c.online ? ', online' : ', offline'}</span>
             </p>
             <p className="text-muted-foreground">
-              {c.online ? 'Online — ready for work' : c.lastSeenAt ? `Last seen ${timeAgo(c.lastSeenAt)} — start the connector again on that computer:` : 'Waiting for it to start:'}
+              {c.online ? 'Online and ready for work' : c.lastSeenAt ? `Last seen ${timeAgo(c.lastSeenAt)}. Start the connector again on that computer:` : 'Waiting for it to start:'}
             </p>
             {!c.online && (
               <div className="mt-2 max-w-md space-y-2">
                 <CommandLine command={`node ${CONNECTOR} run`} label="Copy the start command" />
                 {/* Computers paired before the rename have the older file; it keeps working. */}
                 <p className="text-xs text-muted-foreground">
-                  Set up before the {PRODUCT_NAME} name? That computer has the older file — run <code className="font-mono">node {LEGACY_CONNECTOR} run</code> instead.
+                  Set up before the {PRODUCT_NAME} name? That computer has the older file. Run <code className="font-mono">node {LEGACY_CONNECTOR} run</code> instead.
                 </p>
               </div>
             )}
@@ -409,7 +409,7 @@ function DesktopPanel({ c, onChange }: { c: Connection; onChange: () => void }) 
             </span>
             <div className="min-w-0 flex-1 space-y-2">
               <p className="font-medium">Download the connector on the front-desk computer</p>
-              <p className="text-muted-foreground">It needs Node.js 20 or newer. Then install the browser it drives — one command, once:</p>
+              <p className="text-muted-foreground">It needs Node.js 20 or newer. Then install the browser it drives (one command, once):</p>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <Button asChild size="sm" variant="outline" className="self-start">
                   <a href={`/downloads/${CONNECTOR}`} download>
@@ -458,7 +458,7 @@ function DesktopPanel({ c, onChange }: { c: Connection; onChange: () => void }) 
               <div className="max-w-md">
                 <CommandLine command={`node ${CONNECTOR} run`} label="Copy the start command" />
               </div>
-              <p className="text-xs text-muted-foreground">Already using the older {LEGACY_CONNECTOR}? It keeps working — no need to reinstall.</p>
+              <p className="text-xs text-muted-foreground">Already using the older {LEGACY_CONNECTOR}? It keeps working, so there’s no need to reinstall.</p>
             </div>
           </li>
         </ol>
@@ -518,7 +518,7 @@ function CloudPanel({ c, data, onChange }: { c: Connection; data: BridgeData; on
         <Cloud className="size-4 text-muted-foreground" aria-hidden /> Cloud browser login
       </h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        Create a dedicated {c.system} user for {PRODUCT_NAME} if you can — you can see and revoke its access from {c.system} at any time.
+        Create a dedicated {c.system} user for {PRODUCT_NAME} if you can. You can see and revoke its access from {c.system} at any time.
       </p>
       {!editing && c.hasCredentials ? (
         <div className="mt-4 flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center">
@@ -604,7 +604,7 @@ function TaskList({ tasks, onChange }: { tasks: Task[]; onChange: () => void }) 
   if (!tasks.length) {
     return (
       <Card>
-        <EmptyState icon={Search} title="Nothing sent yet" description="Ask the agent — or type a look-up or change in the box above and send it." className="py-10" />
+        <EmptyState icon={Search} title="Nothing sent yet" description="Ask the agent, or type a look-up or change in the box above and send it." className="py-10" />
       </Card>
     );
   }
@@ -708,7 +708,7 @@ export default function ConnectPage() {
     try {
       await api('/api/admin/setup-path', { method: 'PUT', json: { propertyId, setupPath: 'FULL' } });
       await globalMutate('/api/admin/context');
-      toast.success(`Welcome to ${PRODUCT_NAME} — your front desk now runs here`);
+      toast.success(`Welcome to ${PRODUCT_NAME}. Your front desk now runs here`);
       window.location.href = '/admin/dashboard?welcome=1';
     } catch (e) {
       toast.error((e as Error).message);
@@ -749,7 +749,7 @@ export default function ConnectPage() {
           title="Your PMS"
           description={
             c
-              ? `${PRODUCT_NAME} works in ${c.system} for ${property?.name ?? 'your hotel'} — nothing to migrate.`
+              ? `${PRODUCT_NAME} works in ${c.system} for ${property?.name ?? 'your hotel'}. Nothing to migrate.`
               : 'Keep the system you know. Connect it once and the agent looks things up and makes changes there for you.'
           }
           actions={
@@ -766,8 +766,8 @@ export default function ConnectPage() {
           }
         />
 
-        <WelcomeBanner title={`Welcome to ${PRODUCT_NAME} — one step left`}>
-          Finish connecting {c?.system ?? 'your system'} below. Then open the Agent and ask “who’s arriving today?” — it will check {c?.system ?? 'your PMS'} for you.
+        <WelcomeBanner title={`Welcome to ${PRODUCT_NAME}: one step left`}>
+          Finish connecting {c?.system ?? 'your system'} below. Then open the Agent and ask “who’s arriving today?” and it will check {c?.system ?? 'your PMS'} for you.
         </WelcomeBanner>
 
         {!data ? (
@@ -812,7 +812,7 @@ export default function ConnectPage() {
             )}
             {c.mode === 'CLOUD' && !data.cloudWorker && (
               <Callout tone="info" title="The cloud browser isn’t running on this server yet">
-                <p>Tasks wait in the queue until it starts — or switch to the desktop connector.</p>
+                <p>Tasks wait in the queue until it starts. You can also switch to the desktop connector.</p>
                 <DeveloperNote open={isAdmin} className="mt-3">
                   <p>
                     Start the cloud worker with <code>BRIDGE_WORKER_SECRET</code> set on both the server and the worker.
@@ -887,7 +887,7 @@ export default function ConnectPage() {
               <Card className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:p-6">
                 <div className="flex-1">
                   <h2 className="text-base font-semibold tracking-tight">Ready to run everything on {PRODUCT_NAME}?</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">Switch when it suits you — we’ll help move your rooms, rates and upcoming reservations. Your connection keeps working until you do.</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Switch when it suits you. We’ll help move your rooms, rates and upcoming reservations. Your connection keeps working until you do.</p>
                 </div>
                 <Button variant="outline" onClick={() => setConfirm('migrate')}>
                   Move to {PRODUCT_NAME} <ArrowRight aria-hidden />
@@ -911,7 +911,7 @@ export default function ConnectPage() {
           title={confirm === 'change' ? `Make this change in ${c?.system}?` : confirm === 'migrate' ? `Run this property on ${PRODUCT_NAME}?` : `Disconnect ${c?.system}?`}
           description={
             confirm === 'change'
-              ? `“${instruction.trim()}” — ${mcp ? PRODUCT_NAME : 'the operator'} changes only this and reports exactly what it did.`
+              ? `“${instruction.trim()}”: ${mcp ? PRODUCT_NAME : 'the operator'} changes only this and reports exactly what it did.`
               : confirm === 'migrate'
                 ? `Front desk, housekeeping, reservations and rates switch to ${PRODUCT_NAME} screens. Add your rooms and upcoming stays (we can help) before you stop using your old system.`
                 : mcp

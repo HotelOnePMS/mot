@@ -762,7 +762,7 @@ export async function submitCardAuthorization(token: string, input: Authorizatio
   await systemAudit(
     row,
     'CARD_AUTH_SIGNED',
-    `${signer.name} signed the card authorization (${cardBrandLabel(signerCardBrand)} ending ${last4})${outcome === 'REVIEW' ? ' — some details don’t match, check before check-in' : ''}`,
+    `${signer.name} signed the card authorization (${cardBrandLabel(signerCardBrand)} ending ${last4})${outcome === 'REVIEW' ? '. Some details don’t match, so check before check-in' : ''}`,
     { authorizationId: row.id, outcome },
   );
   const emailed = await sendCardAuthorizationReceipt({

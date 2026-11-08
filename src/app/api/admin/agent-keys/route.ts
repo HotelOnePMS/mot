@@ -59,7 +59,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
     { actor, source: 'classic' },
     propertyId,
     'AGENT_KEY_CREATE',
-    `Created the API key “${view.name}” (${view.prefix}…) for ${body.allHotels ? 'every hotel' : property.name}${view.scopes.includes('book') ? ' — it can make confirmed pay-at-hotel bookings' : ''}`,
+    `Created the API key “${view.name}” (${view.prefix}…) for ${body.allHotels ? 'every hotel' : property.name}${view.scopes.includes('book') ? '. It can make confirmed pay-at-hotel bookings' : ''}`,
     { keyId: view.id, prefix: view.prefix, scopes: view.scopes, allHotels: view.allHotels },
   );
   return json({ key, record: view }, { status: 201 });

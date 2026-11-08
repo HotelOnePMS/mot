@@ -116,7 +116,7 @@ export function parseMcpUrl(raw: string): URL {
     throw new McpError('BLOCKED_URL', 'That isn’t a valid web address. Paste the full MCP URL, starting with https://');
   }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new McpError('BLOCKED_URL', 'The MCP address must start with https://');
-  if (u.username || u.password) throw new McpError('BLOCKED_URL', 'Don’t put a username or password in the address — use the token field instead.');
+  if (u.username || u.password) throw new McpError('BLOCKED_URL', 'Don’t put a username or password in the address. Use the token field instead.');
   const host = hostOf(u);
   if (u.protocol === 'http:' && isProduction() && !hostAllowlisted(host)) {
     throw new McpError('BLOCKED_URL', 'The MCP address must use https://');
@@ -144,9 +144,9 @@ export async function assertSafeMcpUrl(raw: string): Promise<URL> {
   try {
     addresses = await resolveAll(host);
   } catch {
-    throw new McpError('NETWORK', `Couldn’t find ${host} — check the MCP address.`);
+    throw new McpError('NETWORK', `Couldn’t find ${host}. Check the MCP address.`);
   }
-  if (!addresses.length) throw new McpError('NETWORK', `Couldn’t find ${host} — check the MCP address.`);
+  if (!addresses.length) throw new McpError('NETWORK', `Couldn’t find ${host}. Check the MCP address.`);
   for (const a of addresses) assertAddressAllowed(a.address, host);
   return u;
 }

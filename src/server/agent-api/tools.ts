@@ -126,7 +126,7 @@ const TOOLS: ToolDef[] = [
     op: 'bookingLink',
     annotations: READ,
     describe: ({ hotel }) =>
-      `The fastest way to book ${at(hotel, 'a room')}: returns a checkout link with the hotel, room, dates and party filled in (and the guest’s name, email and phone if you pass them), plus a summary with the total. Give the person the link and the summary — they open it, check the details and confirm in one tap. The link doesn’t hold the room or charge anything by itself. Use this by default. ${MIXED}`,
+      `The fastest way to book ${at(hotel, 'a room')}: returns a checkout link with the hotel, room, dates and party filled in (and the guest’s name, email and phone if you pass them), plus a summary with the total. Give the person the link and the summary. They open it, check the details and confirm in one tap. The link doesn’t hold the room or charge anything by itself. Use this by default. ${MIXED}`,
     run: async (args, ctx) => ({ ...(await bookingLink({ ...args, propertyId: property(args, ctx) } as Parameters<typeof bookingLink>[0])) }),
   },
   {
@@ -182,7 +182,7 @@ const TOOLS: ToolDef[] = [
     op: 'askHotel',
     annotations: READ,
     describe: ({ hotel }) =>
-      `Answer a guest’s question about ${hotel ? hotel.name : 'a hotel'} — parking, pets, breakfast, Wi-Fi, check-in times, cancellation, getting there and more — from the hotel’s own saved answers. Pass the question in the guest’s words, or a topic key. If nothing matches, say you’re not sure and share the hotel’s phone number; never guess.`,
+      `Answer a guest’s question about ${hotel ? hotel.name : 'a hotel'} (parking, pets, breakfast, Wi-Fi, check-in times, cancellation, getting there and more) from the hotel’s own saved answers. Pass the question in the guest’s words, or a topic key. If nothing matches, say you’re not sure and share the hotel’s phone number; never guess.`,
     run: async (args, ctx) => ({ ...(await askHotel({ ...args, propertyId: property(args, ctx) } as Parameters<typeof askHotel>[0])) }),
   },
 ];
@@ -249,7 +249,7 @@ export const isToolName = (name: string): name is ToolName => BY_NAME.has(name a
  */
 export async function callTool(name: ToolName, args: Args, ctx: ToolContext): Promise<Record<string, unknown>> {
   const def = BY_NAME.get(name)!;
-  if (def.globalOnly && ctx.hotel) throw new DomainError(404, 'NOT_FOUND', `${name} isn’t available on ${ctx.hotel.name}’s own server — it only covers this hotel.`);
+  if (def.globalOnly && ctx.hotel) throw new DomainError(404, 'NOT_FOUND', `${name} isn’t available on ${ctx.hotel.name}’s own server. It only covers this hotel.`);
   return def.run(args, ctx);
 }
 

@@ -74,7 +74,7 @@ class ElevenLabsError extends Error {
 
 async function call<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown, timeoutMs = 30_000): Promise<T> {
   const key = process.env.ELEVENLABS_API_KEY;
-  if (!key) throw new DomainError(503, 'VOICE_DISABLED', 'The voice agent isn’t connected yet — add ELEVENLABS_API_KEY to turn it on.');
+  if (!key) throw new DomainError(503, 'VOICE_DISABLED', 'The voice agent isn’t connected yet. Add ELEVENLABS_API_KEY to turn it on.');
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {
@@ -113,15 +113,15 @@ export function describeElevenLabsError(e: unknown): string {
   const detail = e.detail.length > 280 ? `${e.detail.slice(0, 277)}…` : e.detail;
   switch (e.status) {
     case null:
-      return 'Couldn’t reach ElevenLabs just now — try again in a moment.';
+      return 'Couldn’t reach ElevenLabs just now. Try again in a moment.';
     case 401:
-      if (/missing[_ ]?permission/i.test(e.detail)) return `This ElevenLabs key is missing a permission ${PRODUCT_NAME} needs — give it “ElevenLabs Agents” write access (or no restrictions). ElevenLabs says: ${detail}`;
+      if (/missing[_ ]?permission/i.test(e.detail)) return `This ElevenLabs key is missing a permission ${PRODUCT_NAME} needs. Give it “ElevenLabs Agents” write access (or no restrictions). ElevenLabs says: ${detail}`;
       return 'ElevenLabs didn’t accept the API key. Re-check ELEVENLABS_API_KEY in Vercel (Settings → Environment Variables), then redeploy.';
     case 403:
       return `This ElevenLabs key isn’t allowed to manage agents. Create a key with “ElevenLabs Agents” write access (or no restrictions). ElevenLabs says: ${detail}`;
     case 402:
     case 429:
-      return `ElevenLabs refused for quota or rate limits — check your plan and usage at elevenlabs.io. ElevenLabs says: ${detail}`;
+      return `ElevenLabs refused for quota or rate limits. Check your plan and usage at elevenlabs.io. ElevenLabs says: ${detail}`;
     default:
       return `ElevenLabs returned an error (${e.status}). ${detail}`;
   }
@@ -197,7 +197,7 @@ function agentConfig(audience: Audience, toolIds: string[]) {
   const voiceId = process.env.ELEVENLABS_VOICE_ID;
   const suffix = ENVIRONMENT === 'production' ? '' : ` (${ENVIRONMENT})`;
   return {
-    name: `${PRODUCT_NAME} — ${guest ? 'guest front desk' : 'staff hands-free'}${suffix}`,
+    name: `${PRODUCT_NAME}: ${guest ? 'guest front desk' : 'staff hands-free'}${suffix}`,
     tags: [BRAND_TAG, guest ? 'guest' : 'staff', ENVIRONMENT],
     conversation_config: {
       agent: {
@@ -206,7 +206,7 @@ function agentConfig(audience: Audience, toolIds: string[]) {
         // The real, hotel-specific prompt and greeting arrive per conversation; these only show in ElevenLabs' own test calls.
         dynamic_variables: {
           dynamic_variable_placeholders: {
-            [GREETING_VARIABLE]: guest ? 'Hi, thanks for calling. How can I help?' : 'Hi — what do you need?',
+            [GREETING_VARIABLE]: guest ? 'Hi, thanks for calling. How can I help?' : 'Hi, what do you need?',
             [PROMPT_VARIABLE]: guest ? 'You are a hotel booking voice assistant. Use your tools for every fact.' : 'You are a hotel’s hands-free staff assistant. Use the front_desk tool for every request.',
           },
         },
@@ -217,7 +217,7 @@ function agentConfig(audience: Audience, toolIds: string[]) {
           tool_ids: toolIds,
           built_in_tools: { end_call: { name: 'end_call', description: '', params: { system_tool_type: 'end_call' } } },
         },
-        max_conversation_duration_message: guest ? 'I need to wrap up now — please call back any time.' : 'Wrapping up this session — tap Talk to start again.',
+        max_conversation_duration_message: guest ? 'I need to wrap up now. Please call back any time.' : 'Wrapping up this session. Tap Talk to start again.',
       },
       tts: { model_id: 'eleven_flash_v2', ...(voiceId ? { voice_id: voiceId } : {}) },
       conversation: { max_duration_seconds: guest ? 600 : 1800, client_events: CLIENT_EVENTS },
@@ -272,7 +272,7 @@ export function verifyPhoneWebhook(headerValue: string | null): boolean {
  */
 export function phoneWebhookBase(): string {
   if (process.env.VERCEL_ENV && process.env.VERCEL_ENV !== 'production' && !configuredPublicUrl()) {
-    throw new DomainError(503, 'PHONE_URL', 'Phone lines run on your production deployment — preview deployments can’t receive ElevenLabs’ calls.');
+    throw new DomainError(503, 'PHONE_URL', 'Phone lines run on your production deployment. Preview deployments can’t receive ElevenLabs’ calls.');
   }
   const base = publicSiteUrl() ?? '';
   // Plain http only reaches a local mock of the API, never the real one.
@@ -280,7 +280,7 @@ export function phoneWebhookBase(): string {
   throw new DomainError(
     503,
     'PHONE_URL',
-    `Phone calls need ${PRODUCT_NAME} on a public https address — set HOTELONE_PUBLIC_URL (for example ${PRODUCT_URL}; the older STAYOS_PUBLIC_URL also works) and redeploy.`,
+    `Phone calls need ${PRODUCT_NAME} on a public https address. Set HOTELONE_PUBLIC_URL (for example ${PRODUCT_URL}; the older STAYOS_PUBLIC_URL also works) and redeploy.`,
   );
 }
 
@@ -328,12 +328,12 @@ function phoneAgentConfig(input: PhoneAgentInput, toolIds: string[]) {
   const format = audio === 'auto' ? null : audio;
   const suffix = ENVIRONMENT === 'production' ? '' : ` (${ENVIRONMENT})`;
   return {
-    name: `${PRODUCT_NAME} — ${input.hotel.slice(0, 70)} phone · ${input.ref}${suffix}`,
+    name: `${PRODUCT_NAME}: ${input.hotel.slice(0, 70)} phone · ${input.ref}${suffix}`,
     tags: [BRAND_TAG, 'phone', ENVIRONMENT],
     conversation_config: {
       agent: {
         // Replaced per call by the initiation webhook; this only plays if HotelOne couldn't be reached.
-        first_message: 'Thanks for calling. I’m sorry — our assistant can’t take calls right now. Please try again in a few minutes.',
+        first_message: 'Thanks for calling. I’m sorry, our assistant can’t take calls right now. Please try again in a few minutes.',
         language: 'en',
         dynamic_variables: { dynamic_variable_placeholders: { [PHONE_SESSION_VARIABLE]: '' } },
         prompt: {
@@ -363,7 +363,7 @@ function phoneAgentConfig(input: PhoneAgentInput, toolIds: string[]) {
               : null,
           },
         },
-        max_conversation_duration_message: 'I need to wrap up now — please call back any time.',
+        max_conversation_duration_message: 'I need to wrap up now. Please call back any time.',
       },
       asr: { user_input_audio_format: format },
       tts: { model_id: 'eleven_flash_v2', ...(voiceId ? { voice_id: voiceId } : {}), agent_output_audio_format: format },
@@ -591,7 +591,7 @@ async function verifyTwilioNumber(accountSid: string, authToken: string, phoneNu
       cache: 'no-store',
     });
   } catch {
-    throw new DomainError(502, 'VOICE_UPSTREAM', 'Couldn’t reach Twilio just now — try again in a moment.');
+    throw new DomainError(502, 'VOICE_UPSTREAM', 'Couldn’t reach Twilio just now. Try again in a moment.');
   }
   if (res.status === 401 || res.status === 404) throw new DomainError(400, 'TWILIO_AUTH', 'Twilio didn’t accept that Account SID and Auth Token. Copy both again from the Twilio Console home page.');
   if (!res.ok) throw new DomainError(502, 'VOICE_UPSTREAM', `Twilio returned an error (${res.status}). Try again in a moment.`);

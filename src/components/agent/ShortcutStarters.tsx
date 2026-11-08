@@ -31,7 +31,7 @@ export function ShortcutStarters({ send, compact = false }: { send: (cmd: string
     return (
       <p className={compact ? 'mt-4 text-xs text-muted-foreground' : 'mt-5 flex items-start gap-2 text-xs leading-relaxed text-muted-foreground'}>
         {!compact && <Zap className="mt-px size-4 shrink-0 text-agent-soft-foreground" aria-hidden />}
-        <span>Tip: after any command, say “save that as a shortcut called …” — next time just say its name.</span>
+        <span>Tip: after any command, say “save that as a shortcut called …”. Next time, just say its name.</span>
       </p>
     );
   }
@@ -59,7 +59,7 @@ export function ShortcutStarters({ send, compact = false }: { send: (cmd: string
               <Zap className="size-3.5 shrink-0 text-agent-soft-foreground" aria-hidden />
               <span className="truncate font-medium">{s.title}</span>
               {s.needsInput && <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">· asks who</span>}
-              <span className="sr-only">{s.needsInput ? ` — I’ll ask who it’s for. Or say “${s.example}”.` : ''}</span>
+              <span className="sr-only">{s.needsInput ? `. I’ll ask who it’s for. Or say “${s.example}”.` : ''}</span>
             </button>
           </li>
         ))}

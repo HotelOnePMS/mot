@@ -215,27 +215,27 @@ interface LimitRule {
 }
 
 const LIMITS: Record<RateCategory, LimitRule> = {
-  read: { anon: [envLimit('AGENT_API_READS_PER_MINUTE', 120), MINUTE], key: [600, MINUTE], keyHotel: null, message: 'Too many requests from this connection — wait a minute and try again.' },
+  read: { anon: [envLimit('AGENT_API_READS_PER_MINUTE', 120), MINUTE], key: [600, MINUTE], keyHotel: null, message: 'Too many requests from this connection. Wait a minute and try again.' },
   lookup: {
     anon: [envLimit('AGENT_API_LOOKUPS_PER_HOUR', 20), HOUR],
     key: [200, HOUR],
     keyHotel: [envLimit('AGENT_API_KEY_HOTEL_LOOKUPS_PER_HOUR', 300), HOUR],
-    message: 'Too many booking lookups from this connection — try again later, or ask the guest to use the link in their confirmation email.',
-    keyHotelMessage: 'Too many booking lookups with this hotel’s API keys this hour — try again later.',
+    message: 'Too many booking lookups from this connection. Try again later, or ask the guest to use the link in their confirmation email.',
+    keyHotelMessage: 'Too many booking lookups with this hotel’s API keys this hour. Try again later.',
   },
   request: {
     anon: [envLimit('AGENT_API_REQUESTS_PER_HOUR', 10), HOUR],
     key: [60, HOUR],
     keyHotel: [envLimit('AGENT_API_KEY_HOTEL_REQUESTS_PER_HOUR', 100), HOUR],
-    message: 'That’s a lot of booking requests this hour — send the guest a booking link instead (get_booking_link), or try again later.',
-    keyHotelMessage: 'That’s a lot of booking requests with this hotel’s API keys this hour — send the guest a booking link instead (get_booking_link), or try again later.',
+    message: 'That’s a lot of booking requests this hour. Send the guest a booking link instead (get_booking_link), or try again later.',
+    keyHotelMessage: 'That’s a lot of booking requests with this hotel’s API keys this hour. Send the guest a booking link instead (get_booking_link), or try again later.',
   },
   book: {
     anon: null,
     key: [60, HOUR],
     keyHotel: [envLimit('AGENT_API_KEY_HOTEL_BOOKINGS_PER_HOUR', 100), HOUR],
-    message: 'That’s a lot of bookings with this API key this hour — try again later.',
-    keyHotelMessage: 'That’s a lot of bookings with this hotel’s API keys this hour — try again later.',
+    message: 'That’s a lot of bookings with this API key this hour. Try again later.',
+    keyHotelMessage: 'That’s a lot of bookings with this hotel’s API keys this hour. Try again later.',
   },
 };
 

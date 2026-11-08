@@ -115,7 +115,7 @@ function RoomDialog({ room, onClose, onSaved }: { room: RoomLite | null; onClose
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Room {room?.roomNumber}</DialogTitle>
-          <DialogDescription>Tags help you (and the agent) pick the right room — “quiet room on a high floor” matches these.</DialogDescription>
+          <DialogDescription>Tags help you (and the agent) pick the right room: “quiet room on a high floor” matches these.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
           <div className="grid grid-cols-2 gap-3">
@@ -391,7 +391,7 @@ export default function RoomTypeDetailPage() {
                       <span className="text-lg font-semibold tabular">{r.roomNumber}</span>
                       {canManageRooms && <Pencil className="size-3.5 text-muted-foreground opacity-60 transition-opacity group-hover:opacity-100" aria-hidden />}
                     </span>
-                    <span className="text-xs text-muted-foreground">Floor {r.floor ?? '—'}</span>
+                    <span className="text-xs text-muted-foreground">Floor {r.floor ?? 'not set'}</span>
                     {r.tags.length > 0 && (
                       <span className="mt-1.5 flex flex-wrap gap-1">
                         {r.tags.slice(0, 3).map((tag) => (
@@ -465,7 +465,7 @@ export default function RoomTypeDetailPage() {
         title={`Delete ${t.name}?`}
         description={
           t._count.bookings > 0
-            ? 'It has booking history, so it will be hidden from sale instead — past reservations stay intact.'
+            ? 'It has booking history, so it will be hidden from sale instead. Past reservations stay intact.'
             : 'This removes the room type, its photos, rates and room numbers. This can’t be undone.'
         }
         confirmLabel={t._count.bookings > 0 ? 'Hide from sale' : 'Delete'}

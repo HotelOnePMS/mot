@@ -262,7 +262,7 @@ export default function BookingDetailPage() {
             <div className="mt-1.5 flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => void copy(b.code, 'Couldn’t copy — select the code instead.')}
+                onClick={() => void copy(b.code, 'Couldn’t copy. Select the code instead.')}
                 className="inline-flex h-7 items-center gap-1.5 rounded-md border bg-surface-sunken px-2 font-mono text-xs tracking-wider transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label={`Confirmation code ${b.code}. Copy`}
               >

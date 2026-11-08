@@ -33,6 +33,6 @@ export function assertDemoHotelUnchanged(
   if (process.env.NEXT_PUBLIC_DEMO_MODE !== 'true' || !current.isDemo || actor.role === 'ADMIN') return;
   const changed = fields.filter((f) => changes[f] !== undefined && norm(changes[f]) !== norm(current[f]));
   if (changed.length) {
-    throw forbidden(`Demo hotels keep their public details (${changed.join(', ')}) for every visitor. Set up your own hotel to change them — everything else here is yours to try.`);
+    throw forbidden(`Demo hotels keep their public details (${changed.join(', ')}) for every visitor. Set up your own hotel to change them. Everything else here is yours to try.`);
   }
 }

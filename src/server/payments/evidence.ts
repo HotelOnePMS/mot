@@ -214,7 +214,7 @@ export function buildEvidenceSummary(i: EvidenceInput): EvidenceSummary {
       `Checked out: ${when(i.stay.checkedOutAt)}`,
       ...(i.riskFlags.length ? [`Risk flags at booking: ${i.riskFlags.join(', ')}`] : ['No risk flags were raised.']),
       ...(i.checklist.length
-        ? i.checklist.map((c) => `Front desk check: ${c.item} — ${c.at ? `done ${when(c.at)} by ${or(c.by, 'staff')}` : 'not done'}`)
+        ? i.checklist.map((c) => `Front desk check: ${c.item}: ${c.at ? `done ${when(c.at)} by ${or(c.by, 'staff')}` : 'not done'}`)
         : []),
     ],
   });
@@ -246,7 +246,7 @@ export function buildEvidenceSummary(i: EvidenceInput): EvidenceSummary {
 
   sections.push({
     title: 'Booking history',
-    lines: i.history.length ? i.history.map((h) => `${when(h.at)} — ${h.status}${h.notes ? `: ${h.notes}` : ''}`) : ['No history recorded.'],
+    lines: i.history.length ? i.history.map((h) => `${when(h.at)}, ${h.status}${h.notes ? `: ${h.notes}` : ''}`) : ['No history recorded.'],
   });
 
   return { generatedAt: i.generatedAt, sections };
@@ -255,7 +255,7 @@ export function buildEvidenceSummary(i: EvidenceInput): EvidenceSummary {
 /** The summary as plain text, for review and download. */
 export function renderEvidenceText(summary: EvidenceSummary): string {
   return [
-    `Dispute evidence — generated ${when(summary.generatedAt)}`,
+    `Dispute evidence (generated ${when(summary.generatedAt)}`,
     '',
     ...summary.sections.flatMap((s) => [s.title.toUpperCase(), ...s.lines, '']),
   ]

@@ -8,7 +8,7 @@ if (stripeSecretKey) {
     apiVersion: '2025-08-27.basil',
   });
 } else {
-  console.warn('STRIPE_SECRET_KEY is not set — online card payments are disabled; bookings use "pay at property".');
+  console.warn('STRIPE_SECRET_KEY is not set. Online card payments are disabled; bookings use "pay at property".');
 }
 
 /** True when Stripe is configured and card checkout is available. */

@@ -104,7 +104,7 @@ export function VoiceLiveBar({ voice }: { voice: StaffVoiceController }) {
               </p>
             ) : (
               <>
-                <p className="mt-0.5 truncate text-sm">{lastAgent?.text || 'Go ahead — just talk.'}</p>
+                <p className="mt-0.5 truncate text-sm">{lastAgent?.text || 'Go ahead, just talk.'}</p>
                 {lastUser && (
                   <p className="truncate text-xs text-muted-foreground">
                     <span className="font-medium">You:</span> {lastUser.text}

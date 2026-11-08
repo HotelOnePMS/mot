@@ -127,6 +127,6 @@ export async function askHotel(input: AskHotelInput): Promise<AskHotelResult> {
     hotel,
     answers: [],
     topics: answers.slice(0, 40).map((s) => ({ key: s.key, title: safeAnswerTitle(s.title) })),
-    note: `${hotel.name} hasn’t saved an answer to that. Say you’re not sure rather than guessing, and offer the hotel’s phone (${hotel.phone})${hotel.email ? ` or email (${hotel.email})` : ''} — or pick one of these topics if it fits.`,
+    note: `${hotel.name} hasn’t saved an answer to that. Say you’re not sure rather than guessing, and offer the hotel’s phone (${hotel.phone})${hotel.email ? ` or email (${hotel.email})` : ''}, or pick one of these topics if it fits.`,
   };
 }

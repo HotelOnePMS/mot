@@ -77,5 +77,5 @@ export function conciergeError(e: unknown): ConciergeError {
   }
   if (e instanceof DomainError) return { error: e.message, code: e.code, status: e.status, ...(e.details ? { details: e.details } : {}) };
   logError('concierge', 'failed', e);
-  return { error: 'That didn’t work just now — please try again shortly.', code: 'INTERNAL', status: 500 };
+  return { error: 'That didn’t work just now. Please try again shortly.', code: 'INTERNAL', status: 500 };
 }

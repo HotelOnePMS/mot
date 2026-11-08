@@ -62,7 +62,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
     guests: input.guests,
     notes: input.notes,
     paymentStatus: 'PAY_AT_PROPERTY',
-    createdVia: 'Booked online — pay at property',
+    createdVia: 'Booked online, pay at property',
     onlinePayment: terms.onlinePayment ? { policy: terms.policy, depositNights: terms.depositNights } : undefined,
     source: 'WEB',
     policyAcceptance: { version: terms.version, hash: terms.hash, text: terms.text, ip: clientIp(request), userAgent: request.headers.get('user-agent') },

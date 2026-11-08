@@ -11,7 +11,7 @@ import { publicSiteUrl } from '@/server/public-url';
 
 export const metadata: Metadata = {
   title: 'Connect your PMS',
-  description: `PMS vendors: expose your system as an MCP server and every hotel on it can use ${PRODUCT_NAME}’s agents — console, voice front desk and phone line — with staff confirming every change.`,
+  description: `PMS vendors: expose your system as an MCP server and every hotel on it can use ${PRODUCT_NAME}’s agents, console, voice front desk and phone line, with staff confirming every change.`,
   alternates: { canonical: '/developers/pms' },
 };
 
@@ -24,7 +24,7 @@ const BENEFITS = [
 ];
 
 const STEPS = [
-  { title: 'Run a remote MCP server', text: 'Streamable HTTP (MCP 2025-06-18; 2025-03-26 also works), authenticated with a per-hotel token — a bearer token or a header such as X-API-Key.' },
+  { title: 'Run a remote MCP server', text: 'Streamable HTTP (MCP 2025-06-18; 2025-03-26 also works), authenticated with a per-hotel token, a bearer token or a header such as X-API-Key.' },
   { title: 'The hotel connects it', text: `In ${PRODUCT_NAME} → Your PMS, the owner pastes your MCP URL and their token. We call initialize and tools/list before saving anything.` },
   { title: 'We discover your tools', text: 'Each tool is cached as a reusable skill and matched to the contract below. Names don’t have to be exact: common aliases and parameter names are recognised.' },
   { title: 'Staff just ask', text: 'Recognised operations run directly; anything else is planned by our AI with only the tools the task allows, at most 8 calls per task.' },
@@ -49,7 +49,7 @@ function Code({ children, label }: { children: string; label: string }) {
 
 function args(schema: (typeof CONTRACT)[number]['inputSchema']): string {
   const props = Object.keys(schema.properties ?? {});
-  if (!props.length) return '—';
+  if (!props.length) return 'none';
   const required = new Set(schema.required ?? []);
   return props.map((p) => (required.has(p) ? p : `${p}?`)).join(', ');
 }
@@ -107,7 +107,7 @@ await sendHotelOneEvent(url, secret, {
           <p className="text-2xs font-semibold uppercase tracking-[0.18em] text-primary">For PMS partners</p>
           <h1 className="mt-4 text-balance font-display text-4xl font-medium leading-[1.1] tracking-tight sm:text-5xl">Connect your PMS to {PRODUCT_NAME}</h1>
           <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-muted-foreground">
-            Expose your PMS as an MCP server and every hotel that uses it can run {PRODUCT_NAME}’s agents on top of it — no screen-scraping, no migration.
+            Expose your PMS as an MCP server and every hotel that uses it can run {PRODUCT_NAME}’s agents on top of it: no screen-scraping, no migration.
           </p>
           <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
             <Button asChild size="lg">
@@ -200,7 +200,7 @@ await sendHotelOneEvent(url, secret, {
           </ul>
           <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
             Lists return reservations as <code className="font-mono text-[0.8125rem]">{'{ reservation_id, confirmation_code, guest_name, arrival, departure, room_number?, room_type?, status }'}</code>. Write tools run only after staff confirm, so
-            make them do exactly one thing. Your other tools still work through our planner — but we never call tools that delete, refund, export data or manage users.
+            make them do exactly one thing. Your other tools still work through our planner, but we never call tools that delete, refund, export data or manage users.
           </p>
           <div className="max-w-3xl">
             <Code label="Example tool definition">{toolExample}</Code>
@@ -215,7 +215,7 @@ await sendHotelOneEvent(url, secret, {
             </h2>
           </div>
           <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-            Tell {PRODUCT_NAME} when something changes and it shows up in the hotel’s activity log, where staff and the agent see it (“PMS: reservation created — Ana Moreno, 20–22 Oct”). The hotel’s owner copies the URL and secret from{' '}
+            Tell {PRODUCT_NAME} when something changes and it shows up in the hotel’s activity log, where staff and the agent see it (“PMS: reservation created, Ana Moreno, 20–22 Oct”). The hotel’s owner copies the URL and secret from{' '}
             {PRODUCT_NAME} → Your PMS.
           </p>
           <dl className="mt-5 space-y-3 rounded-2xl border bg-card p-5 text-sm">
@@ -267,20 +267,20 @@ await sendHotelOneEvent(url, secret, {
                 <a className="font-medium text-primary underline-offset-4 hover:underline" href="/developers/pms/contract.json">
                   contract.json
                 </a>{' '}
-                <span className="text-muted-foreground">— the contract with full JSON Schemas</span>
+                <span className="text-muted-foreground">: the contract with full JSON Schemas</span>
               </li>
               <li>
                 <a className="font-medium text-primary underline-offset-4 hover:underline" href={MCP_SPEC} target="_blank" rel="noreferrer">
                   Model Context Protocol specification
                 </a>{' '}
-                <span className="text-muted-foreground">— transports, tools and annotations</span>
+                <span className="text-muted-foreground">: transports, tools and annotations</span>
               </li>
               <li>
                 <Link className="font-medium text-primary underline-offset-4 hover:underline" href="/contact">
                   {LABELS.contact}
                 </Link>{' '}
                 <span className="text-muted-foreground">
-                  — or write to <a className="font-medium text-primary underline-offset-4 hover:underline" href={`mailto:${PRODUCT_SUPPORT_EMAIL}`}>{PRODUCT_SUPPORT_EMAIL}</a> for a test hotel
+                  or write to <a className="font-medium text-primary underline-offset-4 hover:underline" href={`mailto:${PRODUCT_SUPPORT_EMAIL}`}>{PRODUCT_SUPPORT_EMAIL}</a> for a test hotel
                 </span>
               </li>
             </ul>

@@ -92,7 +92,7 @@ const SECTIONS: LegalSection[] = [
     title: 'Who we share data with',
     body: (
       <>
-        <p>With the hotel you booked with, and with service providers who help us run the Service under written terms (“subprocessors”). Current list (draft — to be completed before launch):</p>
+        <p>With the hotel you booked with, and with service providers who help us run the Service under written terms (“subprocessors”). Current list (draft, to be completed before launch):</p>
         <div className="overflow-x-auto rounded-xl border">
           <table className="w-full text-left text-sm">
             <thead className="bg-surface-sunken text-xs uppercase tracking-wider text-muted-foreground">

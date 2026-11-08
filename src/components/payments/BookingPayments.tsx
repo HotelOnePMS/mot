@@ -381,7 +381,7 @@ export function BookingPayments({ booking: b }: { booking: BookingSummary }) {
               )}
               <dt>Country</dt>
               <dd className="text-foreground">
-                Billing {p.billingCountry ?? '—'} · card issued {p.cardCountry ?? '—'}
+                Billing {p.billingCountry ?? 'unknown'} · card issued {p.cardCountry ?? 'unknown'}
               </dd>
               <dt>Bank check</dt>
               <dd className="text-foreground">{THREE_DS[p.threeDSecure ?? 'not_attempted'] ?? p.threeDSecure}</dd>

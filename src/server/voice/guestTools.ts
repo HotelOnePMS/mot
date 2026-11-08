@@ -51,8 +51,8 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
     }
 
     case 'start_booking': {
-      if (phone) return { error: 'There’s no screen on a phone call — use request_booking instead.' };
-      if (!live) return { error: 'This hotel’s front desk confirms bookings — use request_booking instead.' };
+      if (phone) return { error: 'There’s no screen on a phone call. Use request_booking instead.' };
+      if (!live) return { error: 'This hotel’s front desk confirms bookings. Use request_booking instead.' };
       const a = z
         .object({ room_type_id: z.string().min(1).nullish(), check_in: isoDate, check_out: isoDate, guests: z.number().int().min(1).max(16), rooms: z.number().int().min(1).max(9), items: roomItems })
         .parse(rawArgs);
@@ -60,7 +60,7 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
       if ('error' in lines) return lines;
       if (lines.length === 1) {
         const rt = await prisma.roomType.findFirst({ where: { id: lines[0].roomTypeId, propertyId, isActive: true }, select: { id: true, name: true } });
-        if (!rt) return { error: 'That room type isn’t available here — check availability again.' };
+        if (!rt) return { error: 'That room type isn’t available here. Check availability again.' };
         const url = checkoutPath(propertyId, { roomTypeId: rt.id, checkIn: a.check_in, checkOut: a.check_out, guests: a.guests, rooms: lines[0].rooms });
         return { opened: true, room: rt.name, url, say: `I’ve opened the checkout for the ${rt.name} on your screen.` };
       }
@@ -71,7 +71,7 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
     }
 
     case 'find_booking': {
-      if (!live) return { found: false, say: 'I can’t look up reservations here, but I can take a message for the front desk — what’s your name, your dates, and what do you need?' };
+      if (!live) return { found: false, say: 'I can’t look up reservations here, but I can take a message for the front desk. What’s your name, your dates, and what do you need?' };
       const a = z.object({ confirmation_code: z.string().min(4).max(20), last_name: z.string().min(1).max(60) }).parse(rawArgs);
       const b = await lookupBooking({ propertyId, code: a.confirmation_code, lastName: a.last_name });
       // Same answer for a wrong code or a wrong name: don't confirm either alone.
@@ -152,7 +152,7 @@ export async function runGuestTool(propertyId: string, name: string, rawArgs: un
       if (!callback && !a.email) return { error: 'Ask for a phone number or email so the team can reply.' };
       const r = await prisma.guestRequest.create({ data: { propertyId, name: a.name, phone: callback || null, email: a.email || null, message: a.message, source } });
       alertTeam(r.id);
-      return { saved: true, reference: r.id.slice(-6).toUpperCase(), say: 'I’ve passed that to the team — they’ll get back to you.' };
+      return { saved: true, reference: r.id.slice(-6).toUpperCase(), say: 'I’ve passed that to the team. They’ll get back to you.' };
     }
 
     default:
@@ -179,7 +179,7 @@ export async function guestToolOutput(propertyId: string, name: string, args: un
           ? `Invalid arguments: ${e.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`
           : e instanceof DomainError
             ? e.message
-            : 'That lookup failed — offer to take a message for the team instead.',
+            : 'That lookup failed. Offer to take a message for the team instead.',
     };
   }
 }

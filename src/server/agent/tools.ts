@@ -249,7 +249,7 @@ export async function runRead(ctx: ToolCtx, intent: Intent): Promise<ReadOutput>
               { label: 'Ready rooms', value: String(st.clean + st.inspected), hint: `${st.dirty} dirty · ${st.outOfOrder} out of order`, tone: 'success' },
             ],
           },
-          ...(s.alerts.length ? [{ type: 'alerts', items: s.alerts } as AgentBlock] : [{ type: 'text', text: 'No alerts — everything is on track. ✨' } as AgentBlock]),
+          ...(s.alerts.length ? [{ type: 'alerts', items: s.alerts } as AgentBlock] : [{ type: 'text', text: 'No alerts. Everything is on track. ✨' } as AgentBlock]),
         ],
       };
     }
@@ -328,7 +328,7 @@ export async function runRead(ctx: ToolCtx, intent: Intent): Promise<ReadOutput>
           {
             type: 'text',
             text: anyFree
-              ? `Prices are for ${nights} night${nights > 1 ? 's' : ''}, ${intent.guests} guest${intent.guests > 1 ? 's' : ''}${intent.rooms > 1 ? `, ${intent.rooms} rooms` : ''} — exactly what the booking site charges.`
+              ? `Prices are for ${nights} night${nights > 1 ? 's' : ''}, ${intent.guests} guest${intent.guests > 1 ? 's' : ''}${intent.rooms > 1 ? `, ${intent.rooms} rooms` : ''}. That’s exactly what the booking site charges.`
               : `Nothing fits ${intent.guests} guest${intent.guests > 1 ? 's' : ''} for those dates. Try other dates or more rooms.`,
           },
         ],
@@ -359,7 +359,7 @@ export async function runRead(ctx: ToolCtx, intent: Intent): Promise<ReadOutput>
           recommendation = 'On pace. Hold rates and watch pickup.';
           tone = 'info';
         } else if (sum.averagePct >= 40 || lead > 21) {
-          recommendation = lead > 21 ? 'Early — hold rates; revisit two weeks out.' : 'Slightly soft. A 2-night package could lift Friday arrivals.';
+          recommendation = lead > 21 ? 'Early. Hold rates and revisit two weeks out.' : 'Slightly soft. A 2-night package could lift Friday arrivals.';
           tone = 'neutral';
         } else {
           recommendation = `Soft with ${lead} days to go. Consider a 10% promotion.`;
@@ -491,13 +491,13 @@ export async function runRead(ctx: ToolCtx, intent: Intent): Promise<ReadOutput>
           {
             type: 'text',
             text:
-              'I run the front desk with you. Ask in plain words — I show live data, and I **always ask before changing anything**.\n' +
+              'I run the front desk with you. Ask in plain words. I show live data, and I **always ask before changing anything**.\n' +
               '• **Today:** “brief me”, “who’s arriving?”, “who’s leaving tomorrow?”\n' +
               '• **Guests:** “check in the Smiths, quiet room on a high floor”, “check out room 201”, “add a note to K7Q2MD: late arrival”\n' +
-              '• **Rooms:** “which rooms need cleaning?”, “mark 203 clean”, “room 106 out of order — broken AC”\n' +
+              '• **Rooms:** “which rooms need cleaning?”, “mark 203 clean”, “room 106 out of order, broken AC”\n' +
               '• **Housekeeping:** “auto-assign housekeeping”, “have Rosa clean 303”\n' +
               '• **Revenue:** “availability next Friday for 2 nights”, “forecast the next 3 weekends”, “raise weekend rates 10%”\n' +
-              '• **Hotel questions:** “is parking free?”, “what’s our cancellation policy?” — answered from your saved answers',
+              '• **Hotel questions:** “is parking free?”, “what’s our cancellation policy?” (answered from your saved answers)',
           },
           { type: 'suggestions', items: ['brief me', 'who’s arriving today?', 'which rooms need cleaning?', 'forecast the next 3 weekends'] },
         ],
@@ -509,7 +509,7 @@ export async function runRead(ctx: ToolCtx, intent: Intent): Promise<ReadOutput>
       }
       return {
         blocks: [
-          { type: 'text', text: 'I didn’t quite catch that. Here are some things I can do — or switch to Classic for the full screens. If it’s a question about the hotel, a manager can add the answer on the Skills page and I’ll know it next time.' },
+          { type: 'text', text: 'I didn’t quite catch that. Here are some things I can do, or switch to Classic for the full screens. If it’s a question about the hotel, a manager can add the answer on the Skills page and I’ll know it next time.' },
           { type: 'suggestions', items: ['brief me', 'who’s arriving today?', 'which rooms need cleaning?', 'help'] },
         ],
       };
@@ -526,7 +526,7 @@ async function bookingWarnings(b: BookingWithRelations): Promise<string[]> {
   if (b.notes) w.push(`Note on file: ${b.notes.split('\n').slice(-1)[0].replace(/^\[[^\]]+\]\s*/, '')}`);
   const pay = b.paymentStatus ?? 'UNPAID';
   const balance = toBookingSummary(b).balance;
-  if (pay === 'AWAITING_PAYMENT' && balance > 0.004) w.push(`Online payment hasn’t completed — collect ${money(balance, { currency: b.currency })} at the desk.`);
+  if (pay === 'AWAITING_PAYMENT' && balance > 0.004) w.push(`Online payment hasn’t completed. Collect ${money(balance, { currency: b.currency })} at the desk.`);
   return w;
 }
 
@@ -578,12 +578,12 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
       if (!pick.ok) return { steps: [], warnings: [], risk: 'low', blocks: [pick.block], abort: true, memory: bookingMemory(b) };
       const warnings = await bookingWarnings(b);
       warnings.push('This checks the guest in without recording their ID, a deposit or a signed registration card. To record them, use Check in on the reservation page (you can still add them after).');
-      if (pick.allowDirty) warnings.push(`Room ${pick.room.room.number} hasn’t been cleaned yet — no clean ${b.roomType.name} is free. Check in anyway, or ask housekeeping to rush it.`);
+      if (pick.allowDirty) warnings.push(`Room ${pick.room.room.number} hasn’t been cleaned yet and no clean ${b.roomType.name} is free. Check in anyway, or ask housekeeping to rush it.`);
       const unmet = unmetPrefs(intent.prefs, pick.room);
       if (unmet.length) {
         const better = (await suggestRooms(actor, b.id, intent.prefs, { limit: 20 })).find((o) => !o.ready && unmetPrefs(intent.prefs, o).length === 0);
         warnings.push(
-          `No ready room is ${unmet.join(' and ')} right now — Room ${pick.room.room.number} is the closest.` +
+          `No ready room is ${unmet.join(' and ')} right now. Room ${pick.room.room.number} is the closest.` +
             (better ? ` Room ${better.room.number} matches everything but still needs cleaning (“check in ${b.code} to room ${better.room.number}” to use it).` : '')
         );
       }
@@ -593,7 +593,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
             tool: 'check_in',
             args: { bookingId: b.id, roomId: pick.room.room.id, allowDirtyRoom: pick.allowDirty },
             summary: `Check in ${guestName(b)} → Room ${pick.room.room.number}`,
-            detail: `${b.roomType.name} · floor ${pick.room.room.floor ?? '—'} · ${pick.reason} · ${b.guests} guest${b.guests > 1 ? 's' : ''}, ${diffDays(toISODate(b.checkIn), toISODate(b.checkOut))} nights${b.status === 'PENDING' ? ' · also confirms the booking' : ''}`,
+            detail: `${b.roomType.name} · floor ${pick.room.room.floor ?? 'not set'} · ${pick.reason} · ${b.guests} guest${b.guests > 1 ? 's' : ''}, ${diffDays(toISODate(b.checkIn), toISODate(b.checkOut))} nights${b.status === 'PENDING' ? ' · also confirms the booking' : ''}`,
           },
         ],
         warnings,
@@ -611,7 +611,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
       if (!check.ok) return { ...fail(check.reason), memory: bookingMemory(b) };
       const warnings: string[] = [];
       const due = toISODate(b.checkOut);
-      if (due > today) warnings.push(`Early departure — due ${formatDay(due)}. Unused nights go back on sale.`);
+      if (due > today) warnings.push(`Early departure: due ${formatDay(due)}. Unused nights go back on sale.`);
       // Anything left to pay already stopped it above (checkTransition): check-out needs the balance at zero.
       // Security deposits sit on the reservation's lead line.
       const lines = await paymentLines(b);
@@ -646,7 +646,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
             tool: 'assign_room',
             args: { bookingId: b.id, roomId: pick.room.room.id },
             summary: `${b.room ? 'Move' : 'Assign'} ${guestName(b)} ${b.room ? `from Room ${b.room.roomNumber} ` : ''}to Room ${pick.room.room.number}`,
-            detail: `${b.roomType.name} · floor ${pick.room.room.floor ?? '—'} · ${pick.reason}`,
+            detail: `${b.roomType.name} · floor ${pick.room.room.floor ?? 'not set'} · ${pick.reason}`,
           },
         ],
         warnings: pick.room.ready ? [] : [`Room ${pick.room.room.number} still needs cleaning before arrival.`],
@@ -722,7 +722,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
             detail: intent.reason ? `Reason: ${intent.reason}` : 'Reason: maintenance',
           },
         ],
-        warnings: arriving ? [`${guestName(arriving)} (${arriving.code}) is assigned this room for ${formatDay(toISODate(arriving.checkIn))} — reassign them after.`] : [],
+        warnings: arriving ? [`${guestName(arriving)} (${arriving.code}) is assigned this room for ${formatDay(toISODate(arriving.checkIn))}. Reassign them after.`] : [],
         risk: 'medium',
         memory: { lastRoomNumber: room.value.roomNumber },
       };
@@ -782,7 +782,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
           tool: 'assign_cleaning',
           args: { roomId: p.roomId, assigneeId: p.assigneeId, priority: p.priority },
           summary: `Room ${p.roomNumber} → ${p.assigneeName}`,
-          detail: `${p.roomType} · floor ${p.floor ?? '—'}${p.priority >= 3 ? ' · needed for today’s arrivals' : ''}`,
+          detail: `${p.roomType} · floor ${p.floor ?? 'not set'}${p.priority >= 3 ? ' · needed for today’s arrivals' : ''}`,
         })),
         warnings: [],
         risk: 'low',
@@ -809,7 +809,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
           tool: 'assign_room',
           args: { bookingId: b.id, roomId: pick.room.room.id },
           summary: `${guestName(b)} → Room ${pick.room.room.number}`,
-          detail: `${b.roomType.name} · floor ${pick.room.room.floor ?? '—'} · ${pick.reason}`,
+          detail: `${b.roomType.name} · floor ${pick.room.room.floor ?? 'not set'} · ${pick.reason}`,
         });
       }
       return { steps, warnings, risk: 'low' };
@@ -842,7 +842,7 @@ export async function planWrite(ctx: ToolCtx, intent: Intent): Promise<PlanOutpu
           });
         }
       }
-      if (!steps.length) return fail(`Everything is already sold out for those dates — nothing to reprice.`);
+      if (!steps.length) return fail(`Everything is already sold out for those dates. Nothing to reprice.`);
       return {
         steps,
         warnings: [
@@ -874,7 +874,7 @@ export async function executeStep(ctx: OpContext, step: PlanStep): Promise<StepR
     switch (step.tool) {
       case 'check_in': {
         const r = await transitionBooking(ctx, String(a.bookingId), 'CHECKED_IN', { roomId: String(a.roomId), allowDirtyRoom: !!a.allowDirtyRoom });
-        return { ok: true, line: `Checked in ${r.booking.guest.name} → Room ${r.booking.room?.number ?? '—'}`, bookingId: r.booking.id };
+        return { ok: true, line: `Checked in ${r.booking.guest.name} → Room ${r.booking.room?.number ?? 'not assigned'}`, bookingId: r.booking.id };
       }
       case 'check_out': {
         const r = await transitionBooking(ctx, String(a.bookingId), 'CHECKED_OUT');
@@ -956,7 +956,7 @@ export async function executeStep(ctx: OpContext, step: PlanStep): Promise<StepR
   } catch (e) {
     const msg = e instanceof DomainError ? e.message : 'Something went wrong.';
     if (!(e instanceof DomainError)) logError('agent/tools', 'Agent step failed:', step.tool, e);
-    return { ok: false, line: `${step.summary} — ${msg}` };
+    return { ok: false, line: `${step.summary}: ${msg}` };
   }
 }
 

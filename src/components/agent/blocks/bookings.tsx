@@ -137,7 +137,7 @@ export function BookingCard({ block }: { block: Extract<AgentBlock, { type: 'boo
             return (
               <p key={i} className="text-sm">
                 {m ? m[2] : n}
-                {m && <span className="ml-1.5 text-xs text-muted-foreground">— {m[1]}</span>}
+                {m && <span className="ml-1.5 text-xs text-muted-foreground">({m[1]})</span>}
               </p>
             );
           })}

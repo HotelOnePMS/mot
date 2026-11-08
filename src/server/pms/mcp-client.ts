@@ -92,7 +92,7 @@ const RESERVED_HEADERS = new Set(['host', 'content-length', 'content-type', 'acc
 /** Returns a problem with a custom auth header name, or null if it's usable. */
 export function authHeaderIssue(name: string): string | null {
   if (!HEADER_NAME.test(name)) return 'Header names may only use letters, numbers and dashes.';
-  if (RESERVED_HEADERS.has(name.toLowerCase())) return `“${name}” can’t carry the token — use Authorization or a custom header such as X-API-Key.`;
+  if (RESERVED_HEADERS.has(name.toLowerCase())) return `“${name}” can’t carry the token. Use Authorization or a custom header such as X-API-Key.`;
   return null;
 }
 
@@ -311,9 +311,9 @@ export class McpClient {
           new McpError(
             'NETWORK',
             code === 'ENOTFOUND' || code === 'EAI_AGAIN'
-              ? `Couldn’t find ${host} — check the MCP address.`
+              ? `Couldn’t find ${host}. Check the MCP address.`
               : code === 'ECONNREFUSED'
-                ? `${host} refused the connection — is the MCP server running?`
+                ? `${host} refused the connection. Is the MCP server running?`
                 : code && /CERT|SSL|TLS/i.test(code)
                   ? `${host}’s security certificate isn’t valid.`
                   : `Couldn’t reach ${host} (${code ?? 'network error'}).`,

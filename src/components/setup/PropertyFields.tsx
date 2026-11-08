@@ -68,7 +68,7 @@ export type PropertyErrors = Partial<Record<keyof PropertyDraft, string>>;
 export function propertyErrors(d: PropertyDraft): PropertyErrors {
   const e: PropertyErrors = {};
   if (d.name.trim().length < 2) e.name = 'Add your property’s name.';
-  if (d.address.trim().length < 3) e.address = 'Add the street address — guests use it to find you.';
+  if (d.address.trim().length < 3) e.address = 'Add the street address. Guests use it to find you.';
   if (!d.city.trim()) e.city = 'Add the city.';
   if (!d.state.trim()) e.state = 'Add the state or region.';
   if (d.zipCode.trim().length < 2) e.zipCode = 'Add the postal code.';
@@ -82,14 +82,14 @@ export function propertyErrors(d: PropertyDraft): PropertyErrors {
 export function validateProperty(d: PropertyDraft): string | null {
   const e = propertyErrors(d);
   if (e.name) return e.name;
-  if (e.address || e.city || e.state || e.zipCode) return 'Complete the address — guests use it to find you.';
+  if (e.address || e.city || e.state || e.zipCode) return 'Complete the address. Guests use it to find you.';
   return e.phone ?? e.email ?? e.primaryColor ?? null;
 }
 
 /** How many fields need fixing, as a sentence for a form-level summary. */
 export function errorSummary(errors: Record<string, string | undefined>): string | null {
   const n = Object.values(errors).filter(Boolean).length;
-  return n === 0 ? null : n === 1 ? 'One field needs your attention — it’s marked in red.' : `${n} fields need your attention — they’re marked in red.`;
+  return n === 0 ? null : n === 1 ? 'One field needs your attention. It’s marked in red.' : `${n} fields need your attention. They’re marked in red.`;
 }
 
 const isHex = (v: string) => /^#[0-9a-fA-F]{6}$/.test(v);

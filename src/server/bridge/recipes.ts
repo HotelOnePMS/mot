@@ -467,7 +467,7 @@ export async function learnFromTask(task: BridgeTask & { connection?: { system: 
         key,
         title: `${intent.charAt(0).toUpperCase()}${intent.slice(1)} in ${system}`.slice(0, 120),
         description: (needsReview
-          ? `How the PMS operator did “${intent}” in ${system} the last time it worked. Waiting for approval: ${distilled.dropped} step${distilled.dropped === 1 ? '' : 's'} it reported didn’t look like plain screen or button names and ${distilled.dropped === 1 ? 'was' : 'were'} left out — check the steps before approving.`
+          ? `How the PMS operator did “${intent}” in ${system} the last time it worked. Waiting for approval: ${distilled.dropped} step${distilled.dropped === 1 ? '' : 's'} it reported didn’t look like plain screen or button names and ${distilled.dropped === 1 ? 'was' : 'were'} left out. Check the steps before approving.`
           : `How the PMS operator did “${intent}” in ${system} the last time it worked. Given to the operator for the next task like it.`
         ).slice(0, 500),
         kind: 'RECIPE' as const,

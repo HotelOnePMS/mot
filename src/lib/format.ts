@@ -157,7 +157,7 @@ export function formatMoney(
   opts: { cents?: boolean } = {},
 ): string {
   const v = Number(amount);
-  if (amount === null || amount === undefined || amount === '' || !Number.isFinite(v)) return '—';
+  if (amount === null || amount === undefined || amount === '' || !Number.isFinite(v)) return 'n/a';
   const hasCents = Math.round(Math.abs(v) * 100) % 100 !== 0;
   return moneyFn(v, { currency, cents: opts.cents ?? hasCents });
 }

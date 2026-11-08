@@ -395,16 +395,16 @@ function Checkout() {
    * One at a time: a second call while one is running (or after one succeeded, while the page moves on) is refused.
    */
   async function submit(): Promise<{ ok: true; id: string; code: string | null; total: number | null } | { ok: false; error: string; busy?: true; duplicate?: { id: string; code: string | null } }> {
-    if (booking.current) return { ok: false, error: 'It’s already booking — wait a moment.', busy: true };
+    if (booking.current) return { ok: false, error: 'It’s already booking. Wait a moment.', busy: true };
     const stayKey = JSON.stringify([session?.user?.id ?? session?.user?.email ?? '', propertyId, lines, checkIn, checkOut, guests, rooms]);
     const dup = recentBooking(stayKey);
     if (dup) {
       const message = `This stay was booked a moment ago${dup.code ? ` (confirmation code ${dup.code})` : ''}, so it wasn’t booked again.`;
       setError(`${message} Opening that booking.`);
       router.push(`/bookings/${dup.id}`);
-      return { ok: false, error: `${message} Its booking page is opening — tell the guest they already have it.`, duplicate: dup };
+      return { ok: false, error: `${message} Its booking page is opening. Tell the guest they already have it.`, duplicate: dup };
     }
-    if (!terms) return { ok: false, error: 'The booking terms are still loading — try again in a moment.' };
+    if (!terms) return { ok: false, error: 'The booking terms are still loading. Try again in a moment.' };
     if (!accepted) {
       setNeedAccept(true);
       acceptRef.current?.focus();
@@ -471,7 +471,7 @@ function Checkout() {
         ? [
             `checkout for ${orderWords}`,
             unavailable ? voiceText(soldOutText, 160).replace(/\.$/, '') : '',
-            tooSmall ? `${tooSmallText.replace(/\.$/, '')} — they need to add a room` : '',
+            tooSmall ? `${tooSmallText.replace(/\.$/, '')}, so they need to add a room` : '',
             status === 'loading' ? '' : signedIn ? `signed in as ${session?.user?.name ?? session?.user?.email}` : 'not signed in yet',
             method === 'stripe' ? 'card payment required to confirm' : 'paying at the hotel',
           ]
@@ -504,7 +504,7 @@ function Checkout() {
         };
       },
       confirmBooking: async (want): Promise<VoiceActionResult> => {
-        if (booking.current || busy) return { ok: false, error: 'It’s already booking — wait a moment.' };
+        if (booking.current || busy) return { ok: false, error: 'It’s already booking. Wait a moment.' };
         if (differsFromScreen(want)) {
           return {
             ok: false,
@@ -513,7 +513,7 @@ function Checkout() {
           };
         }
         if (quoteError) return { ok: false, error: `The price couldn’t be checked: ${(quoteError as Error).message}` };
-        if (!quote) return { ok: false, error: 'The price is still loading — try again in a moment.' };
+        if (!quote) return { ok: false, error: 'The price is still loading. Try again in a moment.' };
         if (unavailable) return { ok: false, error: `${voiceText(soldOutText, 160)} Offer to check other rooms or dates.` };
         if (tooSmall) return { ok: false, error: `${tooSmallText} Offer to add a room.` };
         if (!accepted) {
@@ -525,7 +525,7 @@ function Checkout() {
         }
         if (!signedIn) {
           askForDetails();
-          return { ok: false, error: 'The guest isn’t signed in yet. Ask them to finish “Your details” on screen — email and a password, or sign in — then you can book it.', needs: 'sign in' };
+          return { ok: false, error: 'The guest isn’t signed in yet. Ask them to finish “Your details” on screen (email and a password, or sign in), then you can book it.', needs: 'sign in' };
         }
         // Last check before booking: the guest answered a read-back of this order (the dock reads the transcript).
         if (!want.guestConfirmed) return { ok: false, error: 'Ask the guest to confirm the room, dates and total first.', needs: 'guest confirmation' };
@@ -538,7 +538,7 @@ function Checkout() {
         // What was actually booked, for the agent to read back.
         return {
           ok: true,
-          message: `Booked ${room ? (multi ? `${room}, one booking` : `the ${room}`) : 'the room'}${hotel ? ` at ${hotel}` : ''}, ${stayWords}, total ${price(paid, cur)} — pay at the hotel. Confirmation code ${r.code ?? 'on screen'}. Read back the hotel, room, dates and total. Their booking page is opening now${config?.emailEnabled ? ' and a confirmation email is on its way' : ''}.`,
+          message: `Booked ${room ? (multi ? `${room}, one booking` : `the ${room}`) : 'the room'}${hotel ? ` at ${hotel}` : ''}, ${stayWords}, total ${price(paid, cur)}, pay at the hotel. Confirmation code ${r.code ?? 'on screen'}. Read back the hotel, room, dates and total. Their booking page is opening now${config?.emailEnabled ? ' and a confirmation email is on its way' : ''}.`,
           code: r.code,
           hotel,
           room,
@@ -617,7 +617,7 @@ function Checkout() {
                   </div>
                   {isStaffRole(session?.user?.role) && (
                     <Callout tone="info" className="mt-3">
-                      You’re signed in as hotel staff — this booking will be under your own name.
+                      You’re signed in as hotel staff. This booking will be under your own name.
                     </Callout>
                   )}
                 </>
@@ -625,7 +625,7 @@ function Checkout() {
                 <>
                   {needDetails && (
                     <Callout tone="info" className="mb-5" role="status">
-                      Add your details to finish booking — it takes a few seconds.
+                      Add your details to finish booking. It takes a few seconds.
                     </Callout>
                   )}
                   <GuestAuth form={guestForm} setForm={setGuestForm} onDone={() => setTimeout(() => confirmRef.current?.focus(), 100)} />
@@ -633,7 +633,7 @@ function Checkout() {
               )}
             </Section>
 
-            <Section id="requests" title="Special requests" description="Optional. They go straight to the front desk — we can’t guarantee them, but we’ll try.">
+            <Section id="requests" title="Special requests" description="Optional. They go straight to the front desk. We can’t guarantee them, but we’ll try.">
               <Field label="Anything the hotel should know?" htmlFor="notes" labelClassName="sr-only">
                 <Textarea
                   id="notes"
@@ -744,7 +744,7 @@ function Checkout() {
                 {due && payNow ? <span className="tabular">· {price(fromCents(due.dueNowCents), cur)} today</span> : totalLabel && <span className="tabular">· {totalLabel}</span>}
               </Button>
               <p className="mt-3 text-center text-xs text-muted-foreground">
-                {isDemo ? 'This is a demo hotel — book freely, nothing is charged.' : method === 'stripe' ? 'You’ll pay on the next screen.' : 'You won’t be charged today.'}
+                {isDemo ? 'This is a demo hotel. Book freely, since nothing is charged.' : method === 'stripe' ? 'You’ll pay on the next screen.' : 'You won’t be charged today.'}
               </p>
             </section>
           </div>

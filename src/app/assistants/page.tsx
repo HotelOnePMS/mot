@@ -50,7 +50,7 @@ const ASSISTANTS: { name: string; steps: React.ReactNode[] }[] = [
       <>
         Where Grok offers <b>connectors</b> or <b>MCP servers</b>, add a new one and paste the link.
       </>,
-      <>Building with the xAI API? Add the link as a remote MCP tool — no key needed.</>,
+      <>Building with the xAI API? Add the link as a remote MCP tool, no key needed.</>,
       <>Then ask Grok to find or book a room.</>,
     ],
   },
@@ -84,11 +84,11 @@ const EXAMPLES = [
   'Find me a room in Santa Cruz next weekend for two and book it.',
   'Is parking free at The Saltwater Inn?',
   'Somewhere in Monterey for 3 nights from November 12, under $250 a night.',
-  'Find my booking ABC123 — the last name is Smith.',
+  'Find my booking ABC123. The last name is Smith.',
 ];
 
 const HOW = [
-  { icon: BedDouble, title: 'It finds rooms', text: 'Live availability and prices, straight from the hotel — not guesses.' },
+  { icon: BedDouble, title: 'It finds rooms', text: 'Live availability and prices, straight from the hotel, not guesses.' },
   { icon: MousePointerClick, title: 'You confirm', text: 'You get a link to the hotel’s own checkout with your room and dates filled in. Check it and confirm in one tap.' },
   { icon: Mic, title: 'No screen? No problem', text: 'On a voice chat, your assistant can send your request to the hotel. The team confirms by email or phone.' },
 ];
@@ -109,7 +109,7 @@ export default async function AssistantsPage() {
           <p className="text-2xs font-semibold uppercase tracking-[0.18em] text-primary">For travellers</p>
           <h1 className="mt-4 text-balance font-display text-4xl font-medium leading-[1.1] tracking-tight sm:text-6xl">Book with your AI assistant</h1>
           <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-muted-foreground">
-            Ask ChatGPT, Claude, Grok or any AI assistant to find you a room at a {PRODUCT_NAME} hotel. It checks live prices and hands you a booking link with everything filled in — you just confirm.
+            Ask ChatGPT, Claude, Grok or any AI assistant to find you a room at a {PRODUCT_NAME} hotel. It checks live prices and hands you a booking link with everything filled in. You just confirm.
           </p>
 
           <div className="mx-auto mt-10 max-w-xl rounded-2xl border bg-card p-4 text-left shadow-soft sm:p-5">
@@ -212,13 +212,13 @@ export default async function AssistantsPage() {
                   For developers
                 </h2>
                 <p className="mt-2 max-w-2xl text-muted-foreground">
-                  Building your own agent — on Muse, Grok, OpenAI, Anthropic or anything else? Connect over MCP or plain REST.
+                  Building your own agent on Muse, Grok, OpenAI, Anthropic or anything else? Connect over MCP or plain REST.
                 </p>
                 <dl className="mt-6 grid gap-x-8 gap-y-5 text-sm sm:grid-cols-2">
                   <div>
                     <dt className="font-medium">MCP server</dt>
                     <dd className="mt-1 leading-relaxed text-muted-foreground">
-                      <code className="break-all rounded-sm bg-muted px-1 py-px font-mono text-[0.85em] text-foreground">{mcp}</code> — Streamable HTTP, stateless. One hotel only:{' '}
+                      <code className="break-all rounded-sm bg-muted px-1 py-px font-mono text-[0.85em] text-foreground">{mcp}</code> (Streamable HTTP, stateless). One hotel only:{' '}
                       <code className="break-all rounded-sm bg-muted px-1 py-px font-mono text-[0.85em] text-foreground">/api/mcp/hotels/&#123;hotel id&#125;</code>
                     </dd>
                   </div>
@@ -229,7 +229,7 @@ export default async function AssistantsPage() {
                       <a href="/openapi.json" className={textLink}>
                         OpenAPI 3.1 description
                       </a>{' '}
-                      — import it as a GPT Action or any tool-calling setup.
+                      to import as a GPT Action or any tool-calling setup.
                     </dd>
                   </div>
                   <div>
@@ -262,7 +262,7 @@ export default async function AssistantsPage() {
           </div>
 
           <div className="mt-8 flex flex-col items-center justify-between gap-4 rounded-2xl bg-primary-soft px-6 py-5 text-primary-soft-foreground sm:flex-row">
-            <p className="text-sm font-medium">Run a hotel? Give guests your own assistant link — it’s in your console under {TERMS.assistants}.</p>
+            <p className="text-sm font-medium">Run a hotel? Give guests your own assistant link. It’s in your console under {TERMS.assistants}.</p>
             <Button asChild variant="default" className="h-11 shrink-0 sm:h-10">
               <Link href="/onboarding">
                 {LABELS.hotelSignup} <ArrowRight aria-hidden />

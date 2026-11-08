@@ -41,7 +41,7 @@ const createSchema = z.discriminatedUnion('kind', [
     propertyId: z.string().min(1),
     kind: z.literal('MACRO'),
     name: text(60, 'Give the shortcut a short name, like “late checkout”.'),
-    steps: z.array(z.string().trim().max(500)).max(20).transform((a) => a.filter(Boolean)).pipe(z.array(z.string()).min(1, 'Add at least one step — a command you’d type to the agent.')),
+    steps: z.array(z.string().trim().max(500)).max(20).transform((a) => a.filter(Boolean)).pipe(z.array(z.string()).min(1, 'Add at least one step (a command you’d type to the agent).')),
   }),
 ]);
 
@@ -55,7 +55,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
   if (body.kind === 'ANSWER') {
     if (body.audience !== 'STAFF' && (await guestAnswersLocked(actor, propertyId))) throw forbidden(SKILLS_DEMO_LOCKED);
     const key = answerKey(body.question);
-    if (await prisma.agentSkill.findFirst({ where: { propertyId, key }, select: { id: true } })) throw conflict('There’s already an answer to that question — edit it instead.');
+    if (await prisma.agentSkill.findFirst({ where: { propertyId, key }, select: { id: true } })) throw conflict('There’s already an answer to that question. Edit it instead.');
     const skill = await upsertSkill({
       propertyId,
       key,
@@ -74,7 +74,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
 
   if (reservedShortcutName(body.name)) throw badRequest(SHORTCUT_NAME_RESERVED);
   const key = skillKey(body.name);
-  if (await prisma.agentSkill.findFirst({ where: { propertyId, key }, select: { id: true } })) throw conflict('There’s already a shortcut with that name — pick another name or edit the existing one.');
+  if (await prisma.agentSkill.findFirst({ where: { propertyId, key }, select: { id: true } })) throw conflict('There’s already a shortcut with that name. Pick another name or edit the existing one.');
   const macro: MacroBody = { steps: body.steps.map((command) => ({ command })) };
   const skill = await upsertSkill({
     propertyId,

@@ -29,10 +29,10 @@ function decline(e: unknown) {
   const code = e instanceof DomainError ? e.code : null;
   const line =
     code === 'RATE_LIMITED'
-      ? 'Thanks for getting in touch — we’re very busy right now. Please try again in a few minutes.'
+      ? 'Thanks for getting in touch. We’re very busy right now. Please try again in a few minutes.'
       : code === 'VOICE_OFF' || code === 'NOT_FOUND'
-        ? 'Thanks for getting in touch. Our virtual assistant isn’t available on this line right now — please try again later.'
-        : 'Thanks for getting in touch. I’m sorry — we’re having trouble right now. Please try again in a few minutes.';
+        ? 'Thanks for getting in touch. Our virtual assistant isn’t available on this line right now. Please try again later.'
+        : 'Thanks for getting in touch. I’m sorry, we’re having trouble right now. Please try again in a few minutes.';
   return answer('', 'You have already told the guest you can’t help right now. Say a brief goodbye and end the conversation. Do not offer anything else.', line);
 }
 

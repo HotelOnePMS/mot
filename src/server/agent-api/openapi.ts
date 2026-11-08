@@ -229,7 +229,7 @@ export function openApiDocument(origin: string) {
       description: [
         `Find ${PRODUCT_NAME} hotels, check live availability and prices, and book. The same operations are available as an MCP server at ${origin}/api/mcp.`,
         '',
-        'Booking flow: searchHotels → checkAvailability → createBookingLink (the guest opens the pre-filled checkout and confirms; the default) — or requestBooking when the guest can’t open a link (the hotel confirms), or createBooking with an API key (confirmed at once, paid at the hotel).',
+        'Booking flow: searchHotels → checkAvailability → createBookingLink (the guest opens the pre-filled checkout and confirms; the default); or requestBooking when the guest can’t open a link (the hotel confirms), or createBooking with an API key (confirmed at once, paid at the hotel).',
         'Always confirm the hotel, room, dates, guests and total with the guest before requestBooking or createBooking.',
         'Several room types in one booking (for example 2 King rooms and a Twin): pass items, each roomTypeId with its rooms, instead of roomTypeId and rooms. guests is the whole party.',
         '',
@@ -283,7 +283,7 @@ export function openApiDocument(origin: string) {
           operationId: 'askHotel',
           tags: ['Hotels'],
           summary: 'Ask the hotel',
-          description: 'Answers a guest’s question (parking, pets, breakfast, Wi-Fi, policies, getting there…) from the hotel’s own saved answers. Pass question or topic. If nothing matches, offer the hotel’s phone — don’t guess.',
+          description: 'Answers a guest’s question (parking, pets, breakfast, Wi-Fi, policies, getting there…) from the hotel’s own saved answers. Pass question or topic. If nothing matches, offer the hotel’s phone and don’t guess.',
           security: [],
           parameters: [propertyIdParam, ...queryParams(s.askHotel, ['propertyId'])],
           responses: { ...ok('The best matching answers, or the topics the hotel has answers for.', 'HotelAnswers'), '404': errorResponse('Unknown or unlisted hotel.'), ...COMMON_ERRORS },

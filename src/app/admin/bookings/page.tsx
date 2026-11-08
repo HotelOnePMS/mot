@@ -223,7 +223,7 @@ export default function BookingsPage() {
               <div className="flex flex-col items-center gap-2 border-t bg-surface-sunken/50 px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:justify-between">
                 <p role="status">
                   Showing {formatNumber(shown.length)} of {formatNumber(rows.length)}
-                  {data && data.length >= API_LIMIT && !searching ? ' — search to find older or later stays' : ''}
+                  {data && data.length >= API_LIMIT && !searching ? '. Search to find older or later stays.' : ''}
                 </p>
                 {shown.length < rows.length && (
                   <Button variant="outline" size="sm" onClick={() => setLimit((l) => l + PAGE)}>

@@ -214,7 +214,7 @@ function Directory() {
     stay: query.dated ? { checkIn: query.checkIn, checkOut: query.checkOut, guests: query.guests, rooms: 1 } : null,
     summary: `the list of hotels${searchWords ? ` for the search ${searchWords}` : query.q ? ' for the guest’s search' : ''}${query.dated ? ` for ${fmtRange(query.checkIn, query.checkOut)}` : ''}, ${plural(query.guests, 'guest')}${
       data
-        ? ` — ${plural(sorted.length, 'hotel')} shown${sorted.length ? `: ${sorted.slice(0, 5).map((p) => `${voiceText(p.name, 60)} (${voiceText(p.city, 40)})`).join(', ')}${sorted.length > 5 ? '…' : ''}` : ''}`
+        ? `, ${plural(sorted.length, 'hotel')} shown${sorted.length ? `: ${sorted.slice(0, 5).map((p) => `${voiceText(p.name, 60)} (${voiceText(p.city, 40)})`).join(', ')}${sorted.length > 5 ? '…' : ''}` : ''}`
         : ''
     }`,
   });
@@ -263,7 +263,7 @@ function Directory() {
 
         {anyDemo && (
           <Callout tone="info" icon={Info} className="mb-8">
-            These are demo hotels — look around and book freely. Nothing is charged.
+            These are demo hotels. Look around and book freely. Nothing is charged.
           </Callout>
         )}
 
@@ -291,7 +291,7 @@ function Directory() {
             <EmptyState
               icon={SearchX}
               title={query.q ? `No stays match “${query.q}”` : 'No hotels are taking bookings yet'}
-              description={query.q ? 'Check the spelling, or try a nearby city or the hotel’s name.' : 'Check back soon — new hotels are added all the time.'}
+              description={query.q ? 'Check the spelling, or try a nearby city or the hotel’s name.' : 'Check back soon. New hotels are added all the time.'}
               action={
                 query.q ? (
                   <Button variant="outline" onClick={() => go({ q: '' })}>
@@ -311,7 +311,7 @@ function Directory() {
 
         {data && sorted.length > 0 && bookable === 0 && (
           <p className="mt-10 text-center text-sm text-muted-foreground">
-            {multiRoom ? `No single room sleeps ${query.guests} — open a hotel to book several rooms together.` : 'Nothing is free for this search — try other dates or fewer guests.'}
+            {multiRoom ? `No single room sleeps ${query.guests}. Open a hotel to book several rooms together.` : 'Nothing is free for this search. Try other dates or fewer guests.'}
           </p>
         )}
       </section>

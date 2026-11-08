@@ -328,7 +328,7 @@ function RoomCard({
                 </>
               ) : state === 'too-small' ? (
                 <p className="max-w-xs text-sm text-muted-foreground">
-                  Sleeps {rt.capacity} per room — {stay.guests} guests need {plural(neededRooms, 'room')}.
+                  Sleeps {rt.capacity} per room, so {stay.guests} guests need {plural(neededRooms, 'room')}.
                 </p>
               ) : state === 'sold-out' ? (
                 <p className="text-sm text-muted-foreground">No rooms left for {fmtRange(stay.checkIn, stay.checkOut)}.</p>
@@ -470,7 +470,7 @@ function PropertyPage() {
     roomOptions: voiceRooms,
     summary: name
       ? `${voiceText(name, 80)}’s page, showing ${fmtRange(stay.checkIn, stay.checkOut)} for ${plural(stay.guests, 'guest')}${(stay.rooms ?? 1) > 1 ? `, ${plural(stay.rooms ?? 1, 'room')}` : ''}${
-          avail ? (voiceCheapest ? ` — from ${price(Math.round(voiceCheapest.nightly!), cur)} a night (${voiceText(voiceCheapest.name, 80)})` : ' — nothing left for these dates') : ''
+          avail ? (voiceCheapest ? `, from ${price(Math.round(voiceCheapest.nightly!), cur)} a night (${voiceText(voiceCheapest.name, 80)})` : '. Nothing left for these dates') : ''
         }${selection.length ? `; the guest has picked ${selection.map((l) => `${l.rooms} × ${voiceText(p?.roomTypes.find((r) => r.id === l.roomTypeId)?.name ?? 'a room', 80)}`).join(', ')} to book together` : ''}`
       : null,
     // Phones: clear the fixed booking bar (≈69px + safe area) at the bottom of the page.
@@ -542,7 +542,7 @@ function PropertyPage() {
     : pickedShort
       ? `Only ${plural(pickedShort.a!.available, 'room')} left in the ${pickedShort.rt!.name} for these dates.`
       : pickedSleeps < stay.guests
-        ? `These rooms sleep ${pickedSleeps} — add a room for ${plural(stay.guests, 'guest')}.`
+        ? `These rooms sleep ${pickedSleeps}. Add a room for ${plural(stay.guests, 'guest')}.`
         : stay.guests < picked.length
           ? 'Each room type needs at least one guest. Remove one, or add guests.'
           : null;
@@ -880,21 +880,21 @@ function PropertyPage() {
                 </div>
                 {cheapest && (
                   <p className="mt-3 text-center text-sm text-muted-foreground">
-                    {plural(bookable.length, 'room type')} available —{' '}
+                    {plural(bookable.length, 'room type')} available.{' '}
                     <button type="button" onClick={() => scrollTo(roomsRef.current)} className="rounded-sm font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                      see rooms
+                      See rooms
                     </button>
                   </p>
                 )}
               </div>
               <p className="flex items-center justify-center gap-1.5 px-2 text-center text-xs text-muted-foreground">
                 <Lock className="h-3.5 w-3.5" aria-hidden />
-                {isDemo ? 'Demo hotel — nothing is charged' : 'Secure booking · no booking fees'}
+                {isDemo ? 'Demo hotel: nothing is charged' : 'Secure booking · no booking fees'}
               </p>
               {p && voice && dock && (
                 <div className="rounded-2xl border bg-card p-4 shadow-xs">
                   <p className="text-sm font-semibold">Questions before you book?</p>
-                  <p className="mt-0.5 text-sm text-muted-foreground">Talk to the front desk — an AI voice that knows today’s rooms and prices.</p>
+                  <p className="mt-0.5 text-sm text-muted-foreground">Talk to the front desk: an AI voice that knows today’s rooms and prices.</p>
                   {/* Opens the site's one voice dock (the call keeps going as you move to checkout). */}
                   <Button type="button" variant="outline" className="mt-3 h-11 w-full rounded-xl" onClick={dock.start} onPointerEnter={dock.prepare} onFocus={dock.prepare}>
                     <AudioLines className="text-brand" aria-hidden /> Talk to us

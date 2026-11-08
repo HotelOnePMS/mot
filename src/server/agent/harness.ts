@@ -19,6 +19,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod/v4';
 import { prisma } from '@/lib/prisma';
+import { NO_EM_DASHES } from '@/lib/writing-style';
 import type { AgentBlock, AgentContextState, AgentEvent } from '@/lib/agent/blocks';
 import type { ISODate } from '@/lib/dto';
 import { money } from '@/lib/status';
@@ -507,7 +508,7 @@ async function planSetRates(ctx: ToolCtx, raw: unknown): Promise<PlanOutput> {
     const beforeLabel = before.length === 1 ? fmt(before[0]) : `${fmt(Math.min(...before))}–${fmt(Math.max(...before))}`;
     const afterLabel = c.price !== undefined ? fmt(c.price) : c.reset ? `base ${fmt(Number(rt.basePrice))}` : `${c.percent! > 0 ? '+' : ''}${c.percent}%`;
     if (c.price !== undefined && before.length && Math.abs(c.price - before[0]) / before[0] > 0.5) {
-      warnings.push(`${rt.name}: ${fmt(c.price)} is more than 50% away from the current ${fmt(before[0])} — double-check it.`);
+      warnings.push(`${rt.name}: ${fmt(c.price)} is more than 50% away from the current ${fmt(before[0])}. Double-check it.`);
     }
     const days = c.weekdays?.length && c.weekdays.length < 7 ? ` (${c.weekdays.map((d) => WEEKDAY[d]).join('/')} only)` : '';
     steps.push({
@@ -529,7 +530,7 @@ async function planCreateReservation(ctx: ToolCtx, raw: unknown): Promise<PlanOu
   const rt = await resolveRoomTypeExact(ctx.propertyId, a.room_type);
   const avail = await propertyAvailability({ propertyId: ctx.propertyId, checkIn: a.check_in, checkOut: a.check_out, guests: a.guests, rooms: a.rooms });
   const row = avail.find((r) => r.id === rt.id);
-  if (!row || row.available < a.rooms) throw new HarnessInputError(`${rt.name} has ${row?.available ?? 0} room(s) free for those dates — not enough. Check availability for another type.`);
+  if (!row || row.available < a.rooms) throw new HarnessInputError(`${rt.name} has ${row?.available ?? 0} room(s) free for those dates, which isn’t enough. Check availability for another type.`);
   const { currency } = await hotelLocale(ctx.propertyId);
   const nights = diffDays(a.check_in, a.check_out);
   return {
@@ -654,7 +655,7 @@ function blockText(b: AgentBlock): string[] {
 function blocksForModel(blocks: AgentBlock[]): string {
   const keep = blocks.filter((b) => !['suggestions', 'navigate'].includes(b.type));
   const text = JSON.stringify(keep, (_k, v) => (v === null || v === undefined || v === '' ? undefined : typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : v));
-  return text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}… (truncated — narrow the query for more)` : text;
+  return text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}… (truncated; narrow the query for more)` : text;
 }
 
 // ---------------------------------------------------------------------------
@@ -662,14 +663,16 @@ function blocksForModel(blocks: AgentBlock[]): string {
 // ---------------------------------------------------------------------------
 
 function systemPrompt(ctx: ToolCtx): string {
-  return `You are the operations agent built into ${ctx.propertyName}'s property management system. Staff and owners talk to you in plain words — often messy, typo-ridden, pasted tables, or voice transcripts — and you get things done with the tools.
+  return `You are the operations agent built into ${ctx.propertyName}'s property management system. Staff and owners talk to you in plain words (often messy, typo-ridden, pasted tables, or voice transcripts) and you get things done with the tools.
 
 How to work:
 - Work out what the person wants, even from rough phrasing, typos ("ped fee" = pet fee), half sentences or a pasted table. Follow-ups refer to what you showed last ("patel", "her", "the arrival guy"): resolve them from that context. Look things up with the read tools when you need facts (ids, current prices, who is arriving) and make independent calls in parallel.
-- To change anything, call the write tools. Writes are never applied directly: each call adds steps to ONE plan the person reviews and confirms with a button. So never say a change is done — say you've prepared it for them to confirm. Put everything the person asked for into this one plan; don't ask permission first.
+- To change anything, call the write tools. Writes are never applied directly: each call adds steps to ONE plan the person reviews and confirms with a button. So never say a change is done. Say you've prepared it for them to confirm. Put everything the person asked for into this one plan; don't ask permission first.
 - For rates: map each row of a request to set_rates changes (one call with all changes). Use list_room_types for exact names. Remember \`to\` in set_rates is the last night, inclusive; use \`nights\` for scattered dates and \`weekdays\` for patterns like Sun–Thu. Read the current calendar first only if you need current prices to compute something.
 - If a tool says something is ambiguous or impossible, fix your input and retry, or explain it plainly and ask one short question. Don't invent ids, names, rooms or prices.
 - For questions about hotel policies or amenities, use hotel_knowledge.
+
+${NO_EM_DASHES}
 
 Reply style: the cards from your tools are shown to the person automatically, so don't repeat their numbers at length. End with one or two short sentences: what you found or what's ready to confirm, plus anything that needs their attention. Plain words, no markdown headings.
 
@@ -791,7 +794,7 @@ async function runTool(ctx: ToolCtx, name: string, raw: unknown, acc: HarnessRes
   if (name === 'list_room_types') return { blocks: [], forModel: JSON.stringify(await roomTypesResult(ctx.propertyId)) };
   if (name === 'get_rate_calendar') {
     const text = JSON.stringify(await rateCalendarResult(ctx.propertyId, raw));
-    return { blocks: [], forModel: text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}… (truncated — ask for fewer nights or one room type)` : text };
+    return { blocks: [], forModel: text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}… (truncated; ask for fewer nights or one room type)` : text };
   }
   if (name === 'hotel_knowledge') {
     const { question } = parseInput('hotel_knowledge', raw);

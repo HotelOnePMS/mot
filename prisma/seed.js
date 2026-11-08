@@ -64,9 +64,9 @@ async function main() {
   // ---------- users ----------
   const adminPassword = process.env.ADMIN_SEED_PASSWORD;
   if (isProduction && !adminPassword) {
-    console.warn('NODE_ENV=production and ADMIN_SEED_PASSWORD not set — skipping admin creation.');
+    console.warn('NODE_ENV=production and ADMIN_SEED_PASSWORD not set, skipping admin creation.');
   } else {
-    if (!adminPassword) console.warn('ADMIN_SEED_PASSWORD not set — using insecure default admin password (dev only).');
+    if (!adminPassword) console.warn('ADMIN_SEED_PASSWORD not set, using insecure default admin password (dev only).');
     await prisma.user.upsert({
       where: { email: 'admin@motelbooking.com' },
       update: {},
@@ -131,7 +131,7 @@ async function main() {
       await prisma.property.update({ where: { id: p.id }, data: { description: p.description.replaceAll('StayOS', 'HotelOne') } });
     }
     if (renamed.length) console.log(`Renamed StayOS → HotelOne in ${renamed.length} demo hotel description(s).`);
-    console.log('Demo hotels already present — logins checked, nothing else to seed.');
+    console.log('Demo hotels already present. Logins checked, nothing else to seed.');
     return;
   }
 
@@ -192,7 +192,7 @@ async function main() {
     data: {
       propertyId: inn.id,
       name: 'Family Suite',
-      description: 'Two rooms, a sofa bed and a kitchenette — space for the whole crew.',
+      description: 'Two rooms, a sofa bed and a kitchenette: space for the whole crew.',
       capacity: 5,
       basePrice: 349,
       totalRooms: 4,
@@ -305,7 +305,7 @@ async function main() {
   await book({ rt: rtOcean, inOff: -1, nights: 4, status: 'CHECKED_IN', room: '302' });
   await book({ rt: rtOcean, inOff: -2, nights: 5, status: 'CHECKED_IN', room: '203', notes: 'Extra pillows' });
   await book({ rt: rtGarden, inOff: -1, nights: 3, status: 'CHECKED_IN', room: '107' });
-  await book({ rt: rtGarden, inOff: -5, nights: 7, status: 'CHECKED_IN', room: '102', notes: 'Long stay — weekly linen change' });
+  await book({ rt: rtGarden, inOff: -5, nights: 7, status: 'CHECKED_IN', room: '102', notes: 'Long stay: weekly linen change' });
   await book({ rt: rtSuite, inOff: -1, nights: 2, status: 'CHECKED_IN', room: '401', guestsCount: 5 });
   // Arrivals today.
   await book({ guest: guests[0], rt: rtOcean, inOff: 0, nights: 3, status: 'CONFIRMED', notes: 'Celebrating their 10th anniversary', guestsCount: 2 });
@@ -356,7 +356,7 @@ async function main() {
   await prisma.room.update({ where: { id: rooms['402'].id }, data: { status: 'INSPECTED' } });
   await prisma.room.update({
     where: { id: rooms['106'].id },
-    data: { isOutOfOrder: true, outOfOrderReason: 'AC unit replacement — vendor booked', status: 'OUT_OF_ORDER' },
+    data: { isOutOfOrder: true, outOfOrderReason: 'AC unit replacement (vendor booked)', status: 'OUT_OF_ORDER' },
   });
   await prisma.roomHousekeeping.create({ data: { roomId: rooms['108'].id, assignedTo: hk1.id, status: 'IN_PROGRESS', priority: 2, notes: 'Stay-over refresh' } });
   await prisma.roomHousekeeping.create({ data: { roomId: rooms['202'].id, assignedTo: hk1.id, status: 'PENDING', priority: 1 } });
@@ -372,7 +372,7 @@ async function main() {
   await audit(manager.id, inn.id, 'HOUSEKEEPING_ASSIGN', 'Assigned rooms 108 and 202 to Rosa Martinez', 'classic', 2.4);
   await audit(manager.id, inn.id, 'RATES_UPDATE', 'Ocean King: 4 weekend nights adjusted +10%', 'agent', 26);
   await audit(owner.id, inn.id, 'VOICE_SETTINGS', 'Updated voice agent settings', 'classic', 30);
-  await audit(desk.id, inn.id, 'ROOM_STATUS', 'Room 106 taken out of order — AC unit replacement', 'classic', 5);
+  await audit(desk.id, inn.id, 'ROOM_STATUS', 'Room 106 taken out of order for an AC unit replacement', 'classic', 5);
   await audit(owner.id, inn.id, 'MODE_SWITCH', 'Default interface set to Agentic', 'classic', 48);
 
   // ---------- voice front desk ----------
@@ -380,18 +380,18 @@ async function main() {
     data: {
       propertyId: inn.id,
       voice: 'marin',
-      greeting: 'Thanks for calling the Saltwater Inn — this is the front desk. How can I help?',
+      greeting: 'Thanks for calling the Saltwater Inn. This is the front desk. How can I help?',
       instructions: 'Always mention breakfast is included. Dogs under 30 lb are welcome for $25 a night. We don’t offer day-use rooms.',
       faqs: [
-        { q: 'Is parking free?', a: 'Yes — free on-site parking for every guest, including EV chargers.' },
+        { q: 'Is parking free?', a: 'Yes, free on-site parking for every guest, including EV chargers.' },
         { q: 'What time is breakfast?', a: 'Breakfast is included, 7 to 10:30 every morning in the garden room.' },
-        { q: 'Can I check in early?', a: 'From 3 PM; earlier when the room is ready — we’ll text you. Bags can be dropped any time.' },
+        { q: 'Can I check in early?', a: 'From 3 PM; earlier when the room is ready. We’ll text you. Bags can be dropped any time.' },
         { q: 'Do you allow pets?', a: 'Dogs under 30 pounds, $25 per night, in Garden Queen rooms.' },
       ],
       handoffPhone: '+1 831 555 0100',
     },
   });
-  await prisma.guestRequest.create({ data: { propertyId: inn.id, name: 'Dana Whitfield', phone: '+1 408 555 0144', message: 'Planning a wedding block of 10 rooms for June 12–14 — would like group pricing.', createdAt: ago(1.5) } });
+  await prisma.guestRequest.create({ data: { propertyId: inn.id, name: 'Dana Whitfield', phone: '+1 408 555 0144', message: 'Planning a wedding block of 10 rooms for June 12–14 and would like group pricing.', createdAt: ago(1.5) } });
   await prisma.guestRequest.create({ data: { propertyId: inn.id, name: 'Kenji Mori', email: 'kenji.mori@example.com', message: 'Asked whether the Family Suite has a crib available.', status: 'DONE', handledById: desk.id, createdAt: ago(20) } });
   await prisma.voiceSession.createMany({
     data: [
@@ -407,7 +407,7 @@ async function main() {
       name: 'Harbor Motel',
       type: 'Motel',
       tagline: 'Simple rooms by the wharf.',
-      description: 'A friendly 30-room motel two minutes from Fisherman’s Wharf. Runs on Cloudbeds — HotelOne works it through the bridge.',
+      description: 'A friendly 30-room motel two minutes from Fisherman’s Wharf. Runs on Cloudbeds, and HotelOne works it through the bridge.',
       address: '12 Pier Road',
       city: 'Monterey',
       state: 'CA',
@@ -507,7 +507,7 @@ async function main() {
   const counts = await Promise.all([prisma.booking.count(), prisma.room.count(), prisma.user.count()]);
   console.log(`Seeded: ${counts[0]} bookings, ${counts[1]} rooms, ${counts[2]} users. Hotel "today" = ${today} (${TZ}).`);
   console.log('Demo logins (password demo1234): owner@ / manager@ / frontdesk@ / housekeeping@ / guest@hotelone.demo');
-  console.log('Owner, manager and front desk also see Harbor Motel — a hotel that keeps Cloudbeds (bridge path).');
+  console.log('Owner, manager and front desk also see Harbor Motel, a hotel that keeps Cloudbeds (bridge path).');
 }
 
 main()

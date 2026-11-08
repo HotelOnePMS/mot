@@ -20,7 +20,7 @@ function limited(ip: string) {
  */
 export const POST = handleRoute(async (request: NextRequest) => {
   const ip = clientIp(request);
-  if (limited(ip)) throw new DomainError(429, 'RATE_LIMITED', 'Too many pairing attempts — wait a minute and try again.');
+  if (limited(ip)) throw new DomainError(429, 'RATE_LIMITED', 'Too many pairing attempts. Wait a minute and try again.');
   const body = await parseJson(request, z.object({ code: z.string().trim().min(4).max(20), deviceName: z.string().trim().min(1).max(80) }));
   return json(await pairDevice(body.code, body.deviceName));
 });

@@ -161,7 +161,7 @@ function ChangeDatesDialog({
           <DialogTitle>Change your dates</DialogTitle>
           <DialogDescription>
             {booking.canModifyCheckIn
-              ? 'Pick new dates — we’ll check availability and show the new price before anything changes.'
+              ? 'Pick new dates. We’ll check availability and show the new price before anything changes.'
               : 'Your check-in date can no longer change online, but you can still change your check-out.'}
           </DialogDescription>
         </DialogHeader>
@@ -281,11 +281,11 @@ function CancelDialog({ b, open, onOpenChange, onDone }: { b: GuestBooking; open
         <Callout tone="danger" icon={TriangleAlert}>
           <p className="font-semibold">This can’t be undone.</p>
           <p>
-            Your room is released to other guests. Cancelling is free —{' '}
+            Your room is released to other guests. Cancelling is free:{' '}
             {b.paymentStatus === 'PAID' || b.paymentStatus === 'DEPOSIT_PAID' ? 'you paid online, so the hotel will arrange your refund according to its policy.' : 'nothing has been charged.'}
           </p>
         </Callout>
-        <Field label="Reason" optional htmlFor="cancel-reason" hint="Helps the hotel — only they can see it.">
+        <Field label="Reason" optional htmlFor="cancel-reason" hint="Helps the hotel. Only they can see it.">
           <Textarea id="cancel-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} placeholder="Plans changed…" />
         </Field>
         {error && (
@@ -360,7 +360,7 @@ function BookingPage() {
           b.reservation ? ` (one of ${b.reservation.lines.length} room types in this booking, ${price(b.reservation.totalPrice, b.currency)} in all)` : ''
         }, ${fmtDay(b.checkIn, 'weekday')} to ${fmtDay(b.checkOut, 'weekday')}, ${plural(b.guests, 'guest')}, ${price(b.totalPrice, b.currency)} (${paymentLabel(b.paymentStatus).label.toLowerCase()})${
           b.policy.passed ? '' : `; free changes until ${b.policy.deadlineLabel}`
-        }${isNew ? ' — they have just booked it' : ''}`
+        }${isNew ? ' (they have just booked it)' : ''}`
       : null,
   });
 
@@ -465,7 +465,7 @@ function BookingPage() {
               <Check className="h-6 w-6" />
             </motion.span>
             <div className="min-w-0">
-              <p className="font-display text-2xl leading-tight tracking-tight">{payment === 'success' ? 'Payment received — you’re booked!' : 'You’re booked!'}</p>
+              <p className="font-display text-2xl leading-tight tracking-tight">{payment === 'success' ? 'Payment received. You’re booked!' : 'You’re booked!'}</p>
               <p className="mt-1 text-sm">
                 {config?.emailEnabled ? `We’ve emailed your confirmation to ${b.user.email}. ` : 'Keep your confirmation code handy. '}
                 {b.property.name} is expecting you on {fmtDay(b.checkIn, 'long')}.
@@ -626,7 +626,7 @@ function BookingPage() {
                   <p className="mt-2 flex items-start gap-2.5 rounded-xl bg-success-soft px-3.5 py-2.5 text-sm text-success-soft-foreground">
                     <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
                     <span>
-                      <strong className="font-semibold">Free changes and cancellation until {b.policy.deadlineLabel}</strong> — the day before check-in.
+                      <strong className="font-semibold">Free changes and cancellation until {b.policy.deadlineLabel}</strong> (the day before check-in).
                     </span>
                   </p>
                 )}

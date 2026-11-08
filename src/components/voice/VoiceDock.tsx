@@ -591,7 +591,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
         if (navigating())
           return {
             error:
-              "The page you opened is still loading on the guest’s screen — wait a moment, then try again.",
+              "The page you opened is still loading on the guest’s screen. Wait a moment, then try again.",
           };
         const here = currentPage();
         const checkout =
@@ -600,10 +600,10 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
         if (!checkout)
           return {
             error:
-              "Checkout isn’t open on the guest’s screen — call start_booking first.",
+              "Checkout isn’t open on the guest’s screen. Call start_booking first.",
           };
         const loading = {
-          error: "Checkout is still loading — try again in a moment.",
+          error: "Checkout is still loading. Try again in a moment.",
         };
         if (call.name === "fill_guest_details") {
           const fill = here.actions?.fillGuest;
@@ -1284,7 +1284,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
                           {VOICE_PHASE_LABEL[phase]}
                         </span>
                         <span className="sr-only">
-                          — open the call with the {deskName}
+                          Open the call with the {deskName}
                         </span>
                       </button>
                       {!pillFolded && (
@@ -1359,7 +1359,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
                       </div>
                     </div>
                     <IconButton
-                      label={live ? "Minimise — the call keeps going" : "Close"}
+                      label={live ? "Minimise (the call keeps going)" : "Close"}
                       variant="ghost"
                       size="icon-lg"
                       className="-mr-2 -mt-1 shrink-0 text-muted-foreground"
@@ -1376,8 +1376,8 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
                       voice.state === "connecting"
                         ? "Connecting… If your browser asks, allow the microphone."
                         : scope === "hotel"
-                          ? "Ask about rooms, prices, parking — anything. Say what you’d like to book and it opens on your screen."
-                          : "Just say where and when — for example, “a room in Santa Cruz this weekend for two”."
+                          ? "Ask about rooms, prices, parking or anything else. Say what you’d like to book and it opens on your screen."
+                          : "Just say where and when. For example, “a room in Santa Cruz this weekend for two”."
                     }
                   />
 
@@ -1445,7 +1445,7 @@ export function VoiceDock({ children }: { children: React.ReactNode }) {
                       className="mt-3 text-center text-xs leading-relaxed text-muted-foreground sm:mb-4"
                     >
                       You’re talking to an AI voice that uses live prices. It
-                      only books when you say yes — never share card details by
+                      only books when you say yes. Never share card details by
                       voice.
                     </p>
                   </div>

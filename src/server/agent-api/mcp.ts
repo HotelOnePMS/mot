@@ -135,7 +135,7 @@ async function dispatch(msg: RpcRequest, s: Session): Promise<RpcResponse | null
       return rpcResult(id, {
         protocolVersion,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: PRODUCT_NAME, title: s.hotel ? `${s.hotel.name} — book on ${PRODUCT_NAME}` : `${PRODUCT_NAME} — find and book hotels`, version: MCP_SERVER_VERSION },
+        serverInfo: { name: PRODUCT_NAME, title: s.hotel ? `${s.hotel.name}: book on ${PRODUCT_NAME}` : `${PRODUCT_NAME}: find and book hotels`, version: MCP_SERVER_VERSION },
         instructions: await instructions(s.hotel, s.key),
       });
     }
@@ -263,7 +263,7 @@ export async function handleMcpPost(request: Request, propertyId: string | null 
     }
     if (e instanceof ZodError) return reply(request, 400, rpcError(null, RPC.INVALID_PARAMS, e.issues[0]?.message ?? 'Invalid params'));
     logError('mcp', 'failed', e);
-    return reply(request, 500, rpcError(null, RPC.INTERNAL_ERROR, 'Internal error — please try again shortly.'), {}, limits);
+    return reply(request, 500, rpcError(null, RPC.INTERNAL_ERROR, 'Internal error. Please try again shortly.'), {}, limits);
   }
 }
 

@@ -165,7 +165,7 @@ export function useAgent(propertyId: string | undefined, opts: { onChange?: () =
           failure = 'Stopped.';
           updateTurn(agentTurn.id, (t) => ({ ...t, pending: false, status: undefined, error: t.blocks.length ? undefined : 'Stopped.' }));
         } else {
-          const msg = e instanceof ApiError ? e.message : !navigator.onLine ? 'You’re offline — I’ll be here when you reconnect.' : 'Couldn’t reach the server.';
+          const msg = e instanceof ApiError ? e.message : !navigator.onLine ? 'You’re offline. I’ll be here when you reconnect.' : 'Couldn’t reach the server.';
           failure = msg;
           updateTurn(agentTurn.id, (t) => ({ ...t, pending: false, status: undefined, error: msg }));
           updateTurn(userTurn.id, (t) => ({ ...t, retryable: true }));
@@ -194,7 +194,7 @@ export function useAgent(propertyId: string | undefined, opts: { onChange?: () =
         onChangeRef.current?.();
         return res.blocks;
       } catch (e) {
-        const blocks: AgentBlock[] = [{ type: 'error', text: e instanceof ApiError ? e.message : 'Couldn’t confirm — try again.' }];
+        const blocks: AgentBlock[] = [{ type: 'error', text: e instanceof ApiError ? e.message : 'Couldn’t confirm. Try again.' }];
         setPlans((p) => ({ ...p, [token]: 'idle' }));
         setTurns((ts) => [...ts, { id: uid(), role: 'agent', blocks, at: Date.now() }]);
         return blocks;

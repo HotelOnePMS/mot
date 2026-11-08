@@ -21,7 +21,7 @@ const display = Fraunces({
   axes: ["opsz", "SOFT"],
 });
 
-const DEFAULT_TITLE = `${PRODUCT_NAME} — Direct booking and an AI front desk for hotels`;
+const DEFAULT_TITLE = `${PRODUCT_NAME}, Direct booking and an AI front desk for hotels`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl()),

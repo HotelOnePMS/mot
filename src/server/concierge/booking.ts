@@ -165,7 +165,7 @@ export async function requestBooking(input: RequestBookingInput, caller: Request
   const a = conciergeSchemas.requestBooking.parse(input);
   const hotel = await findListedHotel(a.propertyId);
   const hourAgo = new Date(Date.now() - HOUR_MS);
-  const busy = `${hotel.name} has a lot of requests right now — try again later or send the guest a booking link instead.`;
+  const busy = `${hotel.name} has a lot of requests right now. Try again later or send the guest a booking link instead.`;
   if (a.source !== 'AGENT') {
     // The voice concierge's requests are counted from the inbox, apart from assistants'.
     const recent = await prisma.guestRequest.count({ where: { propertyId: hotel.id, source: a.source, createdAt: { gte: hourAgo } } });
@@ -175,7 +175,7 @@ export async function requestBooking(input: RequestBookingInput, caller: Request
   const contact = [a.email ? { email: { equals: a.email.trim(), mode: 'insensitive' as const } } : null, a.phone ? { phone: a.phone.trim() } : null].filter((c) => c !== null);
   if (contact.length) {
     const same = await prisma.guestRequest.count({ where: { propertyId: hotel.id, createdAt: { gte: hourAgo }, OR: contact } });
-    if (same >= 2) throw new DomainError(429, 'RATE_LIMITED', `${hotel.name} already has a request from this guest — the team will be in touch. Send a booking link if they want to book straight away.`);
+    if (same >= 2) throw new DomainError(429, 'RATE_LIMITED', `${hotel.name} already has a request from this guest. The team will be in touch. Send a booking link if they want to book straight away.`);
   }
   if (a.source === 'AGENT') {
     // Public callers share one (smaller) allowance per hotel; each key-owning hotel has its own, so anonymous traffic can't starve partners.
@@ -322,7 +322,7 @@ export async function createBooking(input: CreateBookingInput, opts: { keyId?: s
       guests: a.guests,
       notes: a.notes,
       paymentStatus: 'PAY_AT_PROPERTY',
-      createdVia: `Booked by ${a.source} — pay at property`,
+      createdVia: `Booked by ${a.source}, pay at property`,
       source: 'AGENT_API',
     });
   } catch (e) {

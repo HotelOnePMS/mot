@@ -18,7 +18,7 @@ let resend: Resend | null = null;
 if (resendApiKey) {
   resend = new Resend(resendApiKey);
 } else {
-  console.warn('RESEND_API_KEY is not set — booking confirmation emails are disabled.');
+  console.warn('RESEND_API_KEY is not set. Booking confirmation emails are disabled.');
 }
 
 export function isEmailConfigured(): boolean {
@@ -131,7 +131,7 @@ function confirmationContent(data: BookingEmailData) {
       ? 'Your payment has been received.'
       : deposit
         ? `Your deposit${data.amountPaid ? ` of ${formatTotal(data.amountPaid)}` : ''} has been received. You’ll pay the balance at the hotel.`
-        : 'Nothing has been charged — you’ll pay the hotel during your stay.',
+        : 'Nothing has been charged. You’ll pay the hotel during your stay.',
     preheader: `${data.propertyName}: ${formatDay(data.checkIn)} to ${formatDay(data.checkOut)}. Reference ${data.bookingId}.`,
   };
 }
@@ -175,7 +175,7 @@ function confirmationHtml(data: BookingEmailData): string {
                     <td style="padding: 28px 28px 8px;">
                       <h1 style="margin: 0 0 12px; font-size: 22px; line-height: 30px; font-weight: 700; color: ${C.ink};">Your booking is confirmed</h1>
                       <p style="margin: 0 0 8px; font-size: 15px; line-height: 24px; color: ${C.ink};">Hi ${e(data.guestName)},</p>
-                      <p style="margin: 0; font-size: 15px; line-height: 24px; color: ${C.ink};">Thank you for booking with <strong>${e(data.propertyName)}</strong>. Here are the details of your stay — keep this email handy for check-in.</p>
+                      <p style="margin: 0; font-size: 15px; line-height: 24px; color: ${C.ink};">Thank you for booking with <strong>${e(data.propertyName)}</strong>. Here are the details of your stay. Keep this email handy for check-in.</p>
                     </td>
                   </tr>
                   <tr>
@@ -220,14 +220,14 @@ function confirmationText(data: BookingEmailData): string {
     '',
     `Hi ${data.guestName},`,
     '',
-    `Thank you for booking with ${data.propertyName}. Here are the details of your stay — keep this email handy for check-in.`,
+    `Thank you for booking with ${data.propertyName}. Here are the details of your stay. Keep this email handy for check-in.`,
     '',
     ...c.details.map((d) => `${d.label}: ${d.value}`),
     `Payment: ${c.paymentLabel}. ${c.paymentNote}`,
     '',
     'We look forward to hosting you!',
     '',
-    '—',
+    '--',
     `Sent by ${PRODUCT_NAME} (${PRODUCT_URL}) for ${data.propertyName}.`,
   ].join('\n');
 }
@@ -242,7 +242,7 @@ export async function sendBookingConfirmation(data: BookingEmailData): Promise<v
     await resend.emails.send({
       from: fromAddress,
       to: data.to,
-      subject: `Booking confirmed — ${subjectText(data.propertyName) || 'your stay'}`,
+      subject: `Booking confirmed: ${subjectText(data.propertyName) || 'your stay'}`,
       html: confirmationHtml(data),
       text: confirmationText(data),
     });
@@ -319,7 +319,7 @@ export async function sendGuestRequestAlert(data: GuestRequestAlertData): Promis
     console.log(`[email] Skipping message alert to ${data.to.join(', ')} (RESEND_API_KEY not configured)`);
     return;
   }
-  const subject = `${data.booking ? 'Booking request' : 'New message'} from ${subjectText(data.guestName, 40) || 'a caller'} — ${subjectText(data.propertyName) || 'your hotel'}`;
+  const subject = `${data.booking ? 'Booking request' : 'New message'} from ${subjectText(data.guestName, 40) || 'a caller'} at ${subjectText(data.propertyName) || 'your hotel'}`;
   const text = [
     `${data.booking ? 'New booking request' : 'New message'} from ${data.guestName} (${data.channel})`,
     '',
@@ -458,7 +458,7 @@ export async function sendDisputeAlert(data: DisputeAlertData): Promise<boolean>
     console.log(`[email] Skipping dispute alert to ${data.to.join(', ')} (RESEND_API_KEY not configured)`);
     return false;
   }
-  const subject = `A card payment was disputed — ${subjectText(data.propertyName)}${data.bookingCode ? ` (${subjectText(data.bookingCode)})` : ''}`;
+  const subject = `A card payment was disputed at ${subjectText(data.propertyName)}${data.bookingCode ? ` (${subjectText(data.bookingCode)})` : ''}`;
   const e = escapeHtml;
   const facts = [
     ['Amount', data.amount],
@@ -470,7 +470,7 @@ export async function sendDisputeAlert(data: DisputeAlertData): Promise<boolean>
   const html = `<!doctype html><html><body style="margin:0;padding:24px;background:${C.page};font-family:${FONT};color:${C.ink}">
 <div style="max-width:520px;margin:0 auto;background:${C.card};border:1px solid ${C.border};border-radius:12px;padding:28px">
 <p style="margin:0 0 12px;font-size:18px;font-weight:600">A guest’s bank has disputed a payment</p>
-<p style="margin:0 0 16px;font-size:15px;line-height:1.5">${e(data.propertyName)} received a card dispute. We put together the booking record, the policy the guest accepted, the 3D Secure result and the check-in details. Review it and submit it from the console when you’re ready — nothing is sent to the bank until you do.</p>
+<p style="margin:0 0 16px;font-size:15px;line-height:1.5">${e(data.propertyName)} received a card dispute. We put together the booking record, the policy the guest accepted, the 3D Secure result and the check-in details. Review it and submit it from the console when you’re ready. Nothing is sent to the bank until you do.</p>
 <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 20px;font-size:14px;line-height:22px">${facts.map(([k, v]) => `<tr><td style="padding-right:16px;color:${C.muted}">${e(k)}</td><td style="font-weight:600">${e(v)}</td></tr>`).join('')}</table>
 <p style="margin:0 0 8px"><a href="${e(data.consoleUrl)}" style="display:inline-block;background:${C.primary};color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 20px;border-radius:8px">Review the evidence</a></p>
 <p style="margin:16px 0 0;font-size:13px;line-height:1.5;color:${C.muted}">Disputes have a deadline set by the card network. Winning is never certain, so the sooner you submit, the better.</p>
@@ -480,7 +480,7 @@ export async function sendDisputeAlert(data: DisputeAlertData): Promise<boolean>
     '',
     ...facts.map(([k, v]) => `${k}: ${v}`),
     '',
-    'We assembled the evidence from the booking record. Review it and submit it yourself — nothing is sent to the bank until you do:',
+    'We assembled the evidence from the booking record. Review it and submit it yourself. Nothing is sent to the bank until you do:',
     data.consoleUrl,
   ].join('\n');
   try {
@@ -556,7 +556,7 @@ function simpleEmailHtml(c: { title: string; brand: string; heading: string; gre
  * development only) without Resend, so staff can still copy it.
  */
 export async function sendCardAuthorizationRequest(data: CardAuthorizationRequestData): Promise<boolean> {
-  const subject = `Please authorize your card for ${subjectText(data.guestNames, 40)}’s stay — ${subjectText(data.propertyName)}`;
+  const subject = `Please authorize your card for ${subjectText(data.guestNames, 40)}’s stay at ${subjectText(data.propertyName)}`;
   if (!resend) {
     if (process.env.NODE_ENV !== 'production') console.log(`[email] ${subject} for ${data.to}: ${data.url}`);
     else console.warn('[email] Skipping card authorization request (RESEND_API_KEY not configured)');

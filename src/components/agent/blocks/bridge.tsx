@@ -73,10 +73,10 @@ export function BridgeTaskBlock({ block }: { block: Extract<AgentBlock, { type: 
         {active && (
           <p className="text-xs text-muted-foreground">
             {mcp
-              ? `Talking to ${block.system} through its MCP server — usually a few seconds.`
+              ? `Talking to ${block.system} through its MCP server. This usually takes a few seconds.`
               : status === 'QUEUED'
                 ? 'Your connector picks this up within a few seconds when it’s online.'
-                : 'Reading the screen and working step by step — usually under a minute.'}
+                : 'Reading the screen and working step by step. This usually takes under a minute.'}
           </p>
         )}
         <div className="flex min-h-9 flex-wrap items-center justify-between gap-2 pt-1">

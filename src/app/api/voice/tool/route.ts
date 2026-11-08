@@ -37,7 +37,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
   // Count the call up front; a real conversation never needs this many lookups.
   const session = await prisma.voiceSession.update({ where: { id: t.sid }, data: { toolCalls: { increment: 1 } }, select: { toolCalls: true } }).catch(() => null);
   if (session && session.toolCalls > MAX_TOOL_CALLS) {
-    return json({ output: { error: 'This call has made a lot of lookups already — offer to take a message for the team instead.' } });
+    return json({ output: { error: 'This call has made a lot of lookups already. Offer to take a message for the team instead.' } });
   }
   return json({ output: await webToolOutput({ sid: t.sid, scope: voiceTokenScope(t), pid: t.pid }, body.name, args) });
 });

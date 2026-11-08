@@ -85,7 +85,7 @@ async function reserve<T>(data: Prisma.VoiceSessionUncheckedCreateInput, limits:
   const global: Limit = {
     where: { channel, startedAt: since(60 * MINUTE) },
     max: Number((phone ? process.env.VOICE_PHONE_MAX_CALLS_PER_HOUR : process.env.VOICE_MAX_SESSIONS_PER_HOUR) || 300),
-    message: 'The voice line is very busy right now — please try again shortly.',
+    message: 'The voice line is very busy right now. Please try again shortly.',
   };
   for (const limit of [...limits, global]) {
     if ((await prisma.voiceSession.count({ where: limit.where })) > limit.max) {
@@ -135,12 +135,12 @@ export async function openVoiceSession<T>(
       property: { id: property.id, name: property.name },
       voice,
       prompts: staffPrompts({ name: property.name, userName: actor.name, role: roleLabel(actor.role), ...today }),
-      firstMessage: `Hi ${actor.name.split(' ')[0]} — what do you need?`,
+      firstMessage: `Hi ${actor.name.split(' ')[0]}, what do you need?`,
       tools: STAFF_TOOLS,
     };
     const session = await reserve(
       { propertyId: property.id, userId: actor.userId, audience: 'STAFF' },
-      [{ where: { userId: actor.userId, audience: 'STAFF', startedAt: since(60 * MINUTE) }, max: 30, message: 'That’s a lot of voice sessions this hour — give it a few minutes, or type instead.' }],
+      [{ where: { userId: actor.userId, audience: 'STAFF', startedAt: since(60 * MINUTE) }, max: 30, message: 'That’s a lot of voice sessions this hour. Give it a few minutes, or type instead.' }],
       () => start(ctx),
     );
     return { result: session.result, token: signVoiceToken({ sid: session.id, pid: property.id, aud: 'STAFF', uid: actor.userId, sc: 'HOTEL' }) };
@@ -175,7 +175,7 @@ export async function openVoiceSession<T>(
   const session = await reserve({ propertyId: property.id, audience: 'GUEST', clientKey }, guestLimits(property.id, 'WEB', clientKey), () => start(ctx)).catch(async (e) => {
     // The provider's reason is for the hotel's team (e.g. a test call from the console), not for guests.
     if (!(e instanceof DomainError) || e.code !== 'VOICE_UPSTREAM' || team) throw e;
-    throw new DomainError(502, 'VOICE_UPSTREAM', `${property.name}’s voice line isn’t available right now — please try again later${cfg?.handoffPhone ? ` or call ${cfg.handoffPhone}` : ''}.`);
+    throw new DomainError(502, 'VOICE_UPSTREAM', `${property.name}’s voice line isn’t available right now. Please try again later${cfg?.handoffPhone ? ` or call ${cfg.handoffPhone}` : ''}.`);
   });
   return { result: session.result, token: signVoiceToken({ sid: session.id, pid: property.id, aud: 'GUEST', uid: null, sc: 'HOTEL' }) };
 }
@@ -206,12 +206,12 @@ async function openConciergeSession<T>(
     tools: CONCIERGE_TOOLS,
   };
   const limits: Limit[] = [
-    { where: { clientKey, startedAt: since(10 * MINUTE) }, max: 6, message: 'Too many calls in a short time — please try again in a few minutes.' },
+    { where: { clientKey, startedAt: since(10 * MINUTE) }, max: 6, message: 'Too many calls in a short time. Please try again in a few minutes.' },
     {
       // Propertyless rows also hold the concierge rate limiter's hits (channel RATE_LIMIT): count real web sessions only.
       where: { propertyId: null, scope: 'GLOBAL', audience: 'GUEST', channel: 'WEB', startedAt: since(60 * MINUTE) },
       max: Number(process.env.VOICE_CONCIERGE_MAX_SESSIONS_PER_HOUR || 120),
-      message: 'The concierge is very busy right now — please try again shortly.',
+      message: 'The concierge is very busy right now. Please try again shortly.',
     },
   ];
   const session = await reserve({ propertyId: null, audience: 'GUEST', scope: 'GLOBAL', channel: 'WEB', clientKey }, limits, () => start(ctx)).catch(async (e) => {
@@ -219,7 +219,7 @@ async function openConciergeSession<T>(
     if (!(e instanceof DomainError) || e.code !== 'VOICE_UPSTREAM') throw e;
     const viewer = await getActor().catch(() => null);
     if (viewer?.role === 'ADMIN') throw e;
-    throw new DomainError(502, 'VOICE_UPSTREAM', 'The concierge isn’t available right now — please try again later.');
+    throw new DomainError(502, 'VOICE_UPSTREAM', 'The concierge isn’t available right now. Please try again later.');
   });
   return { result: session.result, token: signVoiceToken({ sid: session.id, pid: null, aud: 'GUEST', uid: null, sc: 'GLOBAL' }) };
 }
@@ -231,11 +231,11 @@ async function openConciergeSession<T>(
  */
 function guestLimits(propertyId: string, channel: 'WEB' | 'PHONE' | 'WHATSAPP', clientKey: string, perCaller = 6): Limit[] {
   return [
-    { where: { clientKey, startedAt: since(10 * MINUTE) }, max: perCaller, message: 'Too many calls in a short time — please try again in a few minutes.' },
+    { where: { clientKey, startedAt: since(10 * MINUTE) }, max: perCaller, message: 'Too many calls in a short time. Please try again in a few minutes.' },
     {
       where: { propertyId, audience: 'GUEST', channel, startedAt: since(60 * MINUTE) },
       max: Number((channel !== 'WEB' ? process.env.VOICE_PHONE_MAX_CALLS_PER_HOTEL_HOUR : null) || 120),
-      message: 'Our voice line is very busy — please try again shortly or call the hotel.',
+      message: 'Our voice line is very busy. Please try again shortly or call the hotel.',
     },
   ];
 }
@@ -243,7 +243,7 @@ function guestLimits(propertyId: string, channel: 'WEB' | 'PHONE' | 'WHATSAPP', 
 /** Callers are always told they're talking to a virtual assistant, whatever greeting the hotel set. */
 function phoneGreeting(greeting: string | null | undefined, hotel: string): string {
   const g = greeting?.trim();
-  if (!g) return `Thanks for calling ${hotel} — this is the hotel’s virtual assistant. How can I help?`;
+  if (!g) return `Thanks for calling ${hotel}. This is the hotel’s virtual assistant. How can I help?`;
   return /virtual assistant|\bAI\b|automated/i.test(g) ? g : `${g} Just so you know, I’m the hotel’s virtual assistant.`;
 }
 
@@ -285,7 +285,7 @@ export async function openPhoneSession(input: {
       ...guestContext(localeOf(property).timezone),
     }),
     // The hotel's greeting is written for calls ("Thanks for calling…"); WhatsApp gets a neutral one.
-    firstMessage: whatsapp ? `Hi! This is ${property.name}’s virtual assistant — how can I help?` : phoneGreeting(cfg?.greeting, property.name),
+    firstMessage: whatsapp ? `Hi! This is ${property.name}’s virtual assistant. How can I help?` : phoneGreeting(cfg?.greeting, property.name),
     tools: PHONE_TOOLS,
   };
   // Withheld numbers share one per-hotel bucket (a little roomier than one caller's).

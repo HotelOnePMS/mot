@@ -114,7 +114,7 @@ export function BookingRow({
               'inline-flex h-7 items-center gap-1.5 rounded-lg border px-2 text-xs font-medium tabular',
               b.room ? 'bg-surface' : 'border-dashed border-warning bg-warning-soft text-warning-soft-foreground'
             )}
-            title={b.room ? `Room ${b.room.number}, floor ${b.room.floor ?? '—'}` : 'No room assigned'}
+            title={b.room ? `Room ${b.room.number}, floor ${b.room.floor ?? 'not set'}` : 'No room assigned'}
           >
             <BedDouble className="size-3.5" aria-hidden />
             {b.room ? (

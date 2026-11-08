@@ -348,7 +348,7 @@ export default function FrontDeskPage() {
         <StatTile
           label="Arrivals"
           icon={ArrowDownToLine}
-          value={s ? `${formatNumber(s.arrivalsDone)}/${formatNumber(s.arrivalsDone + s.arrivalsDue)}` : '—'}
+          value={s ? `${formatNumber(s.arrivalsDone)}/${formatNumber(s.arrivalsDone + s.arrivalsDue)}` : '…'}
           hint={s ? (s.unassignedArrivals ? `${formatNumber(s.unassignedArrivals)} need a room` : 'checked in') : ''}
           onClick={() => setTab('arrivals')}
           active={tab === 'arrivals'}
@@ -357,7 +357,7 @@ export default function FrontDeskPage() {
           label="Departures"
           icon={ArrowUpFromLine}
           tone={overdue ? 'danger' : 'neutral'}
-          value={s ? `${formatNumber(s.departuresDone)}/${formatNumber(s.departuresDone + s.departuresDue)}` : '—'}
+          value={s ? `${formatNumber(s.departuresDone)}/${formatNumber(s.departuresDone + s.departuresDue)}` : '…'}
           hint={s ? (overdue ? `${formatNumber(overdue)} overdue` : 'checked out') : ''}
           onClick={() => setTab('departures')}
           active={tab === 'departures'}
@@ -365,17 +365,17 @@ export default function FrontDeskPage() {
         <StatTile
           label="In house"
           icon={Users}
-          value={s ? formatNumber(s.inHouse) : '—'}
+          value={s ? formatNumber(s.inHouse) : '…'}
           hint="guests staying"
           onClick={() => setTab('inhouse')}
           active={tab === 'inhouse'}
         />
-        <StatTile label="Tonight" icon={BedDouble} tone="neutral" value={s ? `${s.occupancyPct}%` : '—'} hint={s ? `${formatNumber(s.availableTonight)} rooms to sell` : ''} />
+        <StatTile label="Tonight" icon={BedDouble} tone="neutral" value={s ? `${s.occupancyPct}%` : '…'} hint={s ? `${formatNumber(s.availableTonight)} rooms to sell` : ''} />
         <StatTile
           label="Rooms ready"
           icon={CircleCheck}
           tone={s && s.dirty > 0 && s.clean + s.inspected === 0 ? 'warning' : 'neutral'}
-          value={s ? formatNumber(s.clean + s.inspected) : '—'}
+          value={s ? formatNumber(s.clean + s.inspected) : '…'}
           hint={s ? `${formatNumber(s.dirty)} dirty · ${formatNumber(s.outOfOrder)} out of order` : ''}
           onClick={() => setTab('rooms')}
           active={tab === 'rooms'}

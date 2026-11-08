@@ -85,7 +85,7 @@ export const PUT = handleRoute(async (request: NextRequest) => {
   const actor = await requireStaff('phone.manage');
   const body = await parseJson(request, schema);
   const propertyId = await resolvePropertyId(actor, body.propertyId);
-  if (!elevenLabsConfigured()) throw new DomainError(409, 'VOICE_DISABLED', 'Phone lines run on ElevenLabs Agents — add ELEVENLABS_API_KEY to the server first.');
+  if (!elevenLabsConfigured()) throw new DomainError(409, 'VOICE_DISABLED', 'Phone lines run on ElevenLabs Agents. Add ELEVENLABS_API_KEY to the server first.');
   const property = await prisma.property.findUniqueOrThrow({ where: { id: propertyId }, select: { isDemo: true } });
   assertNotDemoHotel(actor, property.isDemo, DEMO_LOCKED);
   const transferNumber = body.transferNumber ? toE164(body.transferNumber) : null;
@@ -103,7 +103,7 @@ export const PUT = handleRoute(async (request: NextRequest) => {
     // Keep what calls actually get in step with the agent at ElevenLabs.
     if (before) await prisma.voicePhoneLine.update({ where: { propertyId }, data: before });
     else await prisma.voicePhoneLine.delete({ where: { propertyId } });
-    throw new DomainError(502, 'VOICE_UPSTREAM', `Nothing was changed — ${result.statusError}`);
+    throw new DomainError(502, 'VOICE_UPSTREAM', `Nothing was changed: ${result.statusError}`);
   }
   await recordAudit(
     { actor, source: 'classic' },
