@@ -215,11 +215,11 @@ export default function SettingsPage() {
                 <div className="flex items-start gap-3 rounded-xl border p-4">
                   <Sparkles className="mt-0.5 size-4 shrink-0 text-agent" aria-hidden />
                   <div className="text-sm">
-                    <p className="font-medium">{ctx?.agent.llmEnabled ? 'Language model connected' : 'Built-in command understanding'}</p>
+                    <p className="font-medium">{ctx?.agent.llmEnabled ? 'Claude runs the agent' : 'Built-in command understanding'}</p>
                     <p className="mt-0.5 text-muted-foreground">
                       {ctx?.agent.llmEnabled
-                        ? 'Free-form requests the built-in parser can’t handle are interpreted by the connected model. It never touches data directly.'
-                        : 'Runs entirely on your server: fast, private and deterministic. Every answer comes from live reservations, rooms and rates.'}
+                        ? 'Ask in your own words, typos and pasted tables included. It reads live reservations, folios, rates and rooms through the same tools as these screens, builds any report you describe, and remembers your usual charges and notes. It never touches data directly.'
+                        : 'Runs on your server: fast, private and predictable, for common requests. Add an Anthropic key to understand anything you ask, build custom reports and edit folios in plain words.'}
                     </p>
                   </div>
                 </div>

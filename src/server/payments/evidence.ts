@@ -255,7 +255,7 @@ export function buildEvidenceSummary(i: EvidenceInput): EvidenceSummary {
 /** The summary as plain text, for review and download. */
 export function renderEvidenceText(summary: EvidenceSummary): string {
   return [
-    `Dispute evidence (generated ${when(summary.generatedAt)}`,
+    `Dispute evidence (generated ${when(summary.generatedAt)})`,
     '',
     ...summary.sections.flatMap((s) => [s.title.toUpperCase(), ...s.lines, '']),
   ]
