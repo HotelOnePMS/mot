@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import type { StaffContext } from '@/lib/dto';
-import { PERMISSIONS, can, requireStaff, scopeProperties, type Permission } from '@/server/authz';
+import { PERMISSIONS, can, grantedPermissionsByProperty, requireStaff, scopeProperties, type Permission } from '@/server/authz';
 import { hotelToday } from '@/server/dates';
 import { handleRoute, json } from '@/server/http';
 import { LLM_AGENT_AVAILABLE } from '@/server/agent/llm';
@@ -32,12 +32,14 @@ export const GET = handleRoute(async () => {
       ? prisma.organization.findMany({ where: { id: { in: actor.orgAdminOf } }, select: { id: true, name: true }, orderBy: { name: 'asc' } })
       : Promise.resolve([]),
   ]);
+  // Owner-given permissions (Settings → Permissions) apply at their own hotel only.
+  const granted = await grantedPermissionsByProperty(actor, properties.map((p) => p.id));
   const now = new Date();
   const body: StaffContext = {
     user: { id: actor.userId, name: actor.name, email: actor.email, role: actor.role, mfaEnabled: actor.mfaEnabled, emailVerified: actor.emailVerified },
     properties: properties.map((p) => {
       const locale = localeOf(p);
-      return { ...p, timezone: locale.timezone, currency: locale.currency, today: hotelToday(now, locale.timezone) };
+      return { ...p, timezone: locale.timezone, currency: locale.currency, today: hotelToday(now, locale.timezone), grantedPermissions: granted.get(p.id) ?? [] };
     }),
     permissions: (Object.keys(PERMISSIONS) as Permission[]).filter((p) => can(actor, p)),
     today: hotelToday(now),

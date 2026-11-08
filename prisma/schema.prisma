@@ -117,6 +117,7 @@ model Property {
   guestIdentifications     GuestIdentification[]
   registrationCards        RegistrationCard[]
   folioAllowances          FolioAllowance[]
+  permissionGrants         RolePermissionGrant[]
   checkoutOverrides        CheckoutOverride[]
   photos                   PropertyPhoto[]
   roomTypes                RoomType[]
@@ -238,6 +239,9 @@ model Booking {
   /// Every line of the reservation this row leads (empty unless it is a lead).
   reservationLines        Booking[]                @relation("ReservationLines")
   notes                   String?
+  /// The room line's description on the folio, when the owner (or someone they allowed, folio.edit) changed it.
+  /// Null: the room type's name.
+  folioRoomLabel          String?
   // Physical room assigned at (or before) check-in.
   roomId                  String?
   // Payment metadata (no raw card data is ever stored — PCI compliance).
@@ -1184,6 +1188,21 @@ model RegistrationCard {
 
   @@index([propertyId, signedAt])
   @@map("registration_cards")
+}
+
+/// A permission the hotel's owner gave a staff role at this hotel, beyond what the role has by default (for example
+/// folio.edit for managers). Only permissions in GRANTABLE_PERMISSIONS (src/server/authz.ts) can be given.
+model RolePermissionGrant {
+  id          String   @id @default(cuid())
+  propertyId  String
+  role        UserRole
+  permission  String
+  grantedById String
+  createdAt   DateTime @default(now())
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, role, permission])
+  @@map("role_permission_grants")
 }
 
 /// Lowers what a stay costs, with a reason (service recovery, unused nights, a rate correction): an allowance a manager

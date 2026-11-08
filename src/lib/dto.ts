@@ -203,6 +203,8 @@ export interface StaffProperty {
   /** Today at this hotel. */
   today: ISODate;
   organization: { id: string; name: string } | null;
+  /** Permissions this person has at this hotel only because its owner gave them to their role (RolePermissionGrant), on top of `permissions`. */
+  grantedPermissions: string[];
 }
 
 export interface StaffContext {
