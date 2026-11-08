@@ -68,6 +68,8 @@ type Connection = {
   lastAriSyncAt: string | null;
   lastReservationPullAt: string | null;
   lastError: string | null;
+  connectivityProvider: string | null;
+  webhookUrl: string | null;
   property: { id: string; name: string };
   roomMappings: Mapping[];
   promotions: Promotion[];
@@ -945,6 +947,15 @@ function SettingsTab({ connection, onSaved, onDeleted }: { connection: Connectio
               </li>
             ))}
           </ul>
+          {connection.connectivityProvider && (
+            <p className="text-sm text-muted-foreground">Connected through {connection.connectivityProvider === 'CHANNEX' ? 'Channex' : connection.connectivityProvider}.</p>
+          )}
+          {connection.webhookUrl && (
+            <div className="space-y-1">
+              <Label htmlFor="webhookUrl">Reservation webhook URL</Label>
+              <Input id="webhookUrl" readOnly value={connection.webhookUrl} onFocus={(e) => e.target.select()} className="font-mono text-xs" />
+            </div>
+          )}
           <Button variant="outline" className="text-destructive hover:text-destructive" onClick={disconnect}>
             <Trash2 className="h-4 w-4" />
             Disconnect {CHANNEL_NAMES[connection.channel]}

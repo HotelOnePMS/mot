@@ -7,7 +7,7 @@
  * logins already stored. In development only, a key is derived from
  * NEXTAUTH_SECRET so the demo works out of the box.
  */
-import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, timingSafeEqual } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'crypto';
 
 let cached: Buffer | null = null;
 
@@ -62,6 +62,14 @@ export function open<T = unknown>(sealed: string, aad = ''): T {
   decipher.setAuthTag(Buffer.from(tag, 'base64url'));
   const pt = Buffer.concat([decipher.update(Buffer.from(ct, 'base64url')), decipher.final()]);
   return JSON.parse(pt.toString('utf8')) as T;
+}
+
+/**
+ * A stable secret token for `purpose` (e.g. an OTA webhook URL), derived from the
+ * vault key so nothing has to be stored. Changing the vault key changes every token.
+ */
+export function derivedToken(purpose: string): string {
+  return createHmac('sha256', key()).update(`derived-token:${purpose}`).digest('base64url').slice(0, 32);
 }
 
 export const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');

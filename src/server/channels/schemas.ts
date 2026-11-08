@@ -83,6 +83,7 @@ export const mappingsSchema = z.object({
 
 export const connectionSettingsSchema = z.object({
   mode: z.enum(['SANDBOX', 'LIVE']).optional(),
+  connectivityProvider: z.enum(['CHANNEX']).nullable().optional(),
   otaPropertyId: z.string().max(50).optional(),
   username: z.string().max(200).optional(),
   password: z.string().max(500).optional(),

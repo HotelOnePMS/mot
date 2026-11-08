@@ -1,16 +1,12 @@
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
-export const CHANNEL_NAMES: Record<string, string> = {
-  EXPEDIA: 'Expedia',
-  BOOKING_COM: 'Booking.com',
-};
+import { CHANNEL_CATALOG, CHANNEL_NAMES } from '@/lib/channels/catalog';
 
-/** The OTAs' own brand colours, so the two read apart at a glance (the name carries the meaning). */
-const CHANNEL_COLORS: Record<string, string> = {
-  EXPEDIA: 'border-[#FFC72C]/60 bg-[#FFC72C]/15 text-foreground',
-  BOOKING_COM: 'border-[#003580]/40 bg-[#003580]/10 text-foreground dark:border-[#5c8ae6]/50 dark:bg-[#5c8ae6]/15',
-};
+export { CHANNEL_NAMES };
+
+/** The OTAs' own brand colours, so they read apart at a glance (the name carries the meaning). */
+const CHANNEL_COLORS: Record<string, string> = Object.fromEntries(Object.values(CHANNEL_CATALOG).map((info) => [info.id, info.color]));
 
 export function ChannelBadge({ channel, className }: { channel: string; className?: string }) {
   return (

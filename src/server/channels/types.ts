@@ -1,11 +1,11 @@
 import type { OtaPaymentCard } from './cards';
 import type { ChannelMode, OtaChannel, PromotionType } from '@prisma/client';
+import { CHANNEL_CATALOG } from '@/lib/channels/catalog';
 import { DomainError } from '../errors';
 
-export const CHANNEL_LABELS: Record<OtaChannel, string> = {
-  EXPEDIA: 'Expedia',
-  BOOKING_COM: 'Booking.com',
-};
+export const CHANNEL_LABELS: Record<OtaChannel, string> = Object.fromEntries(
+  Object.values(CHANNEL_CATALOG).map((info) => [info.id, info.name])
+) as Record<OtaChannel, string>;
 
 /** Everything an adapter needs to talk to one OTA account */
 export interface ChannelCredentials {
@@ -15,6 +15,8 @@ export interface ChannelCredentials {
   username: string;
   password: string;
   currency: string;
+  /** null for a direct connection, 'CHANNEX' when the OTA is reached through Channex */
+  connectivityProvider: string | null;
 }
 
 export interface OtaRatePlan {
@@ -123,6 +125,30 @@ export interface ChannelAdapter {
   confirmReservations(confirmations: ReservationConfirmation[]): Promise<void>;
   /** Creates or updates the promotion and returns the OTA's promotion ID */
   upsertPromotion(promotion: OtaPromotionPayload): Promise<{ externalId: string }>;
+  /**
+   * OTAs that push reservations (webhook delivery): parses the body the OTA
+   * posted to /api/channels/webhooks/[connectionId].
+   */
+  parseWebhook?(request: WebhookRequest): OtaReservation[];
+  /** The reply the OTA expects, carrying HotelOne's confirmation numbers (or the error). */
+  webhookResponse?(request: WebhookRequest, outcome: WebhookOutcome): WebhookReply;
+}
+
+export interface WebhookRequest {
+  body: string;
+  contentType: string;
+}
+
+export interface WebhookOutcome {
+  confirmations: ReservationConfirmation[];
+  /** Set when the message could not be applied; the OTA should retry or alert */
+  error: string | null;
+}
+
+export interface WebhookReply {
+  status: number;
+  body: string;
+  contentType: string;
 }
 
 /**
