@@ -125,7 +125,8 @@ export function ConsoleProvider({ children }: { children: React.ReactNode }) {
     if (userId && propertyId) write(`stayos:mode:${userId}:${propertyId}`, null);
   }, [userId, propertyId]);
 
-  const can = React.useCallback((perm: string) => !!ctx?.permissions.includes(perm), [ctx]);
+  // The role's permissions everywhere, plus what the selected hotel's owner gave this role there (Settings → Permissions).
+  const can = React.useCallback((perm: string) => !!ctx?.permissions.includes(perm) || !!property?.grantedPermissions?.includes(perm), [ctx, property]);
 
   const askAgent = React.useCallback(
     (command: string) => {

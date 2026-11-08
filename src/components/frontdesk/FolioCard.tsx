@@ -3,7 +3,7 @@
 import * as React from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { toast } from 'sonner';
-import { HandCoins } from 'lucide-react';
+import { HandCoins, Pencil, Plus } from 'lucide-react';
 import type { BookingSummary } from '@/lib/dto';
 import { CARD_NUMBER_REFUSED, containsCardNumber } from '@/lib/desk-payments';
 import { api, fetcher } from '@/lib/fetcher';
@@ -20,6 +20,7 @@ import { Callout, Skeleton } from '@/components/ui/primitives';
 import { Textarea } from '@/components/ui/textarea';
 import { useConsole } from '@/components/console/ConsoleProvider';
 import { QuickReasons } from './dialogs';
+import { FolioEditDialog, type FolioEditing } from './FolioEditDialog';
 
 const key = (bookingId: string) => `/api/admin/bookings/${bookingId}/folio`;
 /** Everything else that shows the stay's money, refreshed after an allowance changes: the booking, its payment, the desk and the guided check-in. */
@@ -106,7 +107,7 @@ function depositState(d: FolioDeposit, currency: string): { label: string; tone:
   return { label: d.kept > 0 ? `Kept ${fmt(d.kept, currency)}` : 'Returned', tone: 'neutral' };
 }
 
-function Deposits({ folio }: { folio: FolioView }) {
+function Deposits({ folio, onEdit }: { folio: FolioView; onEdit?: (d: FolioDeposit) => void }) {
   const id = React.useId();
   const { currency } = folio;
   return (
@@ -139,7 +140,16 @@ function Deposits({ folio }: { folio: FolioView }) {
                   </span>
                   <span className="block break-words text-xs text-muted-foreground">{[d.card, when].filter(Boolean).join(' · ')}</span>
                 </th>
-                <td className="whitespace-nowrap py-2 text-right tabular">{fmt(d.amount, currency)}</td>
+                <td className="whitespace-nowrap py-2 text-right tabular">
+                  {fmt(d.amount, currency)}
+                  {onEdit && folio.edits[`payment:${d.id}`] && (
+                    <span className="mt-1 block">
+                      <Button variant="link" className="text-xs" aria-label={`Edit the ${d.methodLabel} deposit`} onClick={() => onEdit(d)}>
+                        Edit
+                      </Button>
+                    </span>
+                  )}
+                </td>
               </tr>
             );
           })}
@@ -281,6 +291,7 @@ export function FolioSummary({
   const { data, error, mutate } = useFolio(bookingId);
   const [adding, setAdding] = React.useState(false);
   const [removing, setRemoving] = React.useState<string | null>(null);
+  const [editing, setEditing] = React.useState<FolioEditing | null>(null);
 
   // The folio as the server sent it back, then everything else that shows the stay's money.
   const changed = React.useCallback(
@@ -328,6 +339,18 @@ export function FolioSummary({
   const credit = t.balance < -0.004;
   // A cancelled stay or a no-show doesn't change what it costs (the server asks to reinstate it first).
   const adjust = editable && can('folio.adjust') && data.status !== 'CANCELLED' && data.status !== 'NO_SHOW';
+  // The owner, or a role the owner allowed (folio.edit at this hotel): every line can be changed.
+  const canEdit = editable && data.canEdit;
+  const editOf = (l: FolioLine) => (canEdit && l.ref && l.kind !== 'REFUND' ? data.edits[l.ref] : undefined);
+  const editLink = (l: FolioLine) => {
+    const target = editOf(l);
+    if (!target) return null;
+    return (
+      <Button variant="link" className="text-xs" aria-label={`Edit ${l.label}`} onClick={() => setEditing(target)}>
+        <Pencil aria-hidden className="size-3" /> Edit
+      </Button>
+    );
+  };
   // Allowance lines are keyed by their allowance (server/services/folio.ts).
   const allowanceOf = (l: FolioLine) => (l.kind === 'ALLOWANCE' ? data.allowances.find((a) => l.key === `allow-${a.id}`) : undefined);
 
@@ -353,27 +376,31 @@ export function FolioSummary({
         currency={currency}
         empty="No charges."
         action={
-          adjust
+          adjust || canEdit
             ? (l) => {
-                const a = allowanceOf(l);
-                if (!a) return null;
+                const a = adjust ? allowanceOf(l) : undefined;
+                const edit = editLink(l);
+                if (!a) return edit;
                 return (
-                  <Button
-                    variant="link"
-                    className="text-xs"
-                    loading={removing === a.id}
-                    disabled={!!removing}
-                    aria-label={`Remove the allowance of ${fmt(a.amount, currency)}`}
-                    onClick={() => void remove(a)}
-                  >
-                    Remove
-                  </Button>
+                  <span className="inline-flex gap-3">
+                    {edit}
+                    <Button
+                      variant="link"
+                      className="text-xs"
+                      loading={removing === a.id}
+                      disabled={!!removing}
+                      aria-label={`Remove the allowance of ${fmt(a.amount, currency)}`}
+                      onClick={() => void remove(a)}
+                    >
+                      Remove
+                    </Button>
+                  </span>
                 );
               }
             : undefined
         }
       />
-      <LineTable title="Payments" lines={payments} currency={currency} empty="Nothing paid yet." />
+      <LineTable title="Payments" lines={payments} currency={currency} empty="Nothing paid yet." action={canEdit ? editLink : undefined} />
 
       <dl className="space-y-1 rounded-xl bg-muted px-3 py-2.5 text-sm">
         <div className="flex justify-between gap-3">
@@ -405,13 +432,34 @@ export function FolioSummary({
         </div>
       </dl>
 
-      {adjust && data.maxAllowance > 0.004 && (
-        <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
-          <HandCoins aria-hidden /> Add allowance…
-        </Button>
+      {((adjust && data.maxAllowance > 0.004) || canEdit) && (
+        <div className="flex flex-wrap gap-2">
+          {canEdit && (
+            <Button variant="outline" size="sm" onClick={() => setEditing({ type: 'addCharge' })}>
+              <Plus aria-hidden /> Add charge…
+            </Button>
+          )}
+          {adjust && data.maxAllowance > 0.004 && (
+            <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+              <HandCoins aria-hidden /> Add allowance…
+            </Button>
+          )}
+        </div>
       )}
 
-      {data.deposits.length > 0 && <Deposits folio={data} />}
+      {data.deposits.length > 0 && (
+        <Deposits
+          folio={data}
+          onEdit={
+            canEdit
+              ? (d) => {
+                  const target = data.edits[`payment:${d.id}`];
+                  if (target) setEditing(target);
+                }
+              : undefined
+          }
+        />
+      )}
 
       {data.reservation && (
         <p className="text-xs text-muted-foreground">
@@ -424,6 +472,7 @@ export function FolioSummary({
       )}
 
       {adjust && <AllowanceDialog bookingId={bookingId} folio={data} open={adding} onOpenChange={setAdding} onSaved={changed} />}
+      {canEdit && <FolioEditDialog bookingId={bookingId} folio={data} editing={editing} onClose={() => setEditing(null)} onSaved={changed} />}
     </div>
   );
 }

@@ -17,70 +17,125 @@ export interface FolioLine {
   /** Stable React key. */
   key: string;
   section: 'CHARGES' | 'PAYMENTS';
-  /** ALLOWANCE: lowers the charges (a manager's, with a reason). */
-  kind: 'ROOM' | 'TAX' | 'ALLOWANCE' | 'PAYMENT' | 'REFUND';
+  /** ALLOWANCE: lowers the charges (a manager's, with a reason). CHARGE: an extra charge added on the folio (minibar, parking). */
+  kind: 'ROOM' | 'TAX' | 'CHARGE' | 'ALLOWANCE' | 'PAYMENT' | 'REFUND';
   label: string;
   detail: string | null;
   /** Signed effect on the balance: charges and refunds to the guest positive, payments negative. */
   amount: number;
-  /** ISO timestamp, payment and allowance lines only. */
+  /** ISO timestamp (or date, for extra charges): payment, allowance and extra charge lines only. */
   at: string | null;
+  /** Which thing the line shows, for editing it (FolioView.edits): room, charge:<n>, allowance:<id>, payment:<id>. */
+  ref?: string;
 }
 
 const TAXES_AND_FEES = 'Taxes and fees';
+/** Booking.charges entries of this kind are extra charges added on the folio, not the hotel's taxes and fees. */
+export const MANUAL_CHARGE = 'MANUAL';
 
 /** Minor units back to an amount, never -0. */
 const fromMinor = (minor: number, currency: string): number => (minor === 0 ? 0 : minor / 10 ** currencyDigits(currency));
 
 const sumMinor = (taxes: readonly { minor: number }[]): number => taxes.reduce((s, t) => s + t.minor, 0);
 
+/** A tax, fee or extra charge of the stay, as Booking.charges keeps it (amount in minor units here). */
+export interface StayCharge {
+  name: string;
+  minor: number;
+  /** PropertyCharge kind for taxes and fees, MANUAL for an extra charge, null when unknown. */
+  kind: string | null;
+  rate: number | null;
+  /** Extra charges: the day it was for (YYYY-MM-DD). */
+  date: string | null;
+}
+
 /** The positive taxes and fees in Booking.charges, in minor units; whatever isn't one of them is skipped. */
-function parseCharges(charges: unknown, currency: string): { name: string; minor: number }[] {
+function parseCharges(charges: unknown, currency: string): StayCharge[] {
   if (!Array.isArray(charges)) return [];
-  const out: { name: string; minor: number }[] = [];
+  const out: StayCharge[] = [];
   for (const c of charges) {
     if (!c || typeof c !== 'object') continue;
-    const { name, amount } = c as { name?: unknown; amount?: unknown };
+    const { name, amount, kind, rate, date } = c as { name?: unknown; amount?: unknown; kind?: unknown; rate?: unknown; date?: unknown };
     if (typeof amount !== 'number' || !Number.isFinite(amount)) continue;
     const minor = toMinorUnits(amount, currency);
     if (minor <= 0) continue;
-    out.push({ name: typeof name === 'string' && name.trim() ? name.trim() : TAXES_AND_FEES, minor });
+    out.push({
+      name: typeof name === 'string' && name.trim() ? name.trim() : TAXES_AND_FEES,
+      minor,
+      kind: typeof kind === 'string' ? kind : null,
+      rate: typeof rate === 'number' && Number.isFinite(rate) ? rate : null,
+      date: typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null,
+    });
   }
   return out;
 }
 
-/**
- * The stay's derived lines: one ROOM line plus one TAX line per tax/fee in `charges` (Booking.charges JSON: an array of { name: string; kind?: string; rate?: number; amount: number }, may be null or malformed).
- * They add up EXACTLY to totalPrice in the currency's minor unit: the room line absorbs any difference (OTA and legacy bookings whose charges JSON doesn't match total − subtotal).
- * If charges is missing/invalid/empty but subtotalPrice is set and below totalPrice, emit one TAX line 'Taxes and fees' = total − subtotal. Otherwise only the ROOM line = total.
- * Room line: label = roomTypeName, detail = '3 nights' / '1 night', plus ' × 2 rooms' when rooms > 1. Tax lines: label = charge name, detail null. Skip zero/negative tax amounts. keys 'room', 'tax-0', 'tax-1'…
- *
- * Taxes in the JSON that come to more than the whole stay are ignored as wrong, so the room line is never negative.
- */
-export function stayLines(input: {
+export interface StayInput {
   totalPrice: number;
   subtotalPrice: number | null;
   charges: unknown;
   roomTypeName: string;
+  /** The room line's description when someone changed it on the folio (Booking.folioRoomLabel). */
+  roomLabel?: string | null;
   nights: number;
   rooms: number;
   currency: string;
-}): FolioLine[] {
+}
+
+/**
+ * What the stay's charges are made of: the room (minor units) and its taxes, fees and extra charges, as the folio shows
+ * them. They add up EXACTLY to totalPrice: the room absorbs any difference. Editing the folio changes this and writes
+ * it back to the booking (subtotal = room, total = room + charges), so every balance, report and check-out rule keeps
+ * reading the booking's total.
+ */
+export function stayModel(input: StayInput): { roomLabel: string; roomMinor: number; charges: StayCharge[] } {
   const { currency } = input;
   const total = toMinorUnits(input.totalPrice, currency) || 0;
   let taxes = parseCharges(input.charges, currency);
   if (sumMinor(taxes) > total) taxes = [];
   if (!taxes.length && input.subtotalPrice != null) {
     const subtotal = toMinorUnits(input.subtotalPrice, currency);
-    if (subtotal >= 0 && subtotal < total) taxes = [{ name: TAXES_AND_FEES, minor: total - subtotal }];
+    if (subtotal >= 0 && subtotal < total) taxes = [{ name: TAXES_AND_FEES, minor: total - subtotal, kind: null, rate: null, date: null }];
   }
+  const roomLabel = input.roomLabel?.trim() || input.roomTypeName;
+  return { roomLabel, roomMinor: total - sumMinor(taxes), charges: taxes };
+}
+
+/**
+ * The stay's derived lines: one ROOM line plus one TAX line per tax/fee in `charges` (Booking.charges JSON: an array of { name: string; kind?: string; rate?: number; amount: number }, may be null or malformed).
+ * They add up EXACTLY to totalPrice in the currency's minor unit: the room line absorbs any difference (OTA and legacy bookings whose charges JSON doesn't match total − subtotal).
+ * If charges is missing/invalid/empty but subtotalPrice is set and below totalPrice, emit one TAX line 'Taxes and fees' = total − subtotal. Otherwise only the ROOM line = total.
+ * Room line: label = roomTypeName (or the edited roomLabel), detail = '3 nights' / '1 night', plus ' × 2 rooms' when rooms > 1. Tax lines: label = charge name, detail null. Skip zero/negative tax amounts. keys 'room', 'tax-0', 'tax-1'…
+ * Extra charges added on the folio (kind MANUAL) are CHARGE lines dated by their day.
+ *
+ * Taxes in the JSON that come to more than the whole stay are ignored as wrong, so the room line is never negative.
+ */
+export function stayLines(input: StayInput): FolioLine[] {
+  const { currency } = input;
+  const model = stayModel(input);
   const nights = `${input.nights} ${input.nights === 1 ? 'night' : 'nights'}`;
   const rooms = input.rooms > 1 ? ` × ${input.rooms} rooms` : '';
   const derived = { section: 'CHARGES', at: null } as const;
   return [
-    { ...derived, key: 'room', kind: 'ROOM', label: input.roomTypeName, detail: nights + rooms, amount: fromMinor(total - sumMinor(taxes), currency) },
-    ...taxes.map((t, i): FolioLine => ({ ...derived, key: `tax-${i}`, kind: 'TAX', label: t.name, detail: null, amount: fromMinor(t.minor, currency) })),
+    { ...derived, key: 'room', kind: 'ROOM', label: model.roomLabel, detail: nights + rooms, amount: fromMinor(model.roomMinor, currency), ref: 'room' },
+    ...model.charges.map(
+      (t, i): FolioLine =>
+        t.kind === MANUAL_CHARGE
+          ? { ...derived, key: `tax-${i}`, kind: 'CHARGE', label: t.name, detail: null, amount: fromMinor(t.minor, currency), at: t.date, ref: `charge:${i}` }
+          : { ...derived, key: `tax-${i}`, kind: 'TAX', label: t.name, detail: null, amount: fromMinor(t.minor, currency), ref: `charge:${i}` }
+    ),
   ];
+}
+
+/** Booking.charges JSON for these charges (amounts back from minor units). */
+export function chargesJson(charges: readonly StayCharge[], currency: string): { name: string; kind?: string; rate?: number; amount: number; date?: string }[] {
+  return charges.map((c) => ({
+    name: c.name,
+    ...(c.kind ? { kind: c.kind } : {}),
+    ...(c.rate !== null ? { rate: c.rate } : {}),
+    amount: fromMinor(c.minor, currency),
+    ...(c.date ? { date: c.date } : {}),
+  }));
 }
 
 export interface FolioTotals {
@@ -119,6 +174,38 @@ export interface FolioDeposit {
   settledAt: string | null;
 }
 
+/** Methods a payment can be recorded as (no money moved through HotelOne), so the owner can change it on the folio. */
+export const RECORDED_PAYMENT_METHODS = ['CASH', 'EXTERNAL_CARD', 'OTHER'] as const;
+
+/** What can be changed about one thing on the folio, with its values now (FolioView.edits, keyed by FolioLine.ref). */
+export type FolioEditTarget =
+  | { type: 'room'; label: string; defaultLabel: string; amount: number }
+  | { type: 'charge'; index: number; name: string; amount: number; date: string | null; extra: boolean }
+  | { type: 'allowance'; id: string; amount: number; reason: string; max: number }
+  | {
+      type: 'payment';
+      id: string;
+      deposit: boolean;
+      /** Recorded at the desk (cash, the hotel's own terminal, another way): amount, refunds, method and date can change. Card payments through Stripe: only the note. */
+      recorded: boolean;
+      amount: number;
+      amountRefunded: number;
+      method: string;
+      paidAt: string | null;
+      note: string | null;
+    };
+
+/** A change to the folio (PATCH /api/admin/bookings/:id/folio). `expected` is the line as the editor saw it: changed since, it's refused. */
+export type FolioEdit = { reason?: string } & (
+  | { target: 'room'; label?: string | null; amount?: number; expected: { label: string; amount: number } }
+  | { target: 'charge'; index: number; name?: string; amount?: number; date?: string | null; expected: { name: string; amount: number } }
+  | { target: 'addCharge'; name: string; amount: number; date?: string | null }
+  | { target: 'removeCharge'; index: number; expected: { name: string; amount: number } }
+  | { target: 'allowance'; id: string; amount?: number; allowanceReason?: string }
+  | { target: 'payment'; id: string; amount?: number; amountRefunded?: number; method?: string; paidAt?: string; note?: string | null }
+  | { target: 'removePayment'; id: string }
+);
+
 /** Everything on a booking's folio, as the server sends it (server/services/folio.ts). */
 export interface FolioView {
   bookingId: string;
@@ -147,11 +234,15 @@ export interface FolioView {
   allowances: FolioAllowance[];
   /** At most this much more can be allowed: the charges less the allowances already given. */
   maxAllowance: number;
+  /** The viewer may change anything on this folio (folio.edit at this hotel, and the stay isn't cancelled or a no-show). */
+  canEdit: boolean;
+  /** When canEdit: what each line (by FolioLine.ref) and deposit (payment:<id>) holds now, for the edit dialog. */
+  edits: Record<string, FolioEditTarget>;
   /** Checked out while money was still owed, with a manager's reason. */
   checkoutOverride: { amount: number; reason: string; by: string | null; at: string } | null;
 }
 
-/** Sums lines in the currency's precision: charges = ROOM+TAX, paid = PAYMENT (positive), refunded = REFUND (positive), balance = sum of signed amounts (negative = the hotel owes the guest). */
+/** Sums lines in the currency's precision: charges = ROOM+TAX+CHARGE, paid = PAYMENT (positive), refunded = REFUND (positive), balance = sum of signed amounts (negative = the hotel owes the guest). */
 export function folioTotals(lines: readonly FolioLine[], currency: string): FolioTotals {
   let charges = 0;
   let allowances = 0;
@@ -161,7 +252,7 @@ export function folioTotals(lines: readonly FolioLine[], currency: string): Foli
   for (const line of lines) {
     const minor = toMinorUnits(line.amount, currency);
     balance += minor;
-    if (line.kind === 'ROOM' || line.kind === 'TAX') charges += minor;
+    if (line.kind === 'ROOM' || line.kind === 'TAX' || line.kind === 'CHARGE') charges += minor;
     else if (line.kind === 'ALLOWANCE') allowances -= minor;
     else if (line.kind === 'PAYMENT') paid -= minor;
     else refunded += minor;

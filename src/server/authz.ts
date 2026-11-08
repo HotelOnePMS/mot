@@ -66,6 +66,12 @@ export const PERMISSIONS = {
   'folio.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'],
   // Lower what a stay costs with an allowance (service recovery, unused nights), with a reason.
   'folio.adjust': ['ADMIN', 'OWNER', 'MANAGER'],
+  // Change anything on the folio: the room and tax lines, extra charges, payments recorded at the desk, allowances,
+  // descriptions and dates (every change is logged with before and after). Owners by default; an owner can give it to
+  // managers or the front desk at their hotel (GRANTABLE_PERMISSIONS, Settings → Permissions).
+  'folio.edit': ['ADMIN', 'OWNER'],
+  // Give staff roles extra permissions at the hotel (GRANTABLE_PERMISSIONS).
+  'permissions.manage': ['ADMIN', 'OWNER'],
   // Check a guest out while money is still owed (billed to a company, paying later), with a reason.
   'booking.checkoutWithBalance': ['ADMIN', 'OWNER', 'MANAGER'],
   'room.view': ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
@@ -126,6 +132,63 @@ export function can(actor: Pick<Actor, 'role'>, perm: Permission): boolean {
 
 export function requirePermission(actor: Actor, perm: Permission): void {
   if (!can(actor, perm)) throw forbidden(permissionMessage(perm));
+}
+
+/**
+ * Permissions an owner can give other staff roles at their hotel, beyond the roles in PERMISSIONS, and which roles may
+ * be given each one (a role that can't open the reservation can't edit its folio either). Stored per hotel in
+ * RolePermissionGrant; checked with canAtProperty / requirePropertyPermission.
+ */
+export const GRANTABLE_PERMISSIONS = {
+  'folio.edit': {
+    label: 'Edit the folio',
+    description: 'Change any line on a guest’s folio: room and tax amounts, extra charges, payments recorded at the desk, allowances, descriptions and dates. Every change is logged with what it was before.',
+    roles: ['MANAGER', 'FRONT_DESK'],
+  },
+} as const satisfies Partial<Record<Permission, { label: string; description: string; roles: readonly StaffRole[] }>>;
+
+export type GrantablePermission = keyof typeof GRANTABLE_PERMISSIONS;
+
+export function isGrantable(perm: string): perm is GrantablePermission {
+  return Object.prototype.hasOwnProperty.call(GRANTABLE_PERMISSIONS, perm);
+}
+
+/** Whether this role may be given this permission by an owner. */
+export function canBeGranted(perm: GrantablePermission, role: string): boolean {
+  return (GRANTABLE_PERMISSIONS[perm].roles as readonly string[]).includes(role);
+}
+
+/**
+ * Whether the actor holds a permission at one hotel: by their role (PERMISSIONS), or because that hotel's owner gave
+ * it to their role (RolePermissionGrant). Doesn't check access to the hotel itself (assertPropertyAccess).
+ */
+export async function canAtProperty(actor: Pick<Actor, 'role'>, perm: Permission, propertyId: string): Promise<boolean> {
+  if (can(actor, perm)) return true;
+  if (!isGrantable(perm) || !canBeGranted(perm, actor.role)) return false;
+  const grant = await prisma.rolePermissionGrant.findUnique({
+    where: { propertyId_role_permission: { propertyId, role: actor.role as StaffRole, permission: perm } },
+    select: { id: true },
+  });
+  return !!grant;
+}
+
+/** For each of these hotels, the permissions the actor's role was given there by the owner (beyond PERMISSIONS). */
+export async function grantedPermissionsByProperty(actor: Pick<Actor, 'role'>, propertyIds: string[]): Promise<Map<string, Permission[]>> {
+  const out = new Map<string, Permission[]>();
+  const grantable = (Object.keys(GRANTABLE_PERMISSIONS) as GrantablePermission[]).filter((p) => !can(actor, p) && canBeGranted(p, actor.role));
+  if (!grantable.length || !propertyIds.length) return out;
+  const rows = await prisma.rolePermissionGrant.findMany({
+    where: { propertyId: { in: propertyIds }, role: actor.role as StaffRole, permission: { in: grantable } },
+    select: { propertyId: true, permission: true },
+  });
+  for (const r of rows) out.set(r.propertyId, [...(out.get(r.propertyId) ?? []), r.permission as Permission]);
+  return out;
+}
+
+export async function requirePropertyPermission(actor: Actor, perm: Permission, propertyId: string): Promise<void> {
+  if (!(await canAtProperty(actor, perm, propertyId))) {
+    throw forbidden(isGrantable(perm) ? `${permissionMessage(perm)} The hotel’s owner can also allow other roles under Settings → Permissions.` : permissionMessage(perm));
+  }
 }
 
 function permissionMessage(perm: Permission): string {
