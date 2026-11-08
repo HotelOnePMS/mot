@@ -49,3 +49,7 @@ Owners can give other roles, **at their own hotel only**, permissions that are o
 ## Reports (`reports.view`)
 
 Front desk, managers, owners and platform admins can run reports at `/admin/reports` (also linked from the front desk): arrivals, departures, in house, cancellations and no-shows, occupancy, revenue, or a custom report with their own dates, filters (status, room type, source, payment method) and columns. Housekeepers can't. Every CSV download is written to the hotel's activity log as `REPORT_EXPORTED` (who, which dates, which columns), because it takes guest details off the system. Saved reports live in the browser of the person who saved them.
+
+## Vendors (`vendors.view`, `vendors.manage`)
+
+`/admin/vendors` lists each hotel's suppliers and third-party service partners (linen, food, maintenance, IT ...) with contact person, phone, email, website, address, the hotel's account number and notes. By default only **owners** (and platform admins) see or change it. Under Settings → Permissions an owner can, per hotel, let managers, front desk or housekeepers **see** the list (`vendors.view`) and let **managers** add, change and remove vendors (`vendors.manage`, which includes seeing). The page and API check this per hotel (`canAtProperty`); the sidebar hides Vendors from anyone without either. Every add, change (with before and after) and removal is in the hotel's activity log: `VENDOR_ADD`, `VENDOR_UPDATE`, `VENDOR_REMOVE`.

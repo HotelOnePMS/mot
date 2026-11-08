@@ -54,6 +54,9 @@ export const CONSOLE_ACCESS: { prefix: string; roles: readonly StaffRole[] }[] =
   { prefix: '/admin/bookings', roles: ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'] },
   // Same roles as the 'dnr.view' permission.
   { prefix: '/admin/do-not-rent', roles: ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK'] },
+  // Every staff role may open it; the page and API check 'vendors.view' / 'vendors.manage' at the hotel, which the
+  // owner can give other roles (Settings → Permissions). The sidebar hides it from people without either.
+  { prefix: '/admin/vendors', roles: ['ADMIN', 'OWNER', 'MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'] },
   { prefix: '/admin/rate-calendar', roles: ['ADMIN', 'OWNER', 'MANAGER'] },
   // Same roles as the 'channels.view' permission; connecting an OTA needs 'channels.manage'.
   { prefix: '/admin/channels', roles: ['ADMIN', 'OWNER', 'MANAGER'] },

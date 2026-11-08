@@ -366,7 +366,7 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
   // Close the phone menu whenever the page changes (a link, or the mode switch).
   React.useEffect(() => setMobileOpen(false), [pathname]);
   const agentic = mode === 'AGENTIC';
-  const groups = navFor(role, { agentEnabled: can('agent.use'), setupPath: property?.setupPath });
+  const groups = navFor(role, { agentEnabled: can('agent.use'), setupPath: property?.setupPath, can });
   const showModeSwitch = (property?.setupPath ?? 'FULL') === 'FULL' && can('agent.use');
   const showAsk = !agentic && can('agent.use') && property?.setupPath !== 'VOICE';
 

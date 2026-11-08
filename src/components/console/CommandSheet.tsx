@@ -23,7 +23,7 @@ export function CommandSheet() {
   const { commandOpen, setCommandOpen, setMode, can, role, property } = useConsole();
   const pathname = usePathname();
   if (!can('agent.use')) return null;
-  const pages = navFor(role, { agentEnabled: true, setupPath: property?.setupPath })
+  const pages = navFor(role, { agentEnabled: true, setupPath: property?.setupPath, can })
     .flatMap((g) => g.items)
     .filter((i) => !i.agent && i.href !== pathname)
     .slice(0, 8);
