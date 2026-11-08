@@ -115,6 +115,7 @@ export async function DELETE(
     const guard = await staffGuard('property.write', { propertyId: (await params).propertyId });
     if ('error' in guard) return guard.error;
 
+    const { propertyId } = await params;
     const { searchParams } = new URL(request.url);
     const photoId = searchParams.get('photoId');
 
@@ -126,8 +127,9 @@ export async function DELETE(
     }
 
     // Find the photo
-    const photo = await prisma.propertyPhoto.findUnique({
-      where: { id: photoId },
+    // Scoped to this property: photo ids are public on booking pages.
+    const photo = await prisma.propertyPhoto.findFirst({
+      where: { id: photoId, propertyId },
     });
 
     if (!photo) {
@@ -186,6 +188,7 @@ export async function PATCH(
     const guard = await staffGuard('property.write', { propertyId: (await params).propertyId });
     if ('error' in guard) return guard.error;
 
+    const { propertyId } = await params;
     const body = await request.json();
     const { photoId } = body;
 
@@ -194,6 +197,12 @@ export async function PATCH(
         { error: 'Photo ID is required' },
         { status: 400 }
       );
+    }
+
+    // The photo must belong to this property (photo ids are public on booking pages).
+    const owned = await prisma.propertyPhoto.findFirst({ where: { id: String(photoId), propertyId }, select: { id: true } });
+    if (!owned) {
+      return NextResponse.json({ error: 'Photo not found' }, { status: 404 });
     }
 
     // First, unset all photos as main for this property

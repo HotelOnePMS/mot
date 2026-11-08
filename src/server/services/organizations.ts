@@ -27,11 +27,20 @@ const slugify = (name: string) =>
     .replace(/^-|-$/g, '')
     .slice(0, 40) || 'hotel-group';
 
+/** Email services anyone can sign up to: an organization can't claim them for SSO or SCIM. */
+const PUBLIC_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'yahoo.com', 'ymail.com', 'aol.com',
+  'icloud.com', 'me.com', 'mac.com', 'proton.me', 'protonmail.com', 'pm.me', 'gmx.com', 'gmx.net', 'mail.com', 'zoho.com',
+  'yandex.com', 'yandex.ru', 'mail.ru', 'qq.com', '163.com', '126.com', 'fastmail.com', 'hey.com', 'tutanota.com', 'web.de',
+]);
 const DOMAIN = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;
 
 export function normaliseDomains(domains: string[]): string[] {
   const out = [...new Set(domains.map((d) => d.trim().toLowerCase().replace(/^@/, '')).filter(Boolean))];
-  for (const d of out) if (!DOMAIN.test(d)) throw badRequest(`“${d}” isn’t an email domain. Use the part after @, like hotelgroup.com.`);
+  for (const d of out) {
+    if (!DOMAIN.test(d)) throw badRequest(`“${d}” isn’t an email domain. Use the part after @, like hotelgroup.com.`);
+    if (PUBLIC_EMAIL_DOMAINS.has(d)) throw badRequest(`${d} is a public email service, so it can’t sign in through your organization. Use your company’s own domain.`);
+  }
   return out;
 }
 
@@ -188,8 +197,16 @@ export async function setOrganizationHotels(ctx: OpContext, id: string, property
 export async function upsertMember(ctx: OpContext, id: string, input: { email: string; role: OrgRole }): Promise<void> {
   assertCanManageOrg(ctx.actor, id);
   const user = await prisma.user.findFirst({ where: { email: { equals: input.email.trim(), mode: 'insensitive' } }, select: { id: true, role: true } });
-  if (!user) throw notFound('Account with that email');
-  if (user.role === 'CUSTOMER') throw badRequest('That’s a guest account. Add them to your team first (Team → Add member).');
+  const notOnTeam = badRequest('Add them to the team of one of this organization’s hotels first (Team → Add member), then add them here.');
+  if (!user) throw ctx.actor.role === 'ADMIN' ? notFound('Account with that email') : notOnTeam;
+  if (user.role === 'CUSTOMER') throw ctx.actor.role === 'ADMIN' ? badRequest('That’s a guest account. Add them to your team first (Team → Add member).') : notOnTeam;
+  // Only people who already work at one of the organization's hotels. Membership puts someone under the organization's
+  // sign-in rules (required two-step, SSO and SCIM), so an organization must not be able to pull in staff of other
+  // hotels or platform administrators. Same answer as "no account", so emails can't be probed.
+  if (ctx.actor.role !== 'ADMIN') {
+    const works = user.role !== 'ADMIN' && (await prisma.userPropertyAssignment.count({ where: { userId: user.id, property: { organizationId: id } } })) > 0;
+    if (!works) throw notOnTeam;
+  }
   await prisma.organizationMember.upsert({
     where: { organizationId_userId: { organizationId: id, userId: user.id } },
     create: { organizationId: id, userId: user.id, role: input.role },

@@ -204,6 +204,12 @@ export async function provisionSsoUser(
       if (byEmail.ssoIssuer && byEmail.ssoSubject && (byEmail.ssoIssuer !== who.issuer || byEmail.ssoSubject !== who.subject)) {
         throw new DomainError(409, 'SSO_LINKED', 'This email address is already linked to another identity. Ask your administrator.');
       }
+      // The organization's identity provider is configured by the organization itself, and the email domains it
+      // lists aren't proven to be theirs. So it may only sign in an existing account that already works for the
+      // organization; anyone else (a guest, staff of another hotel, a platform administrator) keeps their own sign-in.
+      if (!(await mayClaimExistingAccount(org.id, byEmail))) {
+        throw new DomainError(409, 'SSO_EXISTING_ACCOUNT', 'An account with this email already exists outside your organization. Sign in with your password, or ask your administrator to add you to the organization’s team first.');
+      }
       user = await prisma.user.update({ where: { id: byEmail.id }, data: { ssoIssuer: who.issuer, ssoSubject: who.subject, emailVerifiedAt: byEmail.emailVerifiedAt ?? now } });
     } else {
       const given = typeof who.claims?.given_name === 'string' ? who.claims.given_name : '';
@@ -234,6 +240,21 @@ export async function provisionSsoUser(
   });
   if (created) await assignOrgHotels(org.id, user.id);
   return user.id;
+}
+
+/**
+ * Whether an organization's SSO or SCIM may take over the sign-in of an account that already exists: only staff who
+ * already work for the organization (a member, or assigned to one of its hotels), never guests or platform admins.
+ * An organization's administrators choose its identity provider and email domains themselves, so without this check
+ * they could sign in as, or change, any account whose email is on a domain they listed.
+ */
+export async function mayClaimExistingAccount(organizationId: string, user: { id: string; role: string }): Promise<boolean> {
+  if (user.role === 'ADMIN' || user.role === 'CUSTOMER') return false;
+  const [member, assigned] = await Promise.all([
+    prisma.organizationMember.count({ where: { organizationId, userId: user.id } }),
+    prisma.userPropertyAssignment.count({ where: { userId: user.id, property: { organizationId } } }),
+  ]);
+  return member > 0 || assigned > 0;
 }
 
 /** New people from SSO or SCIM can work at every hotel in the organization (owners narrow it on the Team page). */

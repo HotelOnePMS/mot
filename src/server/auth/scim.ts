@@ -12,7 +12,7 @@
  */
 import type { Organization, User } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { assignOrgHotels } from './sso';
+import { assignOrgHotels, mayClaimExistingAccount } from './sso';
 import { sha256 } from '../vault';
 
 export const SCIM_USER_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:User';
@@ -130,7 +130,8 @@ export async function createUser(org: Organization, input: ScimUserInput, base: 
   if (existing) {
     if (existing.organizations.some((m) => m.organizationId === org.id)) throw new ScimError(409, 'A user with that userName already exists.', 'uniqueness');
     // Only claim an existing account when the organization owns the email domain.
-    if (!org.ssoDomains.includes(email.split('@')[1]) || existing.role === 'ADMIN') {
+    // The organization chose its own domains (they aren't verified), so it may only take over someone who already works there.
+    if (!org.ssoDomains.includes(email.split('@')[1]) || !(await mayClaimExistingAccount(org.id, existing))) {
       throw new ScimError(409, 'An account with that email already exists outside this organization.', 'uniqueness');
     }
     const u = await prisma.user.update({

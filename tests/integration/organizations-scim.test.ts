@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { prisma } from '@/lib/prisma';
 import { createUser, deleteUser, listUsers, patchUser, scimOrganization } from '@/server/auth/scim';
 import { provisionSsoUser } from '@/server/auth/sso';
-import { createOrganization, getOrganization, rotateScimToken, setOrganizationHotels } from '@/server/services/organizations';
+import { createOrganization, getOrganization, rotateScimToken, setOrganizationHotels, updateSso, upsertMember } from '@/server/services/organizations';
 import { actorFor, makeHotel, makeUser, uid } from './fixtures';
 
 const BASE = 'https://hotelone.test/api/scim/v2';
@@ -88,6 +88,26 @@ describe('SCIM provisioning', () => {
     await expect(createUser(s.org, { userName: outsider.email }, BASE)).rejects.toMatchObject({ status: 409 });
   });
 
+  it('won’t claim staff of another hotel or a platform admin on its domain', async () => {
+    const s = await scimOrg();
+    const elsewhere = await makeHotel();
+    const owner = await makeUser({ role: 'OWNER', email: `owner-${uid()}@${s.domain}`, propertyIds: [elsewhere.property.id] });
+    const admin = await makeUser({ role: 'ADMIN', email: `admin-${uid()}@${s.domain}` });
+    for (const u of [owner, admin]) {
+      await expect(createUser(s.org, { userName: u.email, active: false }, BASE)).rejects.toMatchObject({ status: 409 });
+      const after = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
+      expect(after.isActive).toBe(true);
+      expect(await prisma.organizationMember.count({ where: { userId: u.id, organizationId: s.id } })).toBe(0);
+    }
+  });
+
+  it('claims an existing account that already works at one of its hotels', async () => {
+    const s = await scimOrg();
+    const desk = await makeUser({ role: 'FRONT_DESK', email: `desk-${uid()}@${s.domain}`, propertyIds: [s.a.property.id] });
+    const claimed = await createUser(s.org, { userName: desk.email }, BASE);
+    expect(claimed.id).toBe(desk.id);
+  });
+
   it('only sees its own members', async () => {
     const [s1, s2] = await Promise.all([scimOrg(), scimOrg()]);
     const p = await createUser(s1.org, { userName: `pat@${s1.domain}` }, BASE);
@@ -95,7 +115,56 @@ describe('SCIM provisioning', () => {
   });
 });
 
+describe('organization members', () => {
+  it('won’t pull in staff of other hotels, and answers the same as for no account', async () => {
+    const g = await groupWithOwner();
+    const elsewhere = await makeHotel();
+    const victim = await makeUser({ role: 'OWNER', propertyIds: [elsewhere.property.id] });
+    const admin = await makeUser({ role: 'ADMIN' });
+    const missing = upsertMember(g.ctx, g.id, { email: `nobody-${uid()}@example.com`, role: 'MEMBER' });
+    await expect(missing).rejects.toThrow(/team of one of this organization/);
+    await expect(upsertMember(g.ctx, g.id, { email: victim.email, role: 'ADMIN' })).rejects.toThrow(/team of one of this organization/);
+    await expect(upsertMember(g.ctx, g.id, { email: admin.email, role: 'MEMBER' })).rejects.toThrow(/team of one of this organization/);
+    expect(await prisma.organizationMember.count({ where: { organizationId: g.id, userId: { in: [victim.id, admin.id] } } })).toBe(0);
+  });
+
+  it('adds someone who works at one of its hotels', async () => {
+    const g = await groupWithOwner();
+    const manager = await makeUser({ role: 'MANAGER', propertyIds: [g.a.property.id] });
+    await upsertMember(g.ctx, g.id, { email: manager.email, role: 'MEMBER' });
+    expect(await prisma.organizationMember.count({ where: { organizationId: g.id, userId: manager.id } })).toBe(1);
+  });
+
+  it('won’t take a public email domain for SSO', async () => {
+    const g = await groupWithOwner();
+    await expect(updateSso(g.ctx, g.id, { enabled: false, enforced: false, issuer: null, clientId: null, domains: ['Gmail.com'] })).rejects.toThrow(/public email service/);
+  });
+});
+
 describe('SSO provisioning', () => {
+  it('won’t sign in as an existing account outside the organization', async () => {
+    const g = await groupWithOwner();
+    const org = await prisma.organization.findUniqueOrThrow({ where: { id: g.id } });
+    const elsewhere = await makeHotel();
+    const domain = `victim-${uid()}.example`;
+    const victims = [
+      await makeUser({ role: 'OWNER', email: `owner@${domain}`, propertyIds: [elsewhere.property.id] }),
+      await makeUser({ role: 'ADMIN', email: `ops@${domain}` }),
+      await makeUser({ role: 'CUSTOMER', email: `guest@${domain}` }),
+    ];
+    for (const v of victims) {
+      await expect(provisionSsoUser(org, { issuer: 'https://evil-idp.example', subject: `sub-${uid()}`, email: v.email })).rejects.toMatchObject({ code: 'SSO_EXISTING_ACCOUNT' });
+      expect((await prisma.user.findUniqueOrThrow({ where: { id: v.id } })).ssoSubject).toBeNull();
+    }
+  });
+
+  it('links an existing account that works at one of its hotels', async () => {
+    const g = await groupWithOwner();
+    const org = await prisma.organization.findUniqueOrThrow({ where: { id: g.id } });
+    const desk = await makeUser({ role: 'FRONT_DESK', propertyIds: [g.b.property.id] });
+    expect(await provisionSsoUser(org, { issuer: 'https://idp.example', subject: `sub-${uid()}`, email: desk.email })).toBe(desk.id);
+  });
+
   it('creates a person once, then finds them by issuer and subject', async () => {
     const g = await groupWithOwner();
     const org = await prisma.organization.findUniqueOrThrow({ where: { id: g.id } });

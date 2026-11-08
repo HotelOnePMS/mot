@@ -29,18 +29,20 @@ export async function uploadImage(file: string, folder: string = 'properties'): 
     );
   }
 
-  const matches = file.match(/^data:image\/(\w+);base64,(.+)$/);
+  // Photos only: no SVG or other types a browser could run as a document from the public blob URL.
+  const matches = file.match(/^data:image\/(jpeg|jpg|png|webp|gif|avif);base64,([A-Za-z0-9+/]+={0,2})$/);
   if (!matches) {
     throw new Error('Invalid image data format');
   }
 
-  const extension = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+  const type = matches[1] === 'jpg' ? 'jpeg' : matches[1];
+  const extension = type === 'jpeg' ? 'jpg' : type;
   const buffer = Buffer.from(matches[2], 'base64');
   const filename = `${folder}/${randomUUID()}.${extension}`;
 
   const blob = await put(filename, buffer, {
     access: 'public',
-    contentType: `image/${matches[1]}`,
+    contentType: `image/${type}`,
   });
 
   return {
