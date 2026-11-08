@@ -122,6 +122,10 @@ export const PERMISSIONS = {
   // OTA channel manager: managers see channels and change channel prices (rates.write); connecting an OTA needs channels.manage.
   'channels.view': ['ADMIN', 'OWNER', 'MANAGER'],
   'channels.manage': ['ADMIN', 'OWNER'],
+  // Vendors (suppliers and third-party service partners) with their contacts: owners by default. An owner can let
+  // other roles see the list at their hotel, and let managers add, change and remove vendors (GRANTABLE_PERMISSIONS).
+  'vendors.view': ['ADMIN', 'OWNER'],
+  'vendors.manage': ['ADMIN', 'OWNER'],
 } as const satisfies Record<string, readonly StaffRole[]>;
 
 export type Permission = keyof typeof PERMISSIONS;
@@ -144,6 +148,16 @@ export const GRANTABLE_PERMISSIONS = {
     label: 'Edit the folio',
     description: 'Change any line on a guest’s folio: room and tax amounts, extra charges, payments recorded at the desk, allowances, descriptions and dates. Every change is logged with what it was before.',
     roles: ['MANAGER', 'FRONT_DESK'],
+  },
+  'vendors.view': {
+    label: 'See vendors',
+    description: 'Open the Vendors page: the hotel’s suppliers and service partners, with contact names, phone numbers, emails and account numbers, so staff can reach them directly.',
+    roles: ['MANAGER', 'FRONT_DESK', 'HOUSEKEEPER'],
+  },
+  'vendors.manage': {
+    label: 'Manage vendors',
+    description: 'Add, change and remove vendors and their contact details. Every change is logged in Activity. Managers given this also see the list.',
+    roles: ['MANAGER'],
   },
 } as const satisfies Partial<Record<Permission, { label: string; description: string; roles: readonly StaffRole[] }>>;
 

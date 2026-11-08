@@ -53,6 +53,8 @@ model User {
   channelAgentConversations ChannelAgentConversation[]
   // Do Not Rent entries this staff member added
   doNotRentAdded            DoNotRent[]                @relation("DoNotRentCreatedBy")
+  // Vendors this staff member added
+  vendorsAdded              Vendor[]                   @relation("VendorCreatedBy")
   // Pending password-reset links (only a hash of each token is stored)
 
   @@unique([ssoIssuer, ssoSubject])
@@ -139,6 +141,7 @@ model Property {
   // OTA connections (Expedia, Booking.com)
   channelConnections       ChannelConnection[]
   doNotRent                DoNotRent[]
+  vendors                  Vendor[]
 
   @@index([organizationId])
   @@map("properties")
@@ -1420,4 +1423,36 @@ model DoNotRent {
   @@index([propertyId, email])
   @@index([propertyId, phoneKey])
   @@map("do_not_rent")
+}
+
+/// The hotel's suppliers and third-party service partners (linen, food, maintenance, IT ...),
+/// with who to call. Owners manage the list; other roles see it only when the owner allows it.
+model Vendor {
+  id            String   @id @default(cuid())
+  propertyId    String
+  name          String
+  /// SUPPLIES, FOOD_BEVERAGE, LINEN_LAUNDRY, MAINTENANCE, CLEANING, TECHNOLOGY, UTILITIES, SECURITY, MARKETING, PROFESSIONAL, OTHER
+  category      String   @default("OTHER")
+  /// What they supply or do for the hotel.
+  services      String?
+  contactName   String?
+  email         String?
+  phone         String?
+  website       String?
+  address       String?
+  /// The hotel's account or customer number with this vendor.
+  accountNumber String?
+  /// Payment terms, delivery days, contract notes.
+  notes         String?
+  preferred     Boolean  @default(false)
+  /// ACTIVE or INACTIVE (kept for history, hidden from day-to-day lists).
+  status        String   @default("ACTIVE")
+  createdById   String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  property      Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  createdBy     User     @relation("VendorCreatedBy", fields: [createdById], references: [id])
+
+  @@index([propertyId, category])
+  @@map("vendors")
 }
