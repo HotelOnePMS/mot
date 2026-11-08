@@ -329,8 +329,11 @@ export function looksLikeMrz(text: string): boolean {
   return MRZ_SHAPES.includes(mrzShape(mrzLines(text)));
 }
 
-/** TD1 and TD2 codes: I… is an identity card, except IR; AR, CR and other A or C + letter codes are residence permits and crew cards. */
-const cardType = (code: string): ScannedIdType => (/^(IR|[AC][A-Z])/.test(code) ? 'OTHER' : 'NATIONAL_ID');
+/**
+ * TD1 and TD2 codes: I… is an identity card, except IR; AR, CR and other A or C + letter codes are residence permits and crew cards.
+ * The US issues no national ID card: a US-issued card with an MRZ is a work permit (EAD), a green card or a passport card.
+ */
+const cardType = (code: string, issuer: string): ScannedIdType => (issuer === 'USA' || /^(IR|[AC][A-Z])/.test(code) ? 'OTHER' : 'NATIONAL_ID');
 
 /**
  * A card number longer than nine characters has a filler where its check
@@ -426,7 +429,7 @@ export function parseMrz(text: string, now: Date = new Date()): ScannedId | null
     const { number, check } = cardNumber(l2.slice(0, 9), l2[9], l2.slice(28, 35));
     return readMrz(
       {
-        idType: cardType(l1),
+        idType: cardType(l1, l1.slice(2, 5)),
         issuer: l1.slice(2, 5),
         name: l1.slice(5),
         number,
@@ -448,7 +451,7 @@ export function parseMrz(text: string, now: Date = new Date()): ScannedId | null
     const { number, check } = cardNumber(l1.slice(5, 14), l1[14], l1.slice(15, 30));
     return readMrz(
       {
-        idType: cardType(l1),
+        idType: cardType(l1, l1.slice(2, 5)),
         issuer: l1.slice(2, 5),
         name: l3,
         number,
