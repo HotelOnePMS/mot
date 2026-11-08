@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import type { OtaChannel } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { requireStaff, resolvePropertyId } from '@/server/authz';
@@ -66,7 +67,7 @@ export const GET = handleRoute(async (request: NextRequest) => {
 
 const createBody = z.object({
   propertyId: z.string().min(1),
-  channel: z.enum(['EXPEDIA', 'BOOKING_COM']),
+  channel: z.enum(CHANNELS as [OtaChannel, ...OtaChannel[]]),
   mode: z.enum(['SANDBOX', 'LIVE']).default('SANDBOX'),
 });
 

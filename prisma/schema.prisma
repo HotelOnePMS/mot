@@ -226,7 +226,7 @@ model Booking {
   subtotalPrice           Decimal?                 @db.Decimal(10, 2)
   /// Taxes and fees: [{ name, kind, rate, amount }], summing to totalPrice - subtotalPrice.
   charges                 Json?
-  /// Where the booking came from: WEB | FRONT_DESK | AGENT_API | VOICE, or the OTA (EXPEDIA | BOOKING_COM).
+  /// Where the booking came from: WEB | FRONT_DESK | AGENT_API | VOICE, or the OTA (an OtaChannel value such as EXPEDIA, BOOKING_COM, AIRBNB).
   source                  String?
   /// Staff member who took the reservation at the desk.
   createdById             String?
@@ -680,6 +680,13 @@ model AgentApiKey {
 enum OtaChannel {
   EXPEDIA
   BOOKING_COM
+  GOOGLE_HOTELS
+  AIRBNB
+  AGODA
+  TRIP_COM
+  HOPPER
+  PRICELINE
+  HOSTELWORLD
 }
 
 // SANDBOX simulates the OTA locally so onboarding can be tested without
@@ -711,6 +718,8 @@ model ChannelConnection {
   username              String?
   /// Vault-sealed OTA password (src/server/vault.ts), bound to this connection. Never returned to clients.
   passwordCipher        String?
+  /// null = HotelOne talks to the OTA directly; "CHANNEX" = through the Channex channel manager API
+  connectivityProvider  String?
   currency              String                  @default("USD")
   // Added on top of the PMS rate before it is pushed (covers OTA commission)
   defaultMarkupPercent  Decimal                 @default(0) @db.Decimal(5, 2)

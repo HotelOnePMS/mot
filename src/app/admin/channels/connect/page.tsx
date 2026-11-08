@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AlertCircle, ArrowLeft, CheckCircle2, Loader2, Rocket, ShieldCheck } from 'lucide-react';
 import { apiJson, CHANNEL_NAMES, ChannelBadge, ModeBadge, StatusBadge } from '@/components/channels/ChannelBadges';
+import { CHANNEL_CATALOG, CHANNEL_IDS, CONNECTIVITY_PROVIDERS, channelInfo } from '@/lib/channels/catalog';
 import { cn } from '@/lib/utils';
 import { useConsole } from '@/components/console/ConsoleProvider';
 
@@ -17,6 +18,10 @@ type Connection = {
   propertyId: string;
   channel: string;
   mode: 'SANDBOX' | 'LIVE';
+  connectivityProvider: string | null;
+  reservationDelivery: 'pull' | 'webhook' | 'none';
+  roomCodeSource: 'ota' | 'pms';
+  webhookUrl: string | null;
   status: string;
   otaPropertyId: string | null;
   otaPropertyName: string | null;
@@ -50,26 +55,22 @@ type MappingOptions = {
 
 const STEPS = ['Channel', 'Connect', 'Map rooms', 'Pricing & sync', 'Go live'];
 
-const CREDENTIAL_HELP: Record<string, { idLabel: string; userLabel: string; steps: string[] }> = {
-  EXPEDIA: {
-    idLabel: 'Expedia Hotel ID',
-    userLabel: 'EQC API username',
-    steps: [
-      'In Expedia Partner Central, open the property and choose this PMS as its connectivity provider.',
-      'Use the Expedia QuickConnect (EQC) API username and password issued to your connectivity account.',
-      'The Hotel ID is the numeric property ID shown in Partner Central.',
-    ],
-  },
-  BOOKING_COM: {
-    idLabel: 'Booking.com Hotel ID',
-    userLabel: 'Machine account username',
-    steps: [
-      'In the Booking.com Extranet, go to Account > Connectivity provider and select this PMS.',
-      'Use the machine account credentials issued to your connectivity-provider account.',
-      'The Hotel ID is the property ID shown at the top of the Extranet.',
-    ],
-  },
-};
+/** Labels and onboarding steps for the selected channel, direct or through a connectivity provider */
+function credentialHelp(channel: string, provider: string | null) {
+  const info = channelInfo(channel);
+  if (provider && provider in CONNECTIVITY_PROVIDERS) {
+    const via = CONNECTIVITY_PROVIDERS[provider as keyof typeof CONNECTIVITY_PROVIDERS];
+    return { idLabel: via.idLabel, idPlaceholder: 'e.g. 4f8c…', userLabel: null, passwordLabel: via.passwordLabel, steps: via.steps };
+  }
+  const direct = info?.direct;
+  return {
+    idLabel: direct?.idLabel ?? 'OTA property ID',
+    idPlaceholder: direct?.idPlaceholder ?? '',
+    userLabel: direct && direct.userLabel !== 'Not used' ? direct.userLabel : null,
+    passwordLabel: direct && !direct.passwordLabel.startsWith('Not used') ? direct.passwordLabel : null,
+    steps: direct?.steps ?? [],
+  };
+}
 
 function ConnectWizard() {
   const router = useRouter();
@@ -84,6 +85,7 @@ function ConnectWizard() {
   const [propertyId, setPropertyId] = useState(searchParams.get('propertyId') ?? '');
   const [channel, setChannel] = useState(searchParams.get('channel') ?? 'EXPEDIA');
   const [mode, setMode] = useState<'SANDBOX' | 'LIVE'>('SANDBOX');
+  const [provider, setProvider] = useState<string | null>(null);
   const [connection, setConnection] = useState<Connection | null>(null);
   const [credentials, setCredentials] = useState({ otaPropertyId: '', username: '', password: '', currency: 'USD' });
   const [options, setOptions] = useState<MappingOptions | null>(null);
@@ -102,6 +104,7 @@ function ConnectWizard() {
     setConnection(data);
     setChannel(data.channel);
     setMode(data.mode);
+    setProvider(data.connectivityProvider ?? null);
     setPropertyId(data.propertyId);
     setCredentials({ otaPropertyId: data.otaPropertyId ?? '', username: data.username ?? '', password: '', currency: data.currency });
     setSettings({
@@ -206,6 +209,7 @@ function ConnectWizard() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             mode,
+            connectivityProvider: mode === 'LIVE' ? provider : null,
             otaPropertyId: credentials.otaPropertyId,
             username: credentials.username,
             currency: credentials.currency.toUpperCase(),
@@ -278,7 +282,8 @@ function ConnectWizard() {
   const updateMapping = (roomTypeId: string, patch: Partial<MappingRow>) =>
     setMappings((rows) => rows.map((row) => (row.roomTypeId === roomTypeId ? { ...row, ...patch } : row)));
 
-  const help = CREDENTIAL_HELP[channel];
+  const info = channelInfo(channel);
+  const help = credentialHelp(channel, mode === 'LIVE' ? provider : null);
   const propertyName = connection?.property?.name ?? properties.find((p) => p.id === propertyId)?.name;
   const canVisit = (index: number) => {
     if (!connection) return index === 0;
@@ -343,7 +348,7 @@ function ConnectWizard() {
         <Card>
           <CardHeader>
             <CardTitle>Choose the property and channel</CardTitle>
-            <CardDescription>Each property can have one Expedia and one Booking.com connection.</CardDescription>
+            <CardDescription>Each property can have one connection per channel. Try any of them in sandbox mode today.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
             <div className="space-y-2">
@@ -363,8 +368,8 @@ function ConnectWizard() {
             </div>
             <div className="space-y-2">
               <Label>Channel</Label>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {['EXPEDIA', 'BOOKING_COM'].map((value) => {
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {CHANNEL_IDS.map((value) => {
                   const started = taken.includes(value);
                   return (
                     <button
@@ -376,7 +381,7 @@ function ConnectWizard() {
                     >
                       <ChannelBadge channel={value} />
                       <p className="text-sm text-muted-foreground mt-2">
-                        {value === 'EXPEDIA' ? 'Expedia QuickConnect (EQC)' : 'Booking.com Connectivity API'}
+                        {CHANNEL_CATALOG[value].api}
                         {started && ' - already started for this property'}
                       </p>
                     </button>
@@ -404,7 +409,8 @@ function ConnectWizard() {
                 >
                   <div className="font-medium">Live</div>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Talks to the real {CHANNEL_NAMES[channel]} API. Requires connectivity-partner API credentials.
+                    Talks to the real {CHANNEL_NAMES[channel]} API{info?.viaChannex ? ' or reaches it through Channex' : ''}. Requires partner API
+                    credentials.
                   </p>
                 </button>
               </div>
@@ -428,6 +434,44 @@ function ConnectWizard() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
+            {mode === 'LIVE' && info?.viaChannex && (
+              <div className="space-y-2">
+                <Label>Connect through</Label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {([null, 'CHANNEX'] as const).map((value) => (
+                    <button
+                      key={value ?? 'direct'}
+                      type="button"
+                      onClick={() => setProvider(value)}
+                      className={cn('rounded-lg border p-3 text-left text-sm', provider === value && 'border-primary ring-1 ring-primary')}
+                    >
+                      <div className="font-medium">{value ? 'Channex' : `${info.name} directly`}</div>
+                      <p className="text-muted-foreground mt-1">
+                        {value
+                          ? `Channex is already certified with ${info.name}. Fastest way to go live: a Channex white-label account.`
+                          : `Needs HotelOne to be an approved ${info.name} connectivity partner.`}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {mode === 'LIVE' && !provider && info && (
+              <div className="rounded-md border border-warning/40 bg-warning-soft p-3 text-sm space-y-1">
+                <div className="font-medium">Partner access needed: {info.partnerAccess.program}</div>
+                <p className="text-muted-foreground">{info.partnerAccess.notes}</p>
+                {!info.specConfirmed && (
+                  <p className="text-muted-foreground">
+                    {info.name} has not published its API, so this connection uses standard messages that may need changes after {info.name} shares its spec.
+                  </p>
+                )}
+                {info.partnerAccess.url && (
+                  <a href={info.partnerAccess.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                    Partner program
+                  </a>
+                )}
+              </div>
+            )}
             {mode === 'LIVE' && (
               <div className="rounded-md bg-muted/50 border p-3 text-sm text-muted-foreground space-y-1">
                 <div className="flex items-center gap-2 font-medium text-foreground">
@@ -461,7 +505,7 @@ function ConnectWizard() {
                   id="otaPropertyId"
                   value={credentials.otaPropertyId}
                   onChange={(e) => setCredentials({ ...credentials, otaPropertyId: e.target.value })}
-                  placeholder={channel === 'EXPEDIA' ? 'e.g. 12345678' : 'e.g. 1234567'}
+                  placeholder={mode === 'LIVE' ? help.idPlaceholder : 'any value'}
                 />
               </div>
               <div className="space-y-2">
@@ -475,17 +519,20 @@ function ConnectWizard() {
               </div>
               {mode === 'LIVE' && (
                 <>
+                  {help.userLabel && (
+                    <div className="space-y-2">
+                      <Label htmlFor="username">{help.userLabel}</Label>
+                      <Input
+                        id="username"
+                        autoComplete="off"
+                        value={credentials.username}
+                        onChange={(e) => setCredentials({ ...credentials, username: e.target.value })}
+                      />
+                    </div>
+                  )}
+                  {help.passwordLabel && (
                   <div className="space-y-2">
-                    <Label htmlFor="username">{help.userLabel}</Label>
-                    <Input
-                      id="username"
-                      autoComplete="off"
-                      value={credentials.username}
-                      onChange={(e) => setCredentials({ ...credentials, username: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="password">Password</Label>
+                    <Label htmlFor="password">{help.passwordLabel}</Label>
                     <Input
                       id="password"
                       type="password"
@@ -495,6 +542,7 @@ function ConnectWizard() {
                       onChange={(e) => setCredentials({ ...credentials, password: e.target.value })}
                     />
                   </div>
+                  )}
                 </>
               )}
             </div>
@@ -619,6 +667,14 @@ function ConnectWizard() {
                 </table>
               </div>
             ) : null}
+            {connection.roomCodeSource === 'pms' && (
+              <div className="rounded-md border bg-muted/50 p-3 text-sm text-muted-foreground">
+                {CHANNEL_NAMES[channel]} uses HotelOne&apos;s own room codes (shown in brackets) and the rate code <span className="font-mono">BAR</span>.
+                {channel === 'GOOGLE_HOTELS'
+                  ? ' HotelOne sends them to Google Hotel Center for you.'
+                  : ` Enter each room code next to the matching room in the ${CHANNEL_NAMES[channel]} extranet mapping screen.`}
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">
               Markup is added to the PMS rate before it is sent (leave blank to use the channel default). Max rooms caps how many rooms of
               that type this channel can sell per night.
@@ -715,7 +771,37 @@ function ConnectWizard() {
               <dd>{(connection.roomMappings ?? []).filter((m) => m.isActive).length}</dd>
               <dt className="text-muted-foreground">Default markup</dt>
               <dd>{connection.defaultMarkupPercent}%</dd>
+              {connection.mode === 'LIVE' && (
+                <>
+                  <dt className="text-muted-foreground">Reservations</dt>
+                  <dd>
+                    {connection.reservationDelivery === 'none'
+                      ? 'Guests book on your HotelOne booking site'
+                      : connection.reservationDelivery === 'webhook'
+                        ? `${CHANNEL_NAMES[channel]} sends them to the webhook below`
+                        : connection.connectivityProvider
+                          ? 'Pulled from the Channex booking feed'
+                          : `Pulled from ${CHANNEL_NAMES[channel]}`}
+                  </dd>
+                </>
+              )}
             </dl>
+            {connection.webhookUrl && (
+              <div className="space-y-1">
+                <Label htmlFor="webhookUrl">Reservation webhook URL (give this to {CHANNEL_NAMES[channel]})</Label>
+                <Input id="webhookUrl" readOnly value={connection.webhookUrl} onFocus={(e) => e.target.select()} className="font-mono text-xs" />
+                <p className="text-xs text-muted-foreground">Keep it private: anyone with this URL can send reservations for this hotel.</p>
+              </div>
+            )}
+            {channel === 'GOOGLE_HOTELS' && connection.mode === 'LIVE' && (
+              <p className="text-sm text-muted-foreground">
+                In Hotel Center, add the Point of Sale file from{' '}
+                <a className="text-primary hover:underline font-mono text-xs" href="/api/channels/google/point-of-sale" target="_blank" rel="noreferrer">
+                  /api/channels/google/point-of-sale
+                </a>{' '}
+                so free booking links open this hotel&apos;s booking page.
+              </p>
+            )}
             {connection.status === 'ACTIVE' ? (
               <Button asChild>
                 <Link href={`/admin/channels/${connection.id}`}>Connection is live - manage it</Link>

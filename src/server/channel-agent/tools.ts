@@ -75,7 +75,7 @@ const TOOLS: { name: string; description: string; input_schema: Record<string, u
   {
     name: 'list_channel_connections',
     description:
-      'Lists the properties you can manage with their Expedia / Booking.com connections: connection IDs, status, sandbox/live mode, default markup, ' +
+      'Lists the properties you can manage with their OTA connections (Expedia, Booking.com, Google Hotels, Airbnb, Agoda, Trip.com, Hopper, Priceline, Hostelworld): connection IDs, status, sandbox/live mode, default markup, ' +
       'sync settings and the mapped room types (PMS room type IDs and names, per-room markup and channel allocation). ' +
       'Call this first to get the IDs other tools need.',
     input_schema: object({}),

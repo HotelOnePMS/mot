@@ -1,3 +1,4 @@
+import { CHANNEL_NAMES } from '@/lib/channels/catalog';
 /**
  * Front desk reports: the report catalogue shared by the API and the
  * Reports page. Pure definitions only (safe on client and server): which
@@ -31,8 +32,7 @@ export const SOURCE_LABEL: Record<string, string> = {
   FRONT_DESK: 'Front desk',
   AGENT_API: 'AI assistant',
   VOICE: 'Phone (voice agent)',
-  EXPEDIA: 'Expedia',
-  BOOKING_COM: 'Booking.com',
+  ...CHANNEL_NAMES,
 };
 export const sourceLabel = (s: string) => SOURCE_LABEL[s] ?? s.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 
