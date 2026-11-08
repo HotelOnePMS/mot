@@ -84,6 +84,16 @@ export function speakBlocks(blocks: AgentBlock[], currency = 'USD'): { summary: 
           `${b.guestName}’s ${money(b.amount, { cents: true, currency: b.currency })} dispute${b.reason ? ` (${b.reasonLabel.split(':')[0].toLowerCase()})` : ''}: the evidence document is ready to download${b.respondBy ? `, respond by ${b.respondBy}` : ''}.${b.gaps.length ? ` Missing or weak: ${list(b.gaps, 3)}.` : ''}`
         );
         break;
+      case 'activity': {
+        const n = b.total ?? b.items.length;
+        const flagged = b.items.filter((i) => i.flag).length;
+        parts.push(
+          n
+            ? `${b.title ?? 'Activity'}: ${n} entr${n === 1 ? 'y' : 'ies'}${flagged ? `, ${flagged} worth a look` : ''}. Latest: ${list(b.items.map((i) => `${i.user.name}, ${i.summary}`), 3)}.`
+            : 'Nothing in the activity log matches that.'
+        );
+        break;
+      }
       case 'report': {
         const cell = (v: unknown, format: string) =>
           v === null || v === undefined || v === '' ? 'none' : format === 'money' ? money(Number(v), { cents: true, currency: b.currency }) : format === 'percent' ? `${v}%` : String(v);

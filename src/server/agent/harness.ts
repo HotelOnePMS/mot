@@ -33,9 +33,13 @@ import { mayManageSavedCharges, savedChargesFor } from '../services/saved-charge
 import { DomainError } from '../errors';
 import { logError } from '../log';
 import type { DateRange, GuestRef, Intent, RoomPrefs } from './nlu';
+import { activityQuerySchema, searchActivity } from './activity-tool';
 import { DISPUTE_REASON_HELP, DISPUTE_REASONS, disputeOnScreen, disputeRead, disputedStay, openDisputesRead, planSubmitDispute } from './dispute-tool';
-import { folioOpSchema, folioRead, newWriteState, planFolioEdits, type WriteState } from './folio-plan';
+import { folioOpSchema, folioRead, newWriteState, planFolioEdits, type ResolvedBooking, type WriteState } from './folio-plan';
+import { doNotRentRead, guestRequestsRead, planDoNotRent, planGuestRequest } from './guest-tools';
+import { channelStatusRead, nightAuditRead, planCloseDay, planRoomType } from './hotel-tools';
 import { HarnessInputError } from './input-error';
+import { planCardAuthorization, planRecordPayment, planRefund } from './money-tools';
 import type { PlanStep } from './plan';
 import { ReportInputError, REPORT_TOOL_DESCRIPTION, reportBlock, reportForModel, reportQuerySchema, runReportTool } from './report-tool';
 import { resolveBooking } from './resolve';
@@ -117,7 +121,7 @@ const definitions = {
   today_overview: {
     kind: 'read',
     label: 'Checking today',
-    description: 'Today at a glance: arrivals, departures, in-house guests, occupancy, room readiness and alerts.',
+    description: 'Today at a glance: arrivals, departures, in-house guests, occupancy, room readiness and alerts. For a briefing ("brief me", "how are we doing today?").',
     schema: z.object({}),
   },
   list_arrivals: {
@@ -141,7 +145,9 @@ const definitions = {
   find_reservation: {
     kind: 'read',
     label: 'Finding the reservation',
-    description: 'Find one reservation by guest name, confirmation code or room number: dates, room, price, balance and status.',
+    description:
+      'Find one reservation by guest name, confirmation code or room number: dates, room, price, balance and status. ' +
+      'For the charges and payments on it use get_folio; for what happened to it and who did it, search_activity_log.',
     schema: z.object({ guest }),
   },
   check_availability: {
@@ -158,7 +164,7 @@ const definitions = {
   occupancy_forecast: {
     kind: 'read',
     label: 'Pulling occupancy',
-    description: 'Occupancy, rooms sold, revenue and ADR per night for a date range (up to 120 nights).',
+    description: 'Occupancy, rooms sold, revenue and ADR per night for a date range (up to 120 nights). For totals, breakdowns or anything custom, use run_report.',
     schema: z.object({ from: date, to: date.describe('End of range, exclusive.') }),
   },
   list_room_types: {
@@ -180,7 +186,7 @@ const definitions = {
   room_board: {
     kind: 'read',
     label: 'Checking rooms',
-    description: 'Rooms with cleaning status, occupancy and out-of-order flags, optionally filtered.',
+    description: 'Rooms with cleaning status, occupancy and out-of-order flags, optionally filtered. For today’s cleaning tasks and who is on them, use housekeeping_board.',
     schema: z.object({
       status: z.enum(['CLEAN', 'DIRTY', 'OUT_OF_ORDER']).optional(),
       occupancy: z.enum(['VACANT']).optional(),
@@ -193,11 +199,15 @@ const definitions = {
     description: 'Today’s cleaning tasks and the housekeeping team with their loads.',
     schema: z.object({}),
   },
-  recent_activity: {
+  search_activity_log: {
     kind: 'read',
-    label: 'Reading the activity log',
-    description: 'The latest changes made at the hotel and who made them (managers and owners).',
-    schema: z.object({}),
+    label: 'Searching the activity log',
+    description:
+      'Search and analyze the hotel’s logs: every change people, you (the agent) and the system made, a reservation’s status history, and the booking channels’ sync log. ' +
+      'Use it for any question about what happened, who did something or when ("who cancelled the Patel booking?", "what did Maria do last night?", "any refunds this week?", "why is room 12 out of order?", "did Expedia sync fail?"), ' +
+      'and with worth_checking for "anything I should look at?" or "anything suspicious?". Filter by days, kinds, person, guest, room, words and source; it returns the entries, counts by kind, person, source and day, ' +
+      'what’s worth a second look and why, and patterns across them. The person sees the latest entries as a card. Managers and owners.',
+    schema: activityQuerySchema({ guest, date }),
   },
   suggest_rooms: {
     kind: 'read',
@@ -208,7 +218,7 @@ const definitions = {
   hotel_knowledge: {
     kind: 'read',
     label: 'Checking the hotel’s saved answers',
-    description: 'Answer a policy or amenity question (parking, pets, breakfast, cancellation policy…) from the answers the hotel saved.',
+    description: 'Answer a policy or amenity question (parking, pets, breakfast, cancellation policy…) from the answers the hotel saved. To save a new answer the person tells you, use remember.',
     schema: z.object({ question: z.string().min(2).max(300) }),
   },
   get_folio: {
@@ -239,13 +249,50 @@ const definitions = {
       respond_by: date.optional().describe('The deadline the bank or card processor gave, when the person said it.'),
     }),
   },
+  check_do_not_rent: {
+    kind: 'read',
+    label: 'Checking the do-not-rent list',
+    description:
+      'Whether a guest is on the hotel’s do-not-rent list and why: give their reservation (guest), or an email or phone for someone not booked yet, or just a name. ' +
+      'With nothing, the whole list. Use before booking someone the person is unsure about, or when they ask. To add or remove someone use update_do_not_rent.',
+    schema: z.object({
+      guest: guest.optional(),
+      name: z.string().max(120).optional(),
+      email: z.string().max(200).optional(),
+      phone: z.string().max(40).optional(),
+    }),
+  },
+  list_guest_requests: {
+    kind: 'read',
+    label: 'Reading guest messages',
+    description:
+      'Messages and callback or booking requests guests left with the voice line, WhatsApp or the booking page assistant: who, how to reach them, what they want, when, and whether someone handled it. ' +
+      'Use for "any messages?", "who called?", "what does the guest in the voicemail want?". Each has the request_id mark_guest_request uses.',
+    schema: z.object({ status: z.enum(['open', 'handled', 'all']).default('open') }),
+  },
+  night_audit_status: {
+    kind: 'read',
+    label: 'Checking the night audit',
+    description:
+      'The night audit for a business day (default: the day that just ended): arrivals that never came (possible no-shows), guests past check-out still in house, in-house guests with something to pay, ' +
+      'room readiness, the day’s numbers, and whether the day is closed. Call it before close_business_day, and for "what’s left before I close the day?".',
+    schema: z.object({ date: date.optional().describe('The business day, YYYY-MM-DD. Default: yesterday before noon at the hotel, today after.') }),
+  },
+  channel_status: {
+    kind: 'read',
+    label: 'Checking the booking channels',
+    description:
+      'The booking channels (Expedia, Booking.com): connected or not, test or live, what they’re sent, when rates and availability were last sent and reservations last pulled, and recent sync errors. ' +
+      'For a channel’s history over days use search_activity_log with kinds ["channels"].',
+    schema: z.object({}),
+  },
   // ---- Writes (planned, confirmed by the person) -------------------------
   set_rates: {
     kind: 'write',
     label: 'Preparing the rate changes',
     description:
       'Change nightly rates: an exact price, a percent change, or a reset to base, for one room type over a range or a list of nights, optionally only on some weekdays. ' +
-      'Put every change the person asked for in one call. Use `to` as the LAST night (inclusive).',
+      'Put every change the person asked for in one call. Use `to` as the LAST night (inclusive). For a room type’s base price (nights without their own rate), use update_room_type.',
     schema: z.object({ changes: z.array(rateChange).min(1).max(40) }),
   },
   check_in: {
@@ -257,7 +304,7 @@ const definitions = {
   check_out: {
     kind: 'write',
     label: 'Preparing the check-out',
-    description: 'Check a guest out; their room is marked dirty and queued for housekeeping.',
+    description: 'Check a guest out; their room is marked dirty and queued for housekeeping. If they paid what they owe at the desk, plan record_payment first.',
     schema: z.object({ guest }),
   },
   assign_room: {
@@ -281,7 +328,7 @@ const definitions = {
   change_booking_status: {
     kind: 'write',
     label: 'Preparing the status change',
-    description: 'Confirm, cancel or mark a reservation as a no-show.',
+    description: 'Confirm, cancel or mark a reservation as a no-show. Cancelling doesn’t refund: add refund_payment to the same plan when they want money back.',
     schema: z.object({ guest, status: z.enum(['confirm', 'cancel', 'no_show']), reason: z.string().max(300).optional() }),
   },
   create_reservation: {
@@ -345,6 +392,112 @@ const definitions = {
       'It can’t be undone and a dispute is answered once, so it is a step they confirm. Owners, or roles allowed to manage disputes.',
     schema: z.object({ guest }),
   },
+  record_payment: {
+    kind: 'write',
+    label: 'Preparing the payment',
+    description:
+      'Record money the guest paid at the desk outside HotelOne’s card flow: cash, a card on the hotel’s own terminal (needs the last four digits), or another way (bank transfer, paid to the OTA, an invoice; say how in note). ' +
+      'For the stay (default) or a security deposit. Leave out amount for the whole balance (or the hotel’s usual deposit). ' +
+      'Not for charging a card through HotelOne (the card reader, typing the card in): that is the reservation’s Payments card, and you never handle card numbers.',
+    schema: z.object({
+      guest,
+      method: z.enum(['cash', 'own_terminal', 'other']),
+      amount: z.number().positive().max(1_000_000).optional(),
+      for: z.enum(['stay', 'deposit']).default('stay'),
+      tendered: z.number().positive().max(1_000_000).optional().describe('Cash only: what the guest handed over, when change was given.'),
+      card_last4: z.string().max(8).optional().describe('own_terminal: the last four digits the terminal printed. Never a full card number.'),
+      card_brand: z.string().max(20).optional(),
+      approval_code: z.string().max(40).optional().describe('own_terminal: the approval code from the terminal slip.'),
+      note: z.string().max(200).optional().describe('other: how it was paid. Otherwise anything worth noting.'),
+    }),
+  },
+  refund_payment: {
+    kind: 'write',
+    label: 'Preparing the refund',
+    description:
+      'Give a guest money back: to the card they paid with through HotelOne (Stripe), cash handed back at the desk, or a record of money given back another way for a payment recorded at the desk. ' +
+      'Give amount, or full for everything they paid; if the person didn’t say how much, call it without either to learn what can be refunded and what the cancellation policy suggests, then ask. ' +
+      'reason is required. also_discount when the stay should also cost that much less (goodwill, a broken AC, a night not used), so it isn’t owed again; not for a cancelled stay. ' +
+      'Cancelling a reservation doesn’t refund it: add this in the same plan if they want both. Security deposits are settled at check-out on the Payments card. Managers and owners.',
+    schema: z.object({
+      guest,
+      amount: z.number().positive().max(1_000_000).optional(),
+      full: z.boolean().optional().describe('Refund everything that can be refunded.'),
+      from: z.enum(['card', 'cash', 'other']).optional().describe('Which payment, when the person said: card (through HotelOne), cash, other (the hotel’s own terminal, a transfer).'),
+      reason: z.string().min(1).max(200),
+      also_discount: z.boolean().optional(),
+    }),
+  },
+  request_card_authorization: {
+    kind: 'write',
+    label: 'Preparing the card authorization',
+    description:
+      'Email a third party (a company, a parent, a travel agent) the hotel’s card authorization form for someone’s stay: they sign online, add a photo of their ID, and authorize their card for the stay and optionally incidentals. ' +
+      'Needs the cardholder’s name and email. A new request replaces an earlier link.',
+    schema: z.object({
+      guest,
+      cardholder_name: z.string().min(2).max(120),
+      cardholder_email: z.string().email().max(200),
+      guest_names: z.array(z.string().min(1).max(120)).max(10).optional().describe('Who the card pays for. Default: the guest on the reservation.'),
+      covers_incidentals: z.boolean().optional(),
+      incidentals_limit: z.number().positive().max(100_000).optional(),
+    }),
+  },
+  update_do_not_rent: {
+    kind: 'write',
+    label: 'Preparing the do-not-rent change',
+    description:
+      'Add a guest to the hotel’s do-not-rent list with the reason (from their reservation, or a name with an email or phone), or take them off it. ' +
+      'Future bookings with that email or phone are flagged to the front desk. Ask for the reason if the person didn’t give one.',
+    schema: z.object({
+      action: z.enum(['add', 'remove']),
+      guest: guest.optional(),
+      name: z.string().max(120).optional(),
+      email: z.string().max(200).optional(),
+      phone: z.string().max(40).optional(),
+      reason: z.string().max(1000).optional().describe('Why (add only), in the person’s words: the next shift sees it.'),
+    }),
+  },
+  mark_guest_request: {
+    kind: 'write',
+    label: 'Preparing the message update',
+    description: 'Mark a guest’s message or callback request handled (or open it again). Use the request_id from list_guest_requests, or who left it.',
+    schema: z.object({
+      request_id: z.string().max(40).optional(),
+      from: z.string().max(120).optional().describe('The name of who left it, when there’s no id.'),
+      status: z.enum(['handled', 'open']).default('handled'),
+    }),
+  },
+  close_business_day: {
+    kind: 'write',
+    label: 'Preparing the night audit',
+    description:
+      'Close the business day (the night audit): marks the arrivals that never came as no-shows as the person says (all, the listed codes, or none), flags occupied rooms for stayover cleaning, and saves the day’s numbers. ' +
+      'Call night_audit_status first; if arrivals never came and the person didn’t say what to do with them, ask. A closed day can’t be reopened.',
+    schema: z.object({
+      date: date.optional().describe('Default: the day that just ended.'),
+      no_shows: z.enum(['all', 'listed', 'none']).optional(),
+      no_show_codes: z.array(z.string().max(40)).max(60).optional().describe('With no_shows "listed": the confirmation codes to mark.'),
+      flag_stayovers: z.boolean().optional().describe('Flag occupied rooms for stayover cleaning (default true).'),
+      notes: z.string().max(500).optional(),
+    }),
+  },
+  update_room_type: {
+    kind: 'write',
+    label: 'Preparing the room type change',
+    description:
+      'Change a room type’s own settings: its base price (the default nightly price for nights without their own rate), how many it sleeps, its name, description, how many rooms it has, or whether it’s for sale. ' +
+      'For the price of particular nights or a date range use set_rates instead.',
+    schema: z.object({
+      room_type: z.string().min(1).max(120).describe('Name exactly as list_room_types shows it, or its id.'),
+      base_price: z.number().positive().max(100_000).optional(),
+      capacity: z.number().int().min(1).max(20).optional(),
+      name: z.string().min(2).max(80).optional(),
+      description: z.string().max(2000).optional(),
+      total_rooms: z.number().int().min(0).max(2000).optional(),
+      for_sale: z.boolean().optional(),
+    }),
+  },
   remember: {
     kind: 'write',
     label: 'Saving it for next time',
@@ -401,8 +554,21 @@ function toApiTool(name: string, def: ToolDef, extra?: { property_id?: true }): 
 export const HOTEL_TOOLS: Anthropic.Beta.BetaTool[] = Object.entries(definitions).map(([n, d]) => toApiTool(n, d));
 
 /** The write tools with a property_id, for the portfolio-level AI advisor. */
+/** Writes about one guest, their money or the night audit: done in the hotel's own console, not from the portfolio advisor. */
+const NOT_FOR_ADVISOR = new Set<string>([
+  'create_reservation',
+  'edit_folio',
+  'submit_dispute_evidence',
+  'record_payment',
+  'refund_payment',
+  'request_card_authorization',
+  'update_do_not_rent',
+  'mark_guest_request',
+  'close_business_day',
+]);
+
 export const HOTEL_WRITE_TOOLS_FOR_ADVISOR: Anthropic.Beta.BetaTool[] = Object.entries(definitions)
-  .filter(([n, d]) => d.kind === 'write' && n !== 'create_reservation' && n !== 'edit_folio' && n !== 'submit_dispute_evidence')
+  .filter(([n, d]) => d.kind === 'write' && !NOT_FOR_ADVISOR.has(n))
   .map(([n, d]) => toApiTool(n, d, { property_id: true }));
 
 export const isHotelWriteTool = (name: string) => isToolName(name) && definitions[name].kind === 'write';
@@ -465,8 +631,6 @@ function readIntent(name: HotelToolName, raw: unknown, today: ISODate): Intent |
     }
     case 'housekeeping_board':
       return { kind: 'housekeeping' };
-    case 'recent_activity':
-      return { kind: 'activity' };
     case 'suggest_rooms': {
       const a = parseInput('suggest_rooms', raw);
       return { kind: 'suggestRooms', ref: toRef(a.guest), prefs: toPrefs(a.prefs) };
@@ -636,6 +800,13 @@ async function planCreateReservation(ctx: ToolCtx, raw: unknown): Promise<PlanOu
     warnings: [],
     risk: 'low',
   };
+}
+
+/** Plan against one reservation, or stop with the question that tells the guests apart. */
+async function withBooking(ctx: ToolCtx, g: z.infer<typeof guest>, plan: (b: ResolvedBooking) => Promise<PlanOutput>): Promise<PlanOutput> {
+  const r = await resolveBooking(ctx, toRef(g), 'any');
+  if (!r.ok) return { steps: [], warnings: [], risk: 'low', blocks: [r.block], abort: true };
+  return plan(r.value);
 }
 
 async function planEditFolio(ctx: ToolCtx, raw: unknown, state: WriteState): Promise<PlanOutput> {
@@ -831,7 +1002,24 @@ export async function planHotelWrite(ctx: ToolCtx, name: string, raw: unknown, s
   else if (name === 'remember') out = await planRemember(ctx, raw);
   else if (name === 'create_reservation') out = await planCreateReservation(ctx, raw);
   else if (name === 'submit_dispute_evidence') out = await planSubmitDisputeEvidence(ctx, raw);
-  else {
+  else if (name === 'record_payment') {
+    const a = parseInput('record_payment', raw);
+    out = await withBooking(ctx, a.guest, (b) => planRecordPayment(ctx, b, a));
+  } else if (name === 'refund_payment') {
+    const a = parseInput('refund_payment', raw);
+    out = await withBooking(ctx, a.guest, (b) => planRefund(ctx, b, a));
+  } else if (name === 'request_card_authorization') {
+    const a = parseInput('request_card_authorization', raw);
+    out = await withBooking(ctx, a.guest, (b) => planCardAuthorization(ctx, b, a));
+  } else if (name === 'update_do_not_rent') {
+    const a = parseInput('update_do_not_rent', raw);
+    out = a.guest ? await withBooking(ctx, a.guest, (b) => planDoNotRent(ctx, b, a)) : await planDoNotRent(ctx, null, a);
+  } else if (name === 'mark_guest_request') out = await planGuestRequest(ctx, parseInput('mark_guest_request', raw));
+  else if (name === 'close_business_day') out = await planCloseDay(ctx, parseInput('close_business_day', raw));
+  else if (name === 'update_room_type') {
+    const a = parseInput('update_room_type', raw);
+    out = await planRoomType(ctx, await resolveRoomTypeExact(ctx.propertyId, a.room_type), a);
+  } else {
     const intent = writeIntent(name, raw);
     if (!intent) throw new HarnessInputError(`Unknown write tool: ${name}`);
     out = await planWrite(ctx, intent);
@@ -873,17 +1061,27 @@ function blocksForModel(blocks: AgentBlock[]): string {
 // ---------------------------------------------------------------------------
 
 function systemPrompt(ctx: ToolCtx): string {
-  return `You are the operations agent built into ${ctx.propertyName}'s property management system. Staff and owners talk to you in plain words — often messy, typo-ridden, pasted tables, or voice transcripts — and you get things done with the tools.
+  return `You are the operations agent built into ${ctx.propertyName}'s property management system. Staff and owners talk to you in plain words (often messy, typo-ridden, pasted tables, or voice transcripts) and you get things done with the tools.
 
 How to work:
 - Work out what the person wants, even from rough phrasing, typos ("ped fee" = pet fee), half sentences or a pasted table. Follow-ups refer to what you showed last ("patel", "her", "the arrival guy"): resolve them from that context. Look things up with the read tools when you need facts (ids, current prices, who is arriving) and make independent calls in parallel.
-- To change anything, call the write tools. Writes are never applied directly: each call adds steps to ONE plan the person reviews and confirms with a button. So never say a change is done — say you've prepared it for them to confirm. Put everything the person asked for into this one plan; don't ask permission first.
+- To change anything, call the write tools. Writes are never applied directly: each call adds steps to ONE plan the person reviews and confirms with a button. So never say a change is done. Say you've prepared it for them to confirm. Put everything the person asked for into this one plan; don't ask permission first.
 - For rates: map each row of a request to set_rates changes (one call with all changes). Use list_room_types for exact names. Remember \`to\` in set_rates is the last night, inclusive; use \`nights\` for scattered dates and \`weekdays\` for patterns like Sun–Thu. Read the current calendar first only if you need current prices to compute something.
+- Pick tools by what the person is trying to get done, not by their exact words. Each tool's description says when to use it and which tool to use instead when it isn't the one. Many requests need several tools: look up what you need, then put every change into the one plan ("Lucas is leaving a night early, refund that night and check him out" is refund_payment with also_discount plus check_out).
+- Guests and the desk: today_overview for a briefing; list_arrivals, list_departures and list_in_house for who is coming, going or staying; find_reservation for one guest's booking; check_availability for free rooms and exact prices; suggest_rooms, assign_room, assign_rooms_to_arrivals, check_in, check_out, add_note, change_booking_status and create_reservation for the desk's work. Cancelling doesn't refund and refunding doesn't cancel: when they want both, plan both.
+- Prices and occupancy: list_room_types for the room types and their base prices, get_rate_calendar for the price of each night, occupancy_forecast for occupancy, revenue and ADR night by night over a range. Read prices first only when you need them to work something out.
+- Rooms and housekeeping: room_board for room status, housekeeping_board for today's cleaning and the team; set_room_status, set_out_of_order, assign_cleaning and auto_assign_housekeeping to change them. A room type's own settings (its base price for nights without their own rate, how many it sleeps, its name, how many rooms) are update_room_type; prices for particular nights are set_rates.
 - Folios: use edit_folio, with every change for one reservation in one call. To add a charge the hotel has a usual price for (listed with the conversation), leave out the amount and it's priced for the stay. If there's no usual price and the person didn't say one, ask how much and never guess an amount. "Make the room and tax together $50" is set_total over the room and its tax lines. Call get_folio first when you need line refs or current amounts.
-- When the person says what something always costs ("pet fee is always $50", "rollaway is $20 a night"), call save_charge so it's remembered; if they also asked to charge it, do both in the same plan. A price they give for one guest only ("charge her $30 for the dog") is just that charge.
+- When the person says what something always costs ("pet fee is always $50", "rollaway is $20 a night"), call save_charge so it's remembered; if they also asked to charge it, do both in the same plan. A price they give for one guest only ("charge her $30 for the dog") is just that charge. remove_saved_charge forgets a usual charge.
+- Money at the desk: record_payment when a guest paid cash, on the hotel's own card terminal, or another way such as a bank transfer. refund_payment gives money back: if they didn't say how much, call it without an amount to learn what can be refunded and what the cancellation policy suggests, then ask. Always give the reason. request_card_authorization emails the card authorization form when someone else (a company, a parent) pays for a stay. Charging a card through HotelOne happens on the reservation's Payments card, and you never take or repeat card numbers.
 - When they tell you something lasting about the hotel to remember (a policy, a fact, "from now on…"), call remember.
 - For any report, list, count, total or breakdown over dates (reservations, nights, occupancy, revenue, charges, payments, guests, sources…), build it with run_report: pick the dataset, filters, grouping and metrics yourself, whatever the person asked for. The table and its CSV download are shown to them; answer the question in a sentence or two from it.
 - When the person says a guest disputed a charge, raised a chargeback, or the bank or card company is asking about a payment, call get_dispute: it finds the reservation (and any dispute Stripe reported), and prepares the evidence document from the hotel's records, ready to download or print. Pass what the guest claims as reason when they said it, and the amount and deadline if they gave them. Then tell them in a sentence or two what the evidence shows, and anything missing that would help (ask them to add it if they can). Only send evidence to Stripe with submit_dispute_evidence when they ask you to.
+- The logs: any question about what happened, who did something, or when ("who cancelled the Patel booking?", "what did Maria change yesterday?", "why is 12 out of order?", "did the Expedia sync fail?") is search_activity_log, with the filters the question implies (a guest, a person, a room, kinds, words, days). Answer from the entries: who, what and when, on the hotel's clock. For "anything I should look at?", "anything odd?" or a weekly check, search with worth_checking over the days they mean (the last 7 if they don't say), then go through what it found and the patterns: what happened, why it may matter, what to check. It shows what deserves a second look, not wrongdoing, so describe it neutrally and never accuse anyone.
+- Guests to watch and guest messages: check_do_not_rent before booking someone the person is unsure about, or when they ask; update_do_not_rent to add someone (always with the reason; ask for it) or take them off. list_guest_requests for messages and callback requests guests left with the voice line, WhatsApp or the booking page; mark_guest_request once one is dealt with.
+- Closing the day: night_audit_status shows what's still open for the business day; close_business_day closes it. If arrivals never came and the person didn't say whether they're no-shows, ask before closing.
+- Booking channels: channel_status for how Expedia and Booking.com are connected and syncing; their history is in search_activity_log. Their rates, markups and promotions are managed on the Channels page.
+- Not something you can do here: changing a stay's dates (cancel and rebook it, or the guest changes them from their booking page), the team and roles, and the hotel's settings. Say so in a sentence and point to where it's done (Team, Settings). When a tool says the person's role can't do something, tell them who can, and don't look for a way around it.
 - The person may be looking at a page of the system while they talk to you (described with the conversation); "this guest", "this reservation" or "here" refer to it.
 - If a tool says something is ambiguous or impossible, fix your input and retry, or explain it plainly and ask one short question. Don't invent ids, names, rooms or prices.
 - For questions about hotel policies or amenities, use hotel_knowledge.
@@ -1051,6 +1249,34 @@ async function runTool(ctx: ToolCtx, name: string, raw: unknown, acc: HarnessRes
     Object.assign(acc.memory, out.memory);
     return { blocks: out.blocks, forModel: out.forModel };
   }
+  if (name === 'search_activity_log') {
+    if (!can(ctx.actor, 'activity.view')) return { blocks: [], forModel: 'The activity log is for managers and owners, and this person’s role can’t see it: say so.', isError: true };
+    const a = parseInput('search_activity_log', raw);
+    let stay: ResolvedBooking | null = null;
+    if (a.guest) {
+      const r = await resolveBooking(ctx, toRef(a.guest), 'any');
+      if (!r.ok) return { blocks: [], forModel: blockText(r.block).join('\n') || 'No such reservation.', isError: true };
+      stay = r.value;
+    }
+    const out = await searchActivity(ctx, a, stay);
+    Object.assign(acc.memory, out.memory ?? {});
+    return out;
+  }
+  if (name === 'check_do_not_rent') {
+    const a = parseInput('check_do_not_rent', raw);
+    let stay: ResolvedBooking | null = null;
+    if (a.guest && can(ctx.actor, 'dnr.view')) {
+      const r = await resolveBooking(ctx, toRef(a.guest), 'any');
+      if (!r.ok) return { blocks: [], forModel: blockText(r.block).join('\n') || 'No such reservation.', isError: true };
+      stay = r.value;
+    }
+    const out = await doNotRentRead(ctx, stay, a);
+    Object.assign(acc.memory, out.memory ?? {});
+    return out;
+  }
+  if (name === 'list_guest_requests') return guestRequestsRead(ctx, parseInput('list_guest_requests', raw).status);
+  if (name === 'night_audit_status') return nightAuditRead(ctx, parseInput('night_audit_status', raw).date);
+  if (name === 'channel_status') return channelStatusRead(ctx);
   if (name === 'hotel_knowledge') {
     const { question } = parseInput('hotel_knowledge', raw);
     const ans = await answerFromSkills(ctx.actor, ctx.propertyId, question);

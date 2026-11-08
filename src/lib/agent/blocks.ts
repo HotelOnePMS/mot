@@ -19,6 +19,9 @@ import type {
 import type { ReportCell, ReportColumn } from '../reports';
 import type { Tone } from '../status';
 
+/** An activity log entry, and why it deserves a second look when it does. */
+export type ActivityItem = ActivityEntry & { flag?: string };
+
 /** A one-tap follow-up. Sending `command` goes back through the agent (and the audit log). */
 export interface QuickAction {
   label: string;
@@ -92,7 +95,8 @@ export type AgentBlock =
   | { type: 'alerts'; items: FrontDeskAlert[] }
   | { type: 'plan'; plan: PlanView }
   | { type: 'result'; ok: boolean; title: string; lines: string[] }
-  | { type: 'activity'; items: ActivityEntry[] }
+  /** Entries from the hotel's logs: the latest, or what a question asked for (one guest, one person, refunds, what's worth a look). */
+  | { type: 'activity'; items: ActivityItem[]; title?: string; description?: string; total?: number; href?: string }
   | { type: 'suggestions'; items: string[] }
   | { type: 'navigate'; label: string; href: string; description?: string }
   | { type: 'clarify'; question: string; options: { label: string; hint?: string; command: string }[] }
@@ -187,7 +191,10 @@ export function replySummary(blocks: AgentBlock[], max = 1500): string {
       lines.push(
         `Dispute on ${b.guestName}’s reservation (#${b.code}): ${b.reasonLabel}, ${b.amount} ${b.currency}, ${b.disputeId ? `Stripe status ${b.status}` : 'reported outside Stripe'}${b.respondBy ? `, respond by ${b.respondBy}` : ''}${b.gaps.length ? `. Missing: ${b.gaps.join('; ')}` : ''}`
       );
-    else if (b.type === 'report') {
+    else if (b.type === 'activity') {
+      lines.push(`${b.title ?? 'Activity'}${b.description ? ` (${b.description})` : ''}: ${b.total ?? b.items.length} entries`);
+      for (const i of b.items.slice(0, 8)) lines.push(`- ${i.user.name}: ${i.summary}${i.flag ? ` [${i.flag}]` : ''}`);
+    } else if (b.type === 'report') {
       const cols = b.columns.map((c) => c.label).join(' | ');
       lines.push(`Report “${b.title}” (${b.from} to ${b.to}, ${b.totalRows} rows): ${cols}`);
       for (const r of b.rows.slice(0, 8)) lines.push(`- ${b.columns.map((c) => r[c.key] ?? '').join(' | ')}`);

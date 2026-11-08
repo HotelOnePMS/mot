@@ -7,6 +7,9 @@ import { after } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { isDemoEmail } from '@/config/product';
+import { assertPropertyAccess, requirePermission, type Actor } from '../authz';
+import { notFound } from '../errors';
+import { recordAudit, type OpContext } from './audit';
 import { siteUrl } from '../concierge/urls';
 import { sendGuestRequestAlert } from '../email';
 import { logError } from '@/server/log';
@@ -60,4 +63,31 @@ export function alertTeam(requestId: string): void {
   } catch {
     void run();
   }
+}
+
+export type GuestRequestStatus = 'NEW' | 'DONE';
+
+/** The hotel's guest messages and callback requests: open ones first, newest first. */
+export async function listGuestRequests(actor: Actor, propertyId: string, status: GuestRequestStatus | 'ALL' = 'ALL', take = 100) {
+  requirePermission(actor, 'requests.view');
+  assertPropertyAccess(actor, propertyId);
+  return prisma.guestRequest.findMany({
+    where: { propertyId, ...(status === 'ALL' ? {} : { status }) },
+    orderBy: [{ status: 'desc' }, { createdAt: 'desc' }],
+    take: Math.min(take, 100),
+  });
+}
+
+/** Where a guest request came from, in words ("Phone call", "WhatsApp"). */
+export const requestChannel = (source: string) => CHANNEL[source] ?? 'Voice front desk';
+
+/** Mark a guest request handled, or open it again. Handling one is logged with who did it. */
+export async function setGuestRequestStatus(op: OpContext, requestId: string, status: GuestRequestStatus) {
+  requirePermission(op.actor, 'requests.view');
+  const row = await prisma.guestRequest.findUnique({ where: { id: requestId } });
+  if (!row) throw notFound('Request');
+  assertPropertyAccess(op.actor, row.propertyId);
+  const updated = await prisma.guestRequest.update({ where: { id: requestId }, data: { status, handledById: status === 'DONE' ? op.actor.userId : null } });
+  if (status === 'DONE') await recordAudit(op, row.propertyId, 'GUEST_REQUEST', `Handled ${row.name}’s request`, { requestId });
+  return updated;
 }
