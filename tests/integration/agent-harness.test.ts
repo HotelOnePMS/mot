@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import type { AgentEvent } from '@/lib/agent/blocks';
 import { addDaysISO, dayOfWeek } from '@/server/dates';
 import { confirmPlan } from '@/server/agent/engine';
+import { createDeskReservation } from '@/server/services/reservations';
 import { runHarness, type HarnessResult } from '@/server/agent/harness';
 import { signPlan } from '@/server/agent/plan';
 import { nightlyRates } from '@/server/services/inventory';
@@ -141,5 +142,55 @@ describe('model-driven agent harness', () => {
     const confirmed = await confirmPlan(actor, token);
     expect(confirmed.blocks[0]).toMatchObject({ type: 'result', ok: true });
     expect(confirmed.blocks.find((b) => b.type === 'booking')).toBeDefined();
+  });
+
+  it('follows up on what it just showed: "yeah add ped fee to patel" becomes a confirmed folio charge', async () => {
+    const h = await makeHotel({ rooms: 3, basePrice: 347 });
+    const owner = await makeUser({ role: 'OWNER', propertyIds: [h.property.id] });
+    const actor = await actorFor(owner.id);
+    const b = await createDeskReservation(
+      { actor, source: 'classic' },
+      { propertyId: h.property.id, roomTypeId: h.roomType.id, checkIn: h.today, checkOut: addDaysISO(h.today, 1), guests: 2, rooms: 1, guest: { firstName: 'Aisha', lastName: 'Patel' } },
+    );
+    const lastReply = `Arrivals today:\n- Aisha Patel (#${b.code}) · Queen · no room · ${h.today}→${addDaysISO(h.today, 1)} · confirmed`;
+    const ctx = { actor, propertyId: h.property.id, propertyName: h.property.name, today: h.today, memory: {}, message: 'yreah add ped fee to patel' };
+    const { client, create } = scriptedClient([
+      [{ type: 'tool_use', id: 't1', name: 'add_folio_charge', input: { guest: { name: 'patel' }, name: 'Pet fee', amount: 50 } }],
+      [{ type: 'text', text: 'A $50 pet fee for Aisha Patel is ready to confirm.' }],
+    ]);
+    const { result } = await drain(runHarness(ctx, { client, recent: ['add pet fee to the todays adrrival guy'], lastReply }));
+
+    // The model saw the earlier ask and what the agent showed, not just the bare follow-up.
+    const first = (create.sent[0][0] as { content: string }).content;
+    expect(first).toContain('add pet fee to the todays adrrival guy');
+    expect(first).toContain(`Aisha Patel (#${b.code})`);
+    expect(first).toMatch(/yreah add ped fee to patel$/);
+
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0].summary).toMatch(/Add Pet fee \$50\.00 to Aisha Patel’s folio/);
+    const before = await prisma.booking.findUniqueOrThrow({ where: { id: b.id } });
+
+    const { token } = signPlan({ userId: actor.userId, propertyId: h.property.id, title: 'Pet fee', steps: result.steps });
+    const confirmed = await confirmPlan(actor, token);
+    expect(confirmed.blocks[0]).toMatchObject({ type: 'result', ok: true });
+    const after = await prisma.booking.findUniqueOrThrow({ where: { id: b.id } });
+    expect(Number(after.totalPrice)).toBeCloseTo(Number(before.totalPrice) + 50);
+    expect(JSON.stringify(after.charges)).toContain('Pet fee');
+  });
+
+  it('refuses folio charges for a role the owner has not allowed', async () => {
+    const h = await makeHotel();
+    const owner = await makeUser({ role: 'OWNER', propertyIds: [h.property.id] });
+    const desk = await makeUser({ role: 'FRONT_DESK', propertyIds: [h.property.id] });
+    const b = await createDeskReservation(
+      { actor: await actorFor(owner.id), source: 'classic' },
+      { propertyId: h.property.id, roomTypeId: h.roomType.id, checkIn: h.today, checkOut: addDaysISO(h.today, 1), guests: 1, rooms: 1, guest: { firstName: 'Aisha', lastName: 'Patel' } },
+    );
+    const actor = await actorFor(desk.id);
+    const ctx = { actor, propertyId: h.property.id, propertyName: h.property.name, today: h.today, memory: {}, message: 'add pet fee to patel' };
+    const { client, create } = scriptedClient([[{ type: 'tool_use', id: 't1', name: 'add_folio_charge', input: { guest: { code: b.code }, name: 'Pet fee', amount: 50 } }]]);
+    const { result } = await drain(runHarness(ctx, { client }));
+    expect(toolResults(create, 1)[0]).toMatchObject({ is_error: true, content: expect.stringMatching(/can’t change folios/) });
+    expect(result.steps).toHaveLength(0);
   });
 });

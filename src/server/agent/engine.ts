@@ -47,6 +47,8 @@ export interface AgentRunInput {
   memory: AgentContextState;
   /** Earlier messages in this conversation, oldest first ("save that as a shortcut"). */
   recent?: string[];
+  /** A summary of the agent's previous reply in this conversation (blocks.ts replySummary). */
+  lastReply?: string;
 }
 
 /** What a run gathers while it works through intents: memory, planned changes, and whether anything needed a person. */
@@ -143,7 +145,7 @@ async function* runModel(
   audit: (summary: string, data: Record<string, unknown>) => Promise<unknown>,
   started: number
 ): AsyncGenerator<AgentEvent, boolean> {
-  const gen = runHarness({ ...ctx, message }, { recent: input.recent });
+  const gen = runHarness({ ...ctx, message }, { recent: input.recent, lastReply: input.lastReply });
   let shown = false;
   let result: Awaited<ReturnType<typeof gen.next>>;
   try {

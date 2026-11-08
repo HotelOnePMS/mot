@@ -22,7 +22,7 @@ import { prisma } from '@/lib/prisma';
 import type { AgentBlock, AgentContextState, AgentEvent } from '@/lib/agent/blocks';
 import type { ISODate } from '@/lib/dto';
 import { money } from '@/lib/status';
-import { can } from '../authz';
+import { can, canAtProperty } from '../authz';
 import { addDaysISO, dayOfWeek, diffDays, eachNight, formatDay, isISODate } from '../dates';
 import { hotelLocale } from '../services/hotels';
 import { nightlyRates, propertyAvailability } from '../services/inventory';
@@ -30,6 +30,7 @@ import { DomainError } from '../errors';
 import { logError } from '../log';
 import type { DateRange, GuestRef, Intent, RoomPrefs } from './nlu';
 import type { PlanStep } from './plan';
+import { resolveBooking } from './resolve';
 import { answerFromSkills } from './skills';
 import { maxRisk, planWrite, runRead, type PlanOutput, type ToolCtx } from './tools';
 
@@ -260,6 +261,20 @@ const definitions = {
       phone: z.string().max(40).optional(),
       notes: z.string().max(500).optional(),
       paid: z.boolean().optional().describe('True only when the guest has paid in full now.'),
+    }),
+  },
+  add_folio_charge: {
+    kind: 'write',
+    label: 'Preparing the charge',
+    description:
+      'Add an extra charge to a reservation’s folio (pet fee, late check-out, damage, minibar, parking…). Needs the amount: if the person didn’t say it, ' +
+      'look for the hotel’s usual fee with hotel_knowledge (e.g. "pet fee"); if that has none, ask the person how much instead of guessing.',
+    schema: z.object({
+      guest,
+      name: z.string().min(1).max(80).describe('What the charge is for, as it should read on the folio, e.g. "Pet fee".'),
+      amount: z.number().positive().max(100_000).describe('Amount in the hotel’s currency.'),
+      date: date.optional().describe('Day the charge applies to; defaults to none.'),
+      reason: z.string().max(200).optional(),
     }),
   },
   set_room_status: {
@@ -544,6 +559,31 @@ async function planCreateReservation(ctx: ToolCtx, raw: unknown): Promise<PlanOu
   };
 }
 
+async function planFolioCharge(ctx: ToolCtx, raw: unknown): Promise<PlanOutput> {
+  const a = parseInput('add_folio_charge', raw);
+  const r = await resolveBooking(ctx, toRef(a.guest), 'any');
+  if (!r.ok) return { steps: [], warnings: [], risk: 'low', blocks: [r.block], abort: true };
+  const b = r.value;
+  if (!(await canAtProperty(ctx.actor, 'folio.edit', ctx.propertyId))) {
+    return { steps: [], warnings: [], risk: 'low', blocks: [{ type: 'error', text: 'Your role can’t change folios here. The owner can allow it under Settings → Permissions.' }] };
+  }
+  if (b.status === 'CANCELLED' || b.status === 'NO_SHOW') throw new HarnessInputError(`${b.code} is ${b.status.toLowerCase().replace('_', '-')}; reinstate it before adding charges.`);
+  const name = `${b.user.firstName} ${b.user.lastName}`.trim();
+  return {
+    steps: [
+      {
+        tool: 'add_folio_charge',
+        args: { bookingId: b.id, name: a.name, amount: a.amount, ...(a.date ? { date: a.date } : {}), ...(a.reason ? { reason: a.reason } : {}) },
+        summary: `Add ${a.name} ${money(a.amount, { currency: b.currency })} to ${name}’s folio (${b.code})`,
+        detail: `${b.roomType.name}${b.room ? ` · room ${b.room.roomNumber}` : ''} · stay total ${money(Number(b.totalPrice), { currency: b.currency })} → ${money(Number(b.totalPrice) + a.amount, { currency: b.currency })}`,
+      },
+    ],
+    warnings: [],
+    risk: 'low',
+    memory: { lastBookingId: b.id, lastBookingCode: b.code ?? undefined, lastGuestName: name, lastRoomNumber: b.room?.roomNumber },
+  };
+}
+
 async function roomTypesResult(propertyId: string): Promise<unknown> {
   const { currency } = await hotelLocale(propertyId);
   return { currency, roomTypes: (await roomTypesOf(propertyId)).map((rt) => ({ id: rt.id, name: rt.name, basePrice: Number(rt.basePrice), rooms: rt.totalRooms, capacity: rt.capacity })) };
@@ -578,6 +618,7 @@ export async function planHotelWrite(ctx: ToolCtx, name: string, raw: unknown): 
   if (!isToolName(name) || definitions[name].kind !== 'write') throw new HarnessInputError(`Unknown write tool: ${name}`);
   let out: PlanOutput;
   if (name === 'set_rates') out = await planSetRates(ctx, raw);
+  else if (name === 'add_folio_charge') out = await planFolioCharge(ctx, raw);
   else if (name === 'create_reservation') out = await planCreateReservation(ctx, raw);
   else {
     const intent = writeIntent(name, raw);
@@ -624,7 +665,7 @@ function systemPrompt(ctx: ToolCtx): string {
   return `You are the operations agent built into ${ctx.propertyName}'s property management system. Staff and owners talk to you in plain words — often messy, typo-ridden, pasted tables, or voice transcripts — and you get things done with the tools.
 
 How to work:
-- Work out what the person wants, even from rough phrasing or a pasted table. Look things up with the read tools when you need facts (ids, current prices, who is arriving) and make independent calls in parallel.
+- Work out what the person wants, even from rough phrasing, typos ("ped fee" = pet fee), half sentences or a pasted table. Follow-ups refer to what you showed last ("patel", "her", "the arrival guy"): resolve them from that context. Look things up with the read tools when you need facts (ids, current prices, who is arriving) and make independent calls in parallel.
 - To change anything, call the write tools. Writes are never applied directly: each call adds steps to ONE plan the person reviews and confirms with a button. So never say a change is done — say you've prepared it for them to confirm. Put everything the person asked for into this one plan; don't ask permission first.
 - For rates: map each row of a request to set_rates changes (one call with all changes). Use list_room_types for exact names. Remember \`to\` in set_rates is the last night, inclusive; use \`nights\` for scattered dates and \`weekdays\` for patterns like Sun–Thu. Read the current calendar first only if you need current prices to compute something.
 - If a tool says something is ambiguous or impossible, fix your input and retry, or explain it plainly and ask one short question. Don't invent ids, names, rooms or prices.
@@ -657,7 +698,7 @@ export interface HarnessResult {
  */
 export async function* runHarness(
   ctx: ToolCtx,
-  opts: { recent?: string[]; client?: Anthropic; signal?: AbortSignal } = {}
+  opts: { recent?: string[]; lastReply?: string; client?: Anthropic; signal?: AbortSignal } = {}
 ): AsyncGenerator<AgentEvent, HarnessResult> {
   const client = opts.client ?? new Anthropic();
   const memory: AgentContextState = { ...ctx.memory };
@@ -665,6 +706,7 @@ export async function* runHarness(
   const earlier = (opts.recent ?? []).filter((m) => m !== ctx.message).slice(-6);
   const context = [
     earlier.length ? `Earlier messages from the person in this conversation (oldest first):\n${earlier.map((m) => `- ${m}`).join('\n')}` : '',
+    opts.lastReply?.trim() ? `What you showed them in your last reply:\n${opts.lastReply.trim().slice(0, 2000)}` : '',
     memory.lastBookingCode || memory.lastGuestName || memory.lastRoomNumber
       ? `Last guest/room discussed: ${[memory.lastGuestName, memory.lastBookingCode && `#${memory.lastBookingCode}`, memory.lastRoomNumber && `room ${memory.lastRoomNumber}`].filter(Boolean).join(', ')}.`
       : '',

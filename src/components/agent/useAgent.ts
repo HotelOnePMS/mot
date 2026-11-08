@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import type { AgentBlock, AgentContextState, AgentEvent } from '@/lib/agent/blocks';
+import { replySummary, type AgentBlock, type AgentContextState, type AgentEvent } from '@/lib/agent/blocks';
 import { api, ApiError } from '@/lib/fetcher';
 
 export interface AgentTurn {
@@ -113,6 +113,9 @@ export function useAgent(propertyId: string | undefined, opts: { onChange?: () =
         .filter((t, i) => t.role === 'user' && t.text && !turns[i + 1]?.error)
         .map((t) => (t.text as string).slice(0, 600))
         .slice(-10);
+      // What the agent last showed, so a follow-up like "add a pet fee to patel" has its context.
+      const lastAgent = [...turns].reverse().find((t) => t.role === 'agent' && !t.pending);
+      const lastReply = lastAgent ? replySummary(lastAgent.blocks) : '';
       const userTurn: AgentTurn = { id: uid(), role: 'user', text: message, blocks: [], at: Date.now(), via: opts.via };
       const agentTurn: AgentTurn = { id: uid(), role: 'agent', blocks: [], pending: true, status: 'Thinking…', at: Date.now() };
       setTurns((ts) => [...ts, userTurn, agentTurn]);
@@ -124,7 +127,7 @@ export function useAgent(propertyId: string | undefined, opts: { onChange?: () =
         const res = await fetch('/api/agent/command', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ propertyId, message, context, recent }),
+          body: JSON.stringify({ propertyId, message, context, recent, ...(lastReply ? { lastReply } : {}) }),
           signal: controller.signal,
         });
         if (!res.ok || !res.body) {

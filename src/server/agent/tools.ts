@@ -23,6 +23,7 @@ import { bookingInclude, floorNumber, toBookingSummary, type BookingWithRelation
 import { hotelLocale } from '../services/hotels';
 import { changeRates } from '../services/rates';
 import { createDeskReservation } from '../services/reservations';
+import { editFolio } from '../services/folio';
 import { roomBoard, setOutOfOrder, setRoomStatus } from '../services/rooms';
 import { listTeam } from '../services/team';
 import type { PlanStep } from './plan';
@@ -920,6 +921,16 @@ export async function executeStep(ctx: OpContext, step: PlanStep): Promise<StepR
         let count = 0;
         for (const run of runs) count += (await changeRates(ctx, String(a.roomTypeId), run[0], run[run.length - 1], change)).count;
         return { ok: true, line: `${step.summary.replace(/: .* → /, ': ')} (${count} night${count === 1 ? '' : 's'} updated)` };
+      }
+      case 'add_folio_charge': {
+        await editFolio(ctx, String(a.bookingId), {
+          target: 'addCharge',
+          name: String(a.name),
+          amount: Number(a.amount),
+          date: a.date ? String(a.date) : null,
+          ...(a.reason ? { reason: String(a.reason) } : {}),
+        });
+        return { ok: true, line: step.summary.replace(/^Add /, 'Added '), bookingId: String(a.bookingId) };
       }
       case 'create_reservation': {
         const b = await createDeskReservation(ctx, {
