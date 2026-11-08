@@ -47,10 +47,13 @@ const SUGGESTIONS = [
   'Which of my properties is underperforming right now, and what is driving it?',
   'Where should I raise or lower rates over the next 30 days?',
   'Compare weekday and weekend demand across my hotels. What should I change?',
-  'Brainstorm the five highest-impact ideas to grow revenue next quarter.',
+  'What are the three highest-impact ways to grow revenue next quarter?',
   'How is my booking pace for the next 90 days compared with last year?',
   'What is behind my cancellations and no-shows, and how could I reduce them?',
 ];
+
+// Answers are short by default; this asks the advisor to expand its last one.
+const MORE_DETAIL_PROMPT = 'Go deeper on that: show the full breakdown, the numbers behind it and the main risks.';
 
 // Older turns are trimmed from what is sent so requests stay small; the full chat stays on screen.
 const MAX_TURNS_SENT = 41;
@@ -379,6 +382,15 @@ export default function AdvisorPage() {
                     </div>
                   )}
                   {message.plans?.map((p) => <AdvisorPlanCard key={p.plan.token} propertyName={p.propertyName} plan={p.plan} />)}
+                  {!streaming && index === messages.length - 1 && message.content && (
+                    <button
+                      type="button"
+                      onClick={() => ask(MORE_DETAIL_PROMPT)}
+                      className="mt-2 text-xs font-medium text-primary hover:underline"
+                    >
+                      More detail
+                    </button>
+                  )}
                   {streaming && index === messages.length - 1 && activity && (
                     <div className={cn('flex items-center gap-2 text-xs text-muted-foreground', message.content && 'mt-2')}>
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />

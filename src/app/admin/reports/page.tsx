@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import useSWR from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import { toast } from 'sonner';
 import { Bookmark, Download, FileSpreadsheet, RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';
 import type { BookingStatus, ISODate } from '@/lib/dto';
@@ -27,6 +27,7 @@ import {
   type ReportResult,
   type ReportSpec,
 } from '@/lib/reports';
+import { decodeQuery, encodeQuery, type QueryResult, type ReportQuery } from '@/lib/report-query';
 import { cn } from '@/lib/utils';
 import { Button, IconButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -37,6 +38,8 @@ import { SegmentedControl } from '@/components/ui/segmented';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useConsole, usePropertyUrl } from '@/components/console/ConsoleProvider';
 import { PageShell } from '@/components/console/PageShell';
+import { AskReport } from '@/components/reports/AskReport';
+import { ReportTable } from '@/components/reports/ReportTable';
 
 /** A report someone saved: its filters and columns, and its dates as days from today so "last 7 days" keeps rolling. */
 interface SavedReport {
@@ -44,6 +47,35 @@ interface SavedReport {
   name: string;
   range: [number, number];
   spec: Omit<ReportSpec, 'from' | 'to'>;
+  /** A described report (built from plain words) instead of the filters above. */
+  query?: Omit<ReportQuery, 'from' | 'to'>;
+}
+
+/** A described report on screen: the query in its link form (?q=), and the assistant's note about it. */
+interface CustomReport {
+  q: string;
+  note?: string | null;
+}
+
+function readQuery(q: string): ReportQuery | null {
+  try {
+    const v = decodeQuery(q) as ReportQuery;
+    return v && typeof v === 'object' && typeof v.from === 'string' && typeof v.to === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The page's address with or without a described report, so it can be bookmarked or shared. */
+function syncAddress(q: string | null) {
+  try {
+    const url = new URL(window.location.href);
+    if (q) url.searchParams.set('q', q);
+    else url.searchParams.delete('q');
+    window.history.replaceState(window.history.state, '', url.toString());
+  } catch {
+    /* address can't change here (sandboxed): the report still shows */
+  }
 }
 
 const SAVED_KEY = 'hotelone.reports.saved';
@@ -146,26 +178,47 @@ function ChipFilter<T extends string>({
 }
 
 export default function ReportsPage() {
-  const { can, today, property } = useConsole();
+  const { can, today, property, propertyId, ctx } = useConsole();
   const [presetId, setPresetId] = React.useState<string>('arrivals');
   const [title, setTitle] = React.useState('Arrivals');
   const [spec, setSpec] = React.useState<ReportSpec | null>(null);
   const [showBuilder, setShowBuilder] = React.useState(false);
   const [saved, setSaved] = React.useState<SavedReport[]>([]);
+  const [custom, setCustomState] = React.useState<CustomReport | null>(null);
+  const customRef = React.useRef(custom);
+  customRef.current = custom;
+  const { mutate: prime } = useSWRConfig();
+  const setCustom = (c: CustomReport | null) => {
+    setCustomState(c);
+    syncAddress(c?.q ?? null);
+  };
 
   React.useEffect(() => setSaved(readSaved()), []);
+  // A link to a described report (from the agent's "Open in Reports", or one someone shared).
+  React.useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('q');
+    if (q && readQuery(q)) {
+      setCustomState({ q });
+      setPresetId('ask');
+    }
+  }, []);
   // Start (and restart on a hotel switch) from the arrivals report for today.
   React.useEffect(() => {
     if (!today) return;
     setSpec(specFrom(REPORT_PRESETS[0], today));
-    setPresetId('arrivals');
+    // A described report on screen stays (it runs for whichever hotel is picked).
+    setPresetId((p) => (customRef.current || p === 'ask' ? p : 'arrivals'));
     setTitle('Arrivals');
   }, [today, property?.id]);
 
   const query = spec ? specToQuery(spec) : null;
   const url = usePropertyUrl('/api/admin/reports', query ?? {});
   const csvUrl = usePropertyUrl('/api/admin/reports', { ...(query ?? {}), format: 'csv', title });
-  const { data, error, isLoading, isValidating, mutate } = useSWR<ReportResult>(spec ? url : null, fetcher, { keepPreviousData: true });
+  const { data, error, isLoading, isValidating, mutate } = useSWR<ReportResult>(spec && !custom ? url : null, fetcher, { keepPreviousData: true });
+  const customQuery = custom ? readQuery(custom.q) : null;
+  const customUrl = usePropertyUrl('/api/admin/reports/query', custom ? { q: custom.q } : {});
+  const customCsv = usePropertyUrl('/api/admin/reports/query', custom ? { q: custom.q, format: 'csv' } : {});
+  const described = useSWR<QueryResult>(custom ? customUrl : null, fetcher, { keepPreviousData: true });
 
   if (!can('reports.view')) {
     return (
@@ -174,6 +227,12 @@ export default function ReportsPage() {
       </PageShell>
     );
   }
+
+  /** Change a described report's dates: the same report over other days. */
+  const updateCustom = (patch: Pick<ReportQuery, 'from' | 'to'>) => {
+    if (!customQuery) return;
+    setCustom({ q: encodeQuery({ ...customQuery, ...patch }), note: null });
+  };
 
   const update = (patch: Partial<ReportSpec>) => {
     setSpec((s) => (s ? { ...s, ...patch } : s));
@@ -184,6 +243,7 @@ export default function ReportsPage() {
   };
 
   const pickPreset = (p: ReportPreset) => {
+    if (custom) setCustom(null);
     setPresetId(p.id);
     setTitle(p.label);
     setSpec(specFrom(p, today));
@@ -194,15 +254,25 @@ export default function ReportsPage() {
     setPresetId(`saved:${r.id}`);
     setTitle(r.name);
     setSpec(specFrom(r, today));
+    setCustom(r.query ? { q: encodeQuery({ ...r.query, from: addDays(today, r.range[0]), to: addDays(today, r.range[1]) } as ReportQuery) } : null);
   };
 
   const saveCurrent = () => {
     if (!spec) return;
-    const name = window.prompt('Name this report', presetId.startsWith('saved:') ? title : `${title} report`)?.trim();
+    const shownTitle = custom ? (described.data?.title ?? 'Custom report') : title;
+    const name = window.prompt('Name this report', presetId.startsWith('saved:') || custom ? shownTitle : `${title} report`)?.trim();
     if (!name) return;
     const { from, to, ...rest } = spec;
     const existing = saved.find((r) => r.name.toLowerCase() === name.toLowerCase());
-    const entry: SavedReport = { id: existing?.id ?? `${Date.now()}`, name: name.slice(0, 60), range: [dayDiff(today, from), dayDiff(today, to)], spec: rest };
+    const q = custom ? customQuery : null;
+    const range: [number, number] = q ? [dayDiff(today, q.from), dayDiff(today, q.to)] : [dayDiff(today, from), dayDiff(today, to)];
+    const entry: SavedReport = {
+      id: existing?.id ?? `${Date.now()}`,
+      name: name.slice(0, 60),
+      range,
+      spec: rest,
+      ...(q ? { query: (({ from: _f, to: _t, ...r }) => r)(q) } : {}),
+    };
     const next = existing ? saved.map((r) => (r.id === existing.id ? entry : r)) : [...saved, entry];
     setSaved(next);
     writeSaved(next);
@@ -218,7 +288,10 @@ export default function ReportsPage() {
     if (presetId === `saved:${r.id}`) pickPreset(REPORT_PRESETS[0]);
   };
 
-  const currency = data?.property.currency ?? 'USD';
+  const currency = (custom ? described.data?.property.currency : data?.property.currency) ?? 'USD';
+  const refreshing = custom ? described.isValidating : isValidating;
+  const csvHref = custom ? customCsv : csvUrl;
+  const ready = custom ? !!described.data : !!data;
   const columns = columnsFor(spec?.kind ?? 'list');
   const options = data?.options;
 
@@ -229,20 +302,34 @@ export default function ReportsPage() {
       description="Ready-made front desk reports, or build your own and download it as a spreadsheet."
       actions={
         <>
-          <IconButton label="Refresh" variant="outline" onClick={() => mutate()} aria-busy={isValidating || undefined}>
-            <RefreshCw className={cn(isValidating && 'motion-safe:animate-spin')} />
+          <IconButton label="Refresh" variant="outline" onClick={() => (custom ? described.mutate() : mutate())} aria-busy={refreshing || undefined}>
+            <RefreshCw className={cn(refreshing && 'motion-safe:animate-spin')} />
           </IconButton>
           <Button variant="outline" onClick={saveCurrent} disabled={!spec}>
             <Bookmark aria-hidden /> Save report
           </Button>
-          <Button asChild disabled={!data}>
-            <a href={csvUrl ?? '#'} download aria-disabled={!data || undefined} onClick={(e) => !data && e.preventDefault()}>
+          <Button asChild disabled={!ready}>
+            <a href={csvHref ?? '#'} download aria-disabled={!ready || undefined} onClick={(e) => !ready && e.preventDefault()}>
               <Download aria-hidden /> Download CSV
             </a>
           </Button>
         </>
       }
     >
+      {ctx?.agent.llmEnabled && propertyId && (
+        <Card className="p-4">
+          <AskReport
+            propertyId={propertyId}
+            onReport={(r) => {
+              // The answer already holds the result: show it without running the report twice.
+              void prime(`/api/admin/reports/query?${new URLSearchParams({ propertyId, q: r.q }).toString()}`, r.result, { revalidate: false });
+              setPresetId('ask');
+              setCustom({ q: r.q, note: r.note });
+            }}
+          />
+        </Card>
+      )}
+
       <section aria-label="Reports" className="space-y-2">
         <div className="flex flex-wrap gap-2">
           {REPORT_PRESETS.map((p) => (
@@ -269,7 +356,77 @@ export default function ReportsPage() {
         )}
       </section>
 
-      {spec && (
+      {custom && customQuery && (
+        <Card className="space-y-3 p-4">
+          <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-end">
+            <Field label="From" htmlFor="custom-from">
+              <Input id="custom-from" type="date" value={customQuery.from} max={customQuery.to} onChange={(e) => e.target.value && updateCustom({ from: e.target.value, to: customQuery.to })} className="w-full sm:w-40" />
+            </Field>
+            <Field label="To" htmlFor="custom-to">
+              <Input id="custom-to" type="date" value={customQuery.to} min={customQuery.from} onChange={(e) => e.target.value && updateCustom({ from: customQuery.from, to: e.target.value })} className="w-full sm:w-40" />
+            </Field>
+          </div>
+          <div className="flex flex-wrap gap-1.5" aria-label="Quick date ranges" role="group">
+            {quickRanges(today).map((r) => (
+              <Button key={r.label} size="sm" variant={customQuery.from === r.from && customQuery.to === r.to ? 'soft' : 'ghost'} onClick={() => updateCustom({ from: r.from, to: r.to })}>
+                {r.label}
+              </Button>
+            ))}
+          </div>
+          {custom.note && <p className="text-sm text-muted-foreground">{custom.note}</p>}
+        </Card>
+      )}
+
+      {custom && (
+        <Card className="overflow-hidden">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 border-b px-4 py-3">
+            <h2 className="text-base font-semibold tracking-tight">{described.data?.title ?? 'Custom report'}</h2>
+            {described.data && (
+              <p className="text-sm text-muted-foreground tabular">
+                {described.data.query.from === described.data.query.to
+                  ? fmtDay(described.data.query.from, 'long')
+                  : `${fmtDay(described.data.query.from, 'weekday')} – ${fmtDay(described.data.query.to, 'weekday')}`}{' '}
+                · {formatNumber(described.data.rows.length)} {described.data.rows.length === 1 ? 'row' : 'rows'}
+              </p>
+            )}
+          </div>
+          {!customQuery ? (
+            <div className="p-4">
+              <Callout tone="danger" role="alert" title="This report link is broken">
+                Describe the report again above.
+              </Callout>
+            </div>
+          ) : described.error ? (
+            <div className="p-4">
+              <Callout tone="danger" role="alert" title="This report couldn’t run">
+                {described.error instanceof Error ? described.error.message : 'Try again.'}
+              </Callout>
+            </div>
+          ) : !described.data ? (
+            <div className="space-y-2 p-4" role="status">
+              <span className="sr-only">Running report…</span>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-8 w-full" />
+              ))}
+            </div>
+          ) : described.data.rows.length === 0 ? (
+            <EmptyState icon={FileSpreadsheet} title="Nothing matches this report" description="Try a wider date range, or describe it differently." />
+          ) : (
+            <>
+              {described.data.truncated && (
+                <div className="px-4 pt-4">
+                  <Callout tone="warning" title="Very large report">
+                    Narrow the dates for exact totals.
+                  </Callout>
+                </div>
+              )}
+              <ReportTable columns={described.data.columns} rows={described.data.rows} totals={described.data.totals} currency={currency} caption={described.data.title} />
+            </>
+          )}
+        </Card>
+      )}
+
+      {spec && !custom && (
         <Card className="space-y-4 p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-end">
@@ -385,87 +542,89 @@ export default function ReportsPage() {
         </Card>
       )}
 
-      <Card className="overflow-hidden">
-        <div className="flex flex-wrap items-baseline justify-between gap-2 border-b px-4 py-3">
-          <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-          {data && spec && (
-            <p className="text-sm text-muted-foreground tabular">
-              {data.spec.from === data.spec.to ? fmtDay(data.spec.from, 'long') : `${fmtDay(data.spec.from, 'weekday')} – ${fmtDay(data.spec.to, 'weekday')}`} · {formatNumber(data.rows.length)}{' '}
-              {data.spec.kind === 'list' ? (data.rows.length === 1 ? 'reservation' : 'reservations') : 'rows'}
-            </p>
-          )}
-        </div>
-        {error ? (
-          <div className="p-4">
-            <Callout tone="danger" role="alert" title="This report couldn’t run">
-              {error instanceof Error ? error.message : 'Try again.'}
-            </Callout>
-          </div>
-        ) : !data || isLoading ? (
-          <div className="space-y-2 p-4" role="status">
-            <span className="sr-only">Running report…</span>
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-8 w-full" />
-            ))}
-          </div>
-        ) : data.rows.length === 0 ? (
-          <EmptyState icon={FileSpreadsheet} title="Nothing matches this report" description="Try a wider date range or fewer filters." />
-        ) : (
-          <>
-            {data.truncated && (
-              <div className="px-4 pt-4">
-                <Callout tone="warning" title={`Showing the first ${formatNumber(data.rows.length)} reservations`}>
-                  Narrow the dates or filters to see everything.
-                </Callout>
-              </div>
+      {!custom && (
+        <Card className="overflow-hidden">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 border-b px-4 py-3">
+            <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+            {data && spec && (
+              <p className="text-sm text-muted-foreground tabular">
+                {data.spec.from === data.spec.to ? fmtDay(data.spec.from, 'long') : `${fmtDay(data.spec.from, 'weekday')} – ${fmtDay(data.spec.to, 'weekday')}`} · {formatNumber(data.rows.length)}{' '}
+                {data.spec.kind === 'list' ? (data.rows.length === 1 ? 'reservation' : 'reservations') : 'rows'}
+              </p>
             )}
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-max text-sm">
-                <thead className="bg-surface-sunken text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <tr>
-                    {data.columns.map((c) => (
-                      <th key={c.key} scope="col" className={cn('whitespace-nowrap px-4 py-2.5 font-medium', ['number', 'money', 'percent'].includes(c.format) && 'text-right')}>
-                        {c.label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {data.rows.map((r, i) => (
-                    <tr key={i} className="hover:bg-accent/40">
+          </div>
+          {error ? (
+            <div className="p-4">
+              <Callout tone="danger" role="alert" title="This report couldn’t run">
+                {error instanceof Error ? error.message : 'Try again.'}
+              </Callout>
+            </div>
+          ) : !data || isLoading ? (
+            <div className="space-y-2 p-4" role="status">
+              <span className="sr-only">Running report…</span>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-8 w-full" />
+              ))}
+            </div>
+          ) : data.rows.length === 0 ? (
+            <EmptyState icon={FileSpreadsheet} title="Nothing matches this report" description="Try a wider date range or fewer filters." />
+          ) : (
+            <>
+              {data.truncated && (
+                <div className="px-4 pt-4">
+                  <Callout tone="warning" title={`Showing the first ${formatNumber(data.rows.length)} reservations`}>
+                    Narrow the dates or filters to see everything.
+                  </Callout>
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-max text-sm">
+                  <thead className="bg-surface-sunken text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    <tr>
                       {data.columns.map((c) => (
-                        <td
-                          key={c.key}
-                          className={cn(
-                            'px-4 py-2.5 align-top',
-                            ['number', 'money', 'percent'].includes(c.format) ? 'whitespace-nowrap text-right tabular' : c.key === 'notes' ? 'max-w-xs' : 'whitespace-nowrap',
-                          )}
-                        >
-                          {data.spec.kind === 'summary' && data.spec.groupBy === 'date' && c.key === 'group' ? fmtDay(String(r.group), 'weekday') : formatCell(r[c.key] ?? null, c, currency)}
-                        </td>
+                        <th key={c.key} scope="col" className={cn('whitespace-nowrap px-4 py-2.5 font-medium', ['number', 'money', 'percent'].includes(c.format) && 'text-right')}>
+                          {c.label}
+                        </th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-                {data.totals && (
-                  <tfoot className="border-t-2 bg-surface-sunken font-medium">
-                    <tr>
-                      {data.columns.map((c, i) => {
-                        const v = data.totals?.[c.key] ?? null;
-                        return (
-                          <td key={c.key} className={cn('whitespace-nowrap px-4 py-2.5', ['number', 'money', 'percent'].includes(c.format) && 'text-right tabular')}>
-                            {v === null ? (i === 0 ? 'Total' : '') : formatCell(v, c, currency)}
+                  </thead>
+                  <tbody className="divide-y">
+                    {data.rows.map((r, i) => (
+                      <tr key={i} className="hover:bg-accent/40">
+                        {data.columns.map((c) => (
+                          <td
+                            key={c.key}
+                            className={cn(
+                              'px-4 py-2.5 align-top',
+                              ['number', 'money', 'percent'].includes(c.format) ? 'whitespace-nowrap text-right tabular' : c.key === 'notes' ? 'max-w-xs' : 'whitespace-nowrap',
+                            )}
+                          >
+                            {data.spec.kind === 'summary' && data.spec.groupBy === 'date' && c.key === 'group' ? fmtDay(String(r.group), 'weekday') : formatCell(r[c.key] ?? null, c, currency)}
                           </td>
-                        );
-                      })}
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </div>
-          </>
-        )}
-      </Card>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                  {data.totals && (
+                    <tfoot className="border-t-2 bg-surface-sunken font-medium">
+                      <tr>
+                        {data.columns.map((c, i) => {
+                          const v = data.totals?.[c.key] ?? null;
+                          return (
+                            <td key={c.key} className={cn('whitespace-nowrap px-4 py-2.5', ['number', 'money', 'percent'].includes(c.format) && 'text-right tabular')}>
+                              {v === null ? (i === 0 ? 'Total' : '') : formatCell(v, c, currency)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </>
+          )}
+        </Card>
+      )}
     </PageShell>
   );
 }

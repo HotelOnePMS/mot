@@ -20,15 +20,14 @@ import {
   ConnectionTestResult,
   OtaPromotionPayload,
   OtaReservation,
-  OtaReservationAction,
   OtaRoomType,
   ReservationConfirmation,
 } from '../types';
 import { asArray, attr, chunk, esc, parseXml, postXml, text } from '../xml';
+import { buildAvailMessages, buildRateMessage, OTA_NS, parseHotelReservation, timestamp } from './opentravel';
 
 const SUPPLY_URL = process.env.BOOKING_COM_SUPPLY_URL || 'https://supply-xml.booking.com';
 const SECURE_URL = process.env.BOOKING_COM_SECURE_URL || 'https://secure-supply-xml.booking.com';
-const OTA_NS = 'http://www.opentravel.org/OTA/2003/05';
 const MESSAGES_PER_REQUEST = 100;
 
 const PROMOTION_TYPES = {
@@ -38,13 +37,7 @@ const PROMOTION_TYPES = {
   MULTI_NIGHT: 'basic', // multi-night = basic promotion with a minimum stay
 } as const;
 
-// OTA AgeQualifyingCode values
-const AGE_ADULT = '10';
-const AGE_CHILD = '8';
-
-function timestamp(): string {
-  return new Date().toISOString().replace(/\.\d{3}Z$/, '+00:00');
-}
+const LABEL = 'Booking.com';
 
 export class BookingComAdapter implements ChannelAdapter {
   constructor(private readonly creds: ChannelCredentials) {}
@@ -128,41 +121,11 @@ export class BookingComAdapter implements ChannelAdapter {
     }));
   }
 
-  private availMessages(update: AriUpdate): string[] {
-    const control = (withRatePlan: boolean) =>
-      `<StatusApplicationControl Start="${update.from}" End="${update.to}" InvTypeCode="${esc(update.otaRoomTypeId)}"${
-        withRatePlan ? ` RatePlanCode="${esc(update.otaRatePlanId)}"` : ''
-      }/>`;
-    const messages: string[] = [];
-
-    // Rooms to sell is set per room, without a rate plan
-    if (update.available !== null) {
-      messages.push(`<AvailStatusMessage BookingLimit="${update.available}">${control(false)}</AvailStatusMessage>`);
-    }
-    if (update.closed !== null || update.minStay !== null) {
-      const lengthOfStay =
-        update.minStay === null
-          ? ''
-          : `<LengthsOfStay><LengthOfStay Time="${update.minStay}" TimeUnit="Day" MinMaxMessageType="SetMinLOS"/></LengthsOfStay>`;
-      const status = update.closed === null ? '' : `<RestrictionStatus Status="${update.closed ? 'Close' : 'Open'}"/>`;
-      messages.push(`<AvailStatusMessage>${control(true)}${lengthOfStay}${status}</AvailStatusMessage>`);
-    }
-    return messages;
-  }
-
-  private rateMessage(update: AriUpdate): string | null {
-    if (update.price === null) return null;
-    return `<RateAmountMessage>
-      <StatusApplicationControl Start="${update.from}" End="${update.to}" InvTypeCode="${esc(update.otaRoomTypeId)}" RatePlanCode="${esc(update.otaRatePlanId)}"/>
-      <Rates><Rate><BaseByGuestAmts><BaseByGuestAmt AmountAfterTax="${update.price.toFixed(2)}" DecimalPlaces="2" CurrencyCode="${esc(this.creds.currency)}"/></BaseByGuestAmts></Rate></Rates>
-    </RateAmountMessage>`;
-  }
-
   async pushAri(updates: AriUpdate[]): Promise<AriPushResult> {
     const hotelCode = esc(this.creds.otaPropertyId);
-    const availMessages = updates.flatMap((update) => this.availMessages(update));
+    const availMessages = updates.flatMap((update) => buildAvailMessages(update));
     const rateMessages = updates
-      .map((update) => this.rateMessage(update))
+      .map((update) => buildRateMessage(update, this.creds.currency))
       .filter((message): message is string => message !== null);
     const warnings: string[] = [];
     let requests = 0;
@@ -204,111 +167,6 @@ export class BookingComAdapter implements ChannelAdapter {
     return { requests, updates: updates.length, warnings };
   }
 
-  /** Turns one OTA HotelReservation into one normalized reservation per room type */
-  private parseHotelReservation(reservation: any, fallbackAction: OtaReservationAction): OtaReservation[] {
-    const resStatus = (attr(reservation, 'ResStatus') ?? '').toLowerCase();
-    const action: OtaReservationAction =
-      resStatus === 'cancel' || resStatus === 'cancelled'
-        ? 'CANCEL'
-        : resStatus === 'modify'
-          ? 'MODIFY'
-          : resStatus === 'commit' || resStatus === 'book'
-            ? 'BOOK'
-            : fallbackAction;
-
-    const globalInfo = reservation.ResGlobalInfo ?? {};
-    const reservationIds = asArray(globalInfo.HotelReservationIDs?.HotelReservationID);
-    const groupId =
-      attr(reservationIds[0], 'ResID_Value') ?? attr(reservation.UniqueID, 'ID') ?? '';
-    if (!groupId) return [];
-
-    const customer = asArray(reservation.ResGuests?.ResGuest)[0]?.Profiles?.ProfileInfo?.Profile?.Customer;
-    const guest = {
-      firstName: text(customer?.PersonName?.GivenName) || 'Booking.com',
-      lastName: text(customer?.PersonName?.Surname) || 'Guest',
-      email: text(customer?.Email) || null,
-      phone: attr(customer?.Telephone, 'PhoneNumber') ?? null,
-    };
-    const globalTotal = globalInfo.Total;
-    const roomStays = asArray(reservation.RoomStays?.RoomStay);
-
-    // Cancellations may arrive without room stays
-    if (roomStays.length === 0) {
-      return [
-        {
-          externalId: groupId,
-          reservationGroupId: groupId,
-          action,
-          otaRoomTypeId: null,
-          otaRatePlanId: null,
-          checkIn: null,
-          checkOut: null,
-          rooms: 0,
-          adults: 0,
-          children: 0,
-          totalAmount: attr(globalTotal, 'AmountAfterTax') ? Number(attr(globalTotal, 'AmountAfterTax')) : null,
-          currency: attr(globalTotal, 'CurrencyCode') ?? null,
-          guest,
-          specialRequests: null,
-          paymentModel: null,
-          raw: reservation,
-        },
-      ];
-    }
-
-    const byRoomType = new Map<string, any[]>();
-    for (const stay of roomStays) {
-      const roomTypeCode = attr(asArray(stay.RoomTypes?.RoomType)[0], 'RoomTypeCode') ?? '';
-      byRoomType.set(roomTypeCode, [...(byRoomType.get(roomTypeCode) ?? []), stay]);
-    }
-
-    const split = byRoomType.size > 1;
-    return Array.from(byRoomType.entries()).map(([roomTypeCode, stays]) => {
-      const first = stays[0];
-      let adults = 0;
-      let children = 0;
-      let total = 0;
-      let hasTotal = false;
-      const requests: string[] = [];
-      for (const stay of stays) {
-        for (const count of asArray(stay.GuestCounts?.GuestCount)) {
-          const value = Number(attr(count, 'Count') ?? 0);
-          if (attr(count, 'AgeQualifyingCode') === AGE_CHILD) children += value;
-          else if ((attr(count, 'AgeQualifyingCode') ?? AGE_ADULT) === AGE_ADULT) adults += value;
-        }
-        const amount = attr(stay.Total, 'AmountAfterTax');
-        if (amount) {
-          total += Number(amount);
-          hasTotal = true;
-        }
-        for (const request of asArray(stay.SpecialRequests?.SpecialRequest)) {
-          const value = text(request.Text) || text(request);
-          if (value) requests.push(value);
-        }
-      }
-      const globalAmount = attr(globalTotal, 'AmountAfterTax');
-
-      return {
-        externalId: split ? `${groupId}-${roomTypeCode}` : groupId,
-        reservationGroupId: groupId,
-        action,
-        otaRoomTypeId: roomTypeCode || null,
-        otaRatePlanId: attr(asArray(first.RatePlans?.RatePlan)[0], 'RatePlanCode') ?? null,
-        checkIn: attr(first.TimeSpan, 'Start') ?? null,
-        checkOut: attr(first.TimeSpan, 'End') ?? null,
-        rooms: stays.length,
-        adults: Math.max(adults, 1),
-        children,
-        totalAmount: hasTotal ? total : !split && globalAmount ? Number(globalAmount) : null,
-        currency: attr(first.Total, 'CurrencyCode') ?? attr(globalTotal, 'CurrencyCode') ?? null,
-        guest,
-        specialRequests: requests.join('\n') || null,
-        paymentModel: 'Booking.com',
-        raw: reservation,
-      };
-    });
-  }
-
   async pullReservations(): Promise<OtaReservation[]> {
     const query = `?hotel_ids=${encodeURIComponent(this.creds.otaPropertyId)}`;
     const reservations: OtaReservation[] = [];
@@ -321,7 +179,7 @@ export class BookingComAdapter implements ChannelAdapter {
     });
     const newRoot = this.checkOtaErrors(parseXml(newXml), 'OTA_HotelResNotifRQ');
     for (const reservation of asArray(newRoot.HotelReservations?.HotelReservation)) {
-      reservations.push(...this.parseHotelReservation(reservation, 'BOOK'));
+      reservations.push(...parseHotelReservation(reservation, 'BOOK', LABEL));
     }
 
     const modifyXml = await postXml({
@@ -332,7 +190,7 @@ export class BookingComAdapter implements ChannelAdapter {
     });
     const modifyRoot = this.checkOtaErrors(parseXml(modifyXml), 'OTA_HotelResModifyNotifRQ');
     for (const reservation of asArray(modifyRoot.HotelResModifies?.HotelResModify)) {
-      reservations.push(...this.parseHotelReservation(reservation, 'MODIFY'));
+      reservations.push(...parseHotelReservation(reservation, 'MODIFY', LABEL));
     }
 
     return reservations;

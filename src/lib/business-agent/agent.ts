@@ -6,6 +6,7 @@ import { assertPropertyAccess, can, type Actor } from '@/server/authz';
 import { HarnessInputError, HOTEL_WRITE_TOOLS_FOR_ADVISOR, hotelToolLabel, isHotelWriteTool, planHotelWrite } from '@/server/agent/harness';
 import { signPlan, type PlanStep } from '@/server/agent/plan';
 import { maxRisk } from '@/server/agent/tools';
+import { newWriteState, type WriteState } from '@/server/agent/folio-plan';
 import { todayAt } from '@/server/services/hotels';
 import { DomainError } from '@/server/errors';
 import { NO_EM_DASHES } from '@/lib/writing-style';
@@ -36,14 +37,21 @@ How to help:
 - Answer from the snapshot when it already covers the question. Call tools when you need another period, finer granularity, a different breakdown, or evidence for a hypothesis. Make independent tool calls in parallel.
 - Ground every figure in the snapshot or a tool result, and say which period it covers. Do not invent numbers. When the data cannot answer something (costs, profit, staffing, marketing spend, distribution channels, competitor rates, reviews), say so plainly, then either reason from clearly labelled assumptions or say what data would settle it.
 - Compare properties with each other and with their own history (previous period, same time last year). Call out small samples, such as a property with a handful of bookings, before drawing conclusions.
-- When brainstorming or recommending, be specific and prioritised: what to do, at which property, room type and dates, the evidence behind it, a rough estimate of the upside with the arithmetic shown, the main risk, and how they would know it worked. Prefer a few strong ideas over a long generic list.
+- When brainstorming or recommending, give the two or three strongest ideas, not a long list. For each: what to do, where (property, room type, dates), and the one number that justifies it. Keep the full arithmetic, risks and how to measure success for when they ask.
 - If a goal is ambiguous and the answer would change your recommendation, ask one short clarifying question; otherwise state your assumption and proceed.
 - You can prepare changes with the write tools (rates as exact prices, percent changes or resets, by date range, specific nights or weekdays; plus room assignments, room status, out-of-order, housekeeping, notes and booking status). They never apply anything directly: each call adds to a plan per property that the person reviews and confirms with a button under your answer. When the person asks you to make or apply changes, call the write tools with every change in one go, then say it's ready to confirm, never that it's done. When you only recommend, don't call them; offer to prepare the changes. If no write tools are available to you, say where in the console to make the change: Rates, Rooms, Properties, Reservations, Housekeeping, or Front desk.
-- Before a round of tool calls, write one short sentence saying what you are checking.
+- Don't write text before tool calls; the person already sees what you are checking.
+
+Length: keep answers short. The person is busy and reads on a phone between other work.
+- Open with the answer in one or two sentences. Then give at most three to five bullets with the key numbers or actions. Most answers should fit in about 150 words.
+- Leave out methodology, restating the question, long caveats and closing summaries. Mention a caveat in one short clause only when it changes the decision (for example, a tiny sample).
+- Use a small table only when comparing several properties or periods, and keep it to the rows and columns that matter.
+- Add detail only when asked. If there is more worth knowing, end with one short line offering it, such as "Want the night-by-night breakdown?"
+- When the person asks for more detail, a full analysis or a plan, go deeper, but stay as brief as the request allows.
 
 ${NO_EM_DASHES}
 
-Style: lead with the answer, then the supporting numbers. Use concise markdown with short paragraphs, bullet lists and small tables where they help comparison. Quote amounts in the currency the snapshot gives; never add up amounts from properties in different currencies. Refer to properties by name, not id.`;
+Style: plain, direct sentences in markdown. Quote amounts in the currency the snapshot gives; never add up amounts from properties in different currencies. Refer to properties by name, not id.`;
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
@@ -94,7 +102,7 @@ export async function* runAdvisorTurn({
 }): AsyncGenerator<AdvisorEvent> {
   const canWrite = !!actor && can(actor, 'agent.use');
   const tools = canWrite ? [...ADVISOR_TOOLS, ...HOTEL_WRITE_TOOLS_FOR_ADVISOR] : ADVISOR_TOOLS;
-  const plans = new Map<string, { steps: PlanStep[]; warnings: string[]; risk: 'low' | 'medium' | 'high' }>();
+  const plans = new Map<string, AdvisorPlan>();
   const finish = function* (): Generator<AdvisorEvent> {
     for (const [propertyId, p] of plans) {
       if (!p.steps.length || !actor) continue;
@@ -134,7 +142,8 @@ export async function* runAdvisorTurn({
     const stream = client.beta.messages.stream(
       {
         model: MODEL,
-        max_tokens: 64000,
+        // Covers thinking plus a short answer; the prompt, not this cap, keeps answers brief.
+        max_tokens: 16000,
         betas: BETAS,
         fallbacks: 'default',
         thinking: { type: 'adaptive', display: 'updates' },
@@ -204,6 +213,7 @@ export async function* runAdvisorTurn({
       continue;
     }
     if (message.stop_reason !== 'tool_use' || toolUses.length === 0) {
+      if (message.stop_reason === 'max_tokens') yield { type: 'text', text: '\n\n_The answer was cut short. Ask a narrower question for the rest._' };
       yield* finish();
       return;
     }
@@ -238,11 +248,19 @@ export async function* runAdvisorTurn({
   yield* finish();
 }
 
+/** One property's changes in this turn, and what they have planned so far (so later changes build on earlier ones). */
+interface AdvisorPlan {
+  steps: PlanStep[];
+  warnings: string[];
+  risk: 'low' | 'medium' | 'high';
+  state: WriteState;
+}
+
 /** Adds a write tool call to its property's plan; nothing changes until the person confirms. */
 async function planAdvisorWrite(
   actor: Actor,
   data: PortfolioData,
-  plans: Map<string, { steps: PlanStep[]; warnings: string[]; risk: 'low' | 'medium' | 'high' }>,
+  plans: Map<string, AdvisorPlan>,
   toolUse: Anthropic.Beta.BetaToolUseBlock,
 ): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
   const { property_id: propertyId, ...input } = (toolUse.input ?? {}) as { property_id?: string } & Record<string, unknown>;
@@ -253,8 +271,8 @@ async function planAdvisorWrite(
   try {
     assertPropertyAccess(actor, propertyId);
     const ctx = { actor, propertyId, propertyName: property.name, today: await todayAt(propertyId), memory: {}, message: '' };
-    const w = await planHotelWrite(ctx, toolUse.name, input);
-    const p = plans.get(propertyId) ?? { steps: [], warnings: [], risk: 'low' as const };
+    const p: AdvisorPlan = plans.get(propertyId) ?? { steps: [], warnings: [], risk: 'low', state: newWriteState() };
+    const w = await planHotelWrite(ctx, toolUse.name, input, p.state);
     p.steps.push(...w.out.steps);
     p.warnings.push(...w.out.warnings);
     p.risk = maxRisk(p.risk, w.out.risk);

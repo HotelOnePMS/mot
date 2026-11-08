@@ -25,6 +25,8 @@ const schema = z.object({
   recent: z.array(z.string().trim().min(1).max(600)).max(12).default([]),
   /** What the agent showed in its previous reply (text and reservations), for follow-ups. */
   lastReply: z.string().max(2000).optional(),
+  /** The console page the person has open (its path): "this guest" on a reservation's page is that reservation. */
+  page: z.string().max(300).optional(),
 });
 
 /**
@@ -42,7 +44,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
     async start(controller) {
       const send = (e: AgentEvent) => controller.enqueue(encoder.encode(JSON.stringify(e) + '\n'));
       try {
-        for await (const event of runAgent({ actor, propertyId: body.propertyId, message: body.message, memory: body.context, recent: body.recent, lastReply: body.lastReply })) {
+        for await (const event of runAgent({ actor, propertyId: body.propertyId, message: body.message, memory: body.context, recent: body.recent, lastReply: body.lastReply, page: body.page })) {
           send(event);
         }
       } catch (e) {

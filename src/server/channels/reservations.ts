@@ -9,6 +9,7 @@ import { ConnectionWithMappings, computeChannelDays, loadConnection, roundPrice 
 import { addDays, todayAt, isDateString } from './dates';
 import { errorMessage, logSync, scheduleInventorySync } from './sync';
 import { extractPaymentCard, redactCardData } from './cards';
+import { channelInfo, reservationDelivery } from '@/lib/channels/catalog';
 import { CHANNEL_LABELS, ChannelApiError, OtaReservation, ReservationConfirmation } from './types';
 
 export interface ImportResult {
@@ -244,7 +245,7 @@ export async function importReservation(
         paymentStatus: 'PAY_AT_PROPERTY',
         code,
         guestEmail: guestEmail(reservation),
-        // Booking.source names the OTA: EXPEDIA | BOOKING_COM.
+        // Booking.source names the OTA (the OtaChannel value: EXPEDIA, BOOKING_COM, AIRBNB, ...).
         source: connection.channel,
         notes,
         statusHistory: {
@@ -334,33 +335,47 @@ async function importBatch(connection: ConnectionWithMappings, reservations: Ota
   return results;
 }
 
+/**
+ * Imports a batch and builds the confirmations to send back: OTAs show the PMS
+ * confirmation number to the guest, so it is the short code the front desk uses.
+ * Used by the pull (cron, Sync now) and by OTA webhooks.
+ */
+export async function importAndConfirmations(
+  connection: ConnectionWithMappings,
+  reservations: OtaReservation[]
+): Promise<{ results: ImportResult[]; confirmations: ReservationConfirmation[] }> {
+  const results = await importBatch(connection, reservations);
+  const bookingIds = results.map((r) => r.bookingId).filter((id): id is string => Boolean(id));
+  const codes = new Map(
+    (await prisma.booking.findMany({ where: { id: { in: bookingIds } }, select: { id: true, code: true } })).map((b) => [b.id, b.code])
+  );
+
+  const confirmations = new Map<string, ReservationConfirmation>();
+  for (const reservation of reservations) {
+    const result = results.find((r) => r.externalId === reservation.externalId);
+    if (!result || result.outcome === 'failed') continue;
+    confirmations.set(`${reservation.reservationGroupId}|${reservation.action}`, {
+      reservationGroupId: reservation.reservationGroupId,
+      action: reservation.action,
+      pmsConfirmationNumber: (result.bookingId && codes.get(result.bookingId)) || result.bookingId || reservation.reservationGroupId,
+    });
+  }
+  return { results, confirmations: Array.from(confirmations.values()) };
+}
+
 /** Pulls pending reservations from the OTA, imports them and confirms them back */
 export async function pullReservations(connectionId: string): Promise<ImportResult[]> {
   const connection = await loadConnection(connectionId);
   if (!connection) throw new ChannelApiError('Channel connection not found');
   if (!connection.importReservations) return [];
+  // Webhook OTAs push each reservation as it happens (webhooks.ts); Google sends no bookings
+  if (connection.mode === 'LIVE' && reservationDelivery(connection.channel, connection.connectivityProvider) !== 'pull') return [];
 
   try {
     const adapter = await getAdapter(connection);
     const reservations = await adapter.pullReservations();
-    const results = await importBatch(connection, reservations);
-    // OTAs show the PMS confirmation number to the guest: send the short code the front desk uses.
-    const bookingIds = results.map((r) => r.bookingId).filter((id): id is string => Boolean(id));
-    const codes = new Map(
-      (await prisma.booking.findMany({ where: { id: { in: bookingIds } }, select: { id: true, code: true } })).map((b) => [b.id, b.code])
-    );
-
-    const confirmations = new Map<string, ReservationConfirmation>();
-    for (const reservation of reservations) {
-      const result = results.find((r) => r.externalId === reservation.externalId);
-      if (!result || result.outcome === 'failed') continue;
-      confirmations.set(`${reservation.reservationGroupId}|${reservation.action}`, {
-        reservationGroupId: reservation.reservationGroupId,
-        action: reservation.action,
-        pmsConfirmationNumber: (result.bookingId && codes.get(result.bookingId)) || result.bookingId || reservation.reservationGroupId,
-      });
-    }
-    await adapter.confirmReservations(Array.from(confirmations.values()));
+    const { results, confirmations } = await importAndConfirmations(connection, reservations);
+    await adapter.confirmReservations(confirmations);
 
     await prisma.channelConnection.update({
       where: { id: connectionId },
@@ -398,6 +413,11 @@ export async function simulateReservation(connectionId: string): Promise<ImportR
   if (connection.mode !== 'SANDBOX') {
     throw new ChannelApiError('Simulated bookings are only available in sandbox mode');
   }
+  if (channelInfo(connection.channel)?.direct.reservations === 'none') {
+    throw new ChannelApiError(
+      `${CHANNEL_LABELS[connection.channel]} doesn't take bookings itself: its links open your HotelOne booking site, so those bookings arrive as website bookings.`
+    );
+  }
   if (connection.roomMappings.length === 0) {
     throw new ChannelApiError('Map at least one room type first');
   }
@@ -432,14 +452,14 @@ export async function simulateReservation(connectionId: string): Promise<ImportR
       phone: '+1 555 0100',
     },
     specialRequests: 'Late arrival (sandbox test booking)',
-    paymentModel: connection.channel === 'EXPEDIA' ? 'Expedia Collect (virtual card)' : 'Booking.com',
+    paymentModel: connection.channel === 'EXPEDIA' ? 'Expedia Collect (virtual card)' : CHANNEL_LABELS[connection.channel],
     // A virtual card like the OTA's, chargeable from check-in. In Stripe test mode, charge it with 4242 4242 4242 4242.
     paymentCard: {
       type: 'VIRTUAL',
       brand: 'Visa',
       last4: '4242',
       expiry: '12/34',
-      holderName: connection.channel === 'EXPEDIA' ? 'Expedia VirtualCard' : 'Booking.com VCC',
+      holderName: connection.channel === 'EXPEDIA' ? 'Expedia VirtualCard' : `${CHANNEL_LABELS[connection.channel]} VCC`,
       chargeableFrom: checkIn,
       chargeableUntil: addDays(checkOut, 30),
       balance: roundPrice(days.reduce((sum, day) => sum + day.channelRate, 0)),

@@ -4,9 +4,11 @@ import { getAdapter, sealPassword } from './adapters';
 import { addDays, todayAt } from './dates';
 import { pullReservations } from './reservations';
 import { errorMessage, logSync, pushAri } from './sync';
+import { CHANNEL_IDS, CONNECTIVITY_PROVIDERS, channelInfo, reservationDelivery, roomCodeSource } from '@/lib/channels/catalog';
+import { webhookUrl } from './webhooks';
 import { CHANNEL_LABELS, ChannelApiError, OtaRoomType } from './types';
 
-export const CHANNELS: OtaChannel[] = ['EXPEDIA', 'BOOKING_COM'];
+export const CHANNELS: OtaChannel[] = CHANNEL_IDS as OtaChannel[];
 
 /** Connection as returned by the API - credentials are never sent back */
 export function serializeConnection(connection: ChannelConnection & Record<string, unknown>) {
@@ -16,6 +18,13 @@ export function serializeConnection(connection: ChannelConnection & Record<strin
     channelLabel: CHANNEL_LABELS[connection.channel],
     defaultMarkupPercent: Number(connection.defaultMarkupPercent),
     hasPassword: Boolean(passwordCipher),
+    reservationDelivery: reservationDelivery(connection.channel, connection.connectivityProvider),
+    roomCodeSource: roomCodeSource(connection.channel, connection.connectivityProvider, connection.mode),
+    // Where the OTA posts reservations (live, direct connections with webhook delivery only)
+    webhookUrl:
+      connection.mode === 'LIVE' && reservationDelivery(connection.channel, connection.connectivityProvider) === 'webhook'
+        ? webhookUrl(connection.id)
+        : null,
   };
 }
 
@@ -37,6 +46,8 @@ export async function createConnection(propertyId: string, channel: OtaChannel, 
 
 export interface ConnectionSettings {
   mode?: ChannelMode;
+  /** null = direct to the OTA; 'CHANNEX' = through Channex */
+  connectivityProvider?: string | null;
   otaPropertyId?: string;
   username?: string;
   /** Only replaced when a non-empty value is sent */
@@ -63,8 +74,16 @@ export async function updateConnectionSettings(connectionId: string, settings: C
     throw new ChannelApiError('Currency must be a 3-letter ISO code');
   }
 
+  if (settings.connectivityProvider) {
+    if (!(settings.connectivityProvider in CONNECTIVITY_PROVIDERS)) throw new ChannelApiError('Unknown connectivity provider');
+    if (!channelInfo(connection.channel)?.viaChannex) {
+      throw new ChannelApiError(`${CHANNEL_LABELS[connection.channel]} can't be connected through ${settings.connectivityProvider} yet`);
+    }
+  }
+
   const credentialsChanged =
     (settings.mode !== undefined && settings.mode !== connection.mode) ||
+    (settings.connectivityProvider !== undefined && settings.connectivityProvider !== connection.connectivityProvider) ||
     (settings.otaPropertyId !== undefined && settings.otaPropertyId !== connection.otaPropertyId) ||
     (settings.username !== undefined && settings.username !== connection.username) ||
     Boolean(settings.password);
@@ -73,6 +92,7 @@ export async function updateConnectionSettings(connectionId: string, settings: C
     where: { id: connectionId },
     data: {
       mode: settings.mode,
+      connectivityProvider: settings.connectivityProvider,
       otaPropertyId: settings.otaPropertyId?.trim(),
       username: settings.username?.trim(),
       passwordCipher: settings.password ? sealPassword(connectionId, settings.password) : undefined,
@@ -92,8 +112,9 @@ export async function testConnection(connectionId: string) {
   const connection = await prisma.channelConnection.findUnique({ where: { id: connectionId } });
   if (!connection) throw new ChannelApiError('Channel connection not found');
   if (!connection.otaPropertyId) throw new ChannelApiError(`Enter your ${CHANNEL_LABELS[connection.channel]} property ID`);
-  if (connection.mode === 'LIVE' && (!connection.username || !connection.passwordCipher)) {
-    throw new ChannelApiError('Enter the API username and password');
+  if (connection.mode === 'LIVE') {
+    const missing = missingCredentials(connection);
+    if (missing) throw new ChannelApiError(missing);
   }
 
   try {
@@ -114,6 +135,19 @@ export async function testConnection(connectionId: string) {
     await prisma.channelConnection.update({ where: { id: connectionId }, data: { lastError: message } });
     await logSync(connectionId, 'CONNECTION_TEST', 'FAILED', message);
     throw error instanceof ChannelApiError ? error : new ChannelApiError(message);
+  }
+}
+
+/** Which credentials a live connection needs: Channex and Airbnb use a key or token only, Google a partner key only */
+function missingCredentials(connection: ChannelConnection): string | null {
+  if (connection.connectivityProvider === 'CHANNEX') return connection.passwordCipher ? null : 'Enter the Channex API key';
+  switch (connection.channel) {
+    case 'GOOGLE_HOTELS':
+      return connection.username ? null : 'Enter the Hotel Center partner key';
+    case 'AIRBNB':
+      return connection.passwordCipher ? null : 'Enter the host OAuth access token';
+    default:
+      return connection.username && connection.passwordCipher ? null : 'Enter the API username and password';
   }
 }
 

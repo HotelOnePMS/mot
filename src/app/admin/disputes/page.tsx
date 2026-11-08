@@ -3,7 +3,7 @@
 import * as React from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { toast } from 'sonner';
-import { Download, ShieldAlert, Send } from 'lucide-react';
+import { Download, Printer, ShieldAlert, Send } from 'lucide-react';
 import { api, fetcher } from '@/lib/fetcher';
 import { formatMoney, timeAgo } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -121,6 +121,13 @@ function DisputeDetail({ id }: { id: string }) {
             </a>
           </Button>
         )}
+        {data.evidence && (
+          <Button asChild variant="outline">
+            <a href={`${key}/evidence?format=html`} target="_blank" rel="noopener">
+              <Printer aria-hidden /> Printable version
+            </a>
+          </Button>
+        )}
         {d.canSubmit && can('disputes.manage') && (
           <Button onClick={() => setConfirm(true)}>
             <Send aria-hidden /> Submit evidence
@@ -154,6 +161,13 @@ export default function DisputesPage() {
     if (id) setSelected(id);
   }, []);
   const current = selected ?? data?.[0]?.id ?? null;
+  // The open dispute stays in the address, so a copied link and the agent ("prepare the evidence for this one") know it.
+  React.useEffect(() => {
+    if (!current || new URLSearchParams(window.location.search).get('dispute') === current) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('dispute', current);
+    window.history.replaceState(null, '', `?${params.toString()}`);
+  }, [current]);
 
   return (
     <div className={cn(FRAME, 'space-y-6')}>

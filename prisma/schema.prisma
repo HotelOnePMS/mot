@@ -53,6 +53,8 @@ model User {
   channelAgentConversations ChannelAgentConversation[]
   // Do Not Rent entries this staff member added
   doNotRentAdded            DoNotRent[]                @relation("DoNotRentCreatedBy")
+  // Vendors this staff member added
+  vendorsAdded              Vendor[]                   @relation("VendorCreatedBy")
   // Pending password-reset links (only a hash of each token is stored)
 
   @@unique([ssoIssuer, ssoSubject])
@@ -120,6 +122,7 @@ model Property {
   permissionGrants         RolePermissionGrant[]
   checkoutOverrides        CheckoutOverride[]
   photos                   PropertyPhoto[]
+  savedCharges             SavedCharge[]
   roomTypes                RoomType[]
   rooms                    Room[]
   // Users assigned to this property
@@ -139,6 +142,7 @@ model Property {
   // OTA connections (Expedia, Booking.com)
   channelConnections       ChannelConnection[]
   doNotRent                DoNotRent[]
+  vendors                  Vendor[]
 
   @@index([organizationId])
   @@map("properties")
@@ -223,7 +227,7 @@ model Booking {
   subtotalPrice           Decimal?                 @db.Decimal(10, 2)
   /// Taxes and fees: [{ name, kind, rate, amount }], summing to totalPrice - subtotalPrice.
   charges                 Json?
-  /// Where the booking came from: WEB | FRONT_DESK | AGENT_API | VOICE, or the OTA (EXPEDIA | BOOKING_COM).
+  /// Where the booking came from: WEB | FRONT_DESK | AGENT_API | VOICE, or the OTA (an OtaChannel value such as EXPEDIA, BOOKING_COM, AIRBNB).
   source                  String?
   /// Staff member who took the reservation at the desk.
   createdById             String?
@@ -677,6 +681,13 @@ model AgentApiKey {
 enum OtaChannel {
   EXPEDIA
   BOOKING_COM
+  GOOGLE_HOTELS
+  AIRBNB
+  AGODA
+  TRIP_COM
+  HOPPER
+  PRICELINE
+  HOSTELWORLD
 }
 
 // SANDBOX simulates the OTA locally so onboarding can be tested without
@@ -708,6 +719,8 @@ model ChannelConnection {
   username              String?
   /// Vault-sealed OTA password (src/server/vault.ts), bound to this connection. Never returned to clients.
   passwordCipher        String?
+  /// null = HotelOne talks to the OTA directly; "CHANNEX" = through the Channex channel manager API
+  connectivityProvider  String?
   currency              String                  @default("USD")
   // Added on top of the PMS rate before it is pushed (covers OTA commission)
   defaultMarkupPercent  Decimal                 @default(0) @db.Decimal(5, 2)
@@ -1205,6 +1218,26 @@ model RolePermissionGrant {
   @@map("role_permission_grants")
 }
 
+/// An extra charge the hotel adds to folios often, with its usual price ("Pet fee", $50 per stay): offered when adding a
+/// charge by hand, and used by the agent when someone asks for it by name. Taxes and fees on every stay are
+/// PropertyCharge; these are only added when someone asks.
+model SavedCharge {
+  id          String   @id @default(cuid())
+  propertyId  String
+  name        String
+  amount      Decimal  @db.Decimal(10, 2)
+  /// STAY: once per stay · NIGHT: per night of the stay · ITEM: per item (a quantity is given when it's added)
+  unit        String   @default("STAY")
+  note        String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, name])
+  @@map("saved_charges")
+}
+
 /// Lowers what a stay costs, with a reason (service recovery, unused nights, a rate correction): an allowance a manager
 /// adds on the folio. Removing one keeps it on record (voidedAt).
 model FolioAllowance {
@@ -1420,4 +1453,36 @@ model DoNotRent {
   @@index([propertyId, email])
   @@index([propertyId, phoneKey])
   @@map("do_not_rent")
+}
+
+/// The hotel's suppliers and third-party service partners (linen, food, maintenance, IT ...),
+/// with who to call. Owners manage the list; other roles see it only when the owner allows it.
+model Vendor {
+  id            String   @id @default(cuid())
+  propertyId    String
+  name          String
+  /// SUPPLIES, FOOD_BEVERAGE, LINEN_LAUNDRY, MAINTENANCE, CLEANING, TECHNOLOGY, UTILITIES, SECURITY, MARKETING, PROFESSIONAL, OTHER
+  category      String   @default("OTHER")
+  /// What they supply or do for the hotel.
+  services      String?
+  contactName   String?
+  email         String?
+  phone         String?
+  website       String?
+  address       String?
+  /// The hotel's account or customer number with this vendor.
+  accountNumber String?
+  /// Payment terms, delivery days, contract notes.
+  notes         String?
+  preferred     Boolean  @default(false)
+  /// ACTIVE or INACTIVE (kept for history, hidden from day-to-day lists).
+  status        String   @default("ACTIVE")
+  createdById   String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  property      Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  createdBy     User     @relation("VendorCreatedBy", fields: [createdById], references: [id])
+
+  @@index([propertyId, category])
+  @@map("vendors")
 }

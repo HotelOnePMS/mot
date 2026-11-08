@@ -17,6 +17,7 @@ import { useConsole } from '@/components/console/ConsoleProvider';
 import { PaymentSettings } from '@/components/payments/PaymentSettings';
 import { DeskSettings } from '@/components/payments/DeskSettings';
 import { PricingSettings } from '@/components/setup/PricingSettings';
+import { SavedChargeSettings } from '@/components/setup/SavedChargeSettings';
 import { PermissionSettings } from '@/components/setup/PermissionSettings';
 
 const FRAME = 'mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8';
@@ -251,6 +252,12 @@ export default function SettingsPage() {
           {can('charges.manage') && property && (
             <Section title="Prices and time" description={`${property.name}’s clock, currency, and the taxes and fees on every stay.`}>
               <PricingSettings key={property.id} propertyId={property.id} onSaved={() => void mutate('/api/admin/context')} />
+            </Section>
+          )}
+
+          {can('charges.manage') && property && (
+            <Section title="Usual charges" description={`Extras ${property.name} adds to folios often, like a pet fee or late check-out, with their usual price.`}>
+              <SavedChargeSettings key={property.id} propertyId={property.id} />
             </Section>
           )}
 

@@ -36,7 +36,19 @@ Refunding cards (`payments.refund`) and handing back cash paid toward the stay a
 
 The owner (and platform admins) can change **anything on a folio** from the reservation page: the room line's description and amount, each tax or fee, extra charges (add, change, remove, with a date), allowances (amount and reason), and payments recorded at the desk (cash, the hotel's own terminal, paid another way: amount, what was handed back, method, date, note, or remove it). Card payments through Stripe keep Stripe's amount and date (give money back with Refund); only their note changes. The room and its charges are written back to the booking (subtotal = room, total = room + charges), so balances, payment status, reports and check-out all follow. A change made against a line someone else changed meanwhile is refused (409). Cancelled and no-show stays can't be edited (reinstate first).
 
+*Set a total…* makes several lines come to one amount ("room and tax together $50"): the room and percentage taxes share it in proportion (a 12% tax stays 12% of the room), fixed fees keep theirs, and the room line takes the rounding so it adds up to the cent. The agent does the same with `edit_folio`, through a plan the person confirms.
+
 Every change is in the activity log as `FOLIO_EDIT`, with who, what it was before and after, and the optional reason.
+
+**Usual charges** (*Settings → Usual charges*): a hotel's regular extras with their price, per stay, per night or each ("Pet fee", $50 per stay). Whoever has `charges.manage` (managers and owners) or `folio.edit` at the hotel can change the list; anyone who can see folios sees it. The folio's *Add charge* dialog offers them and can save a new one ("Remember this price"); the agent uses them for a charge asked for by name, and "pet fee is always $50" saves or changes one (after the person confirms). Changes are logged as `SAVED_CHARGE_CREATED` / `_UPDATED` / `_DELETED`.
+
+## Disputes (`disputes.view`, `disputes.manage`)
+
+Owners, managers and platform admins see card disputes (`/admin/disputes`) and the evidence for them, and can ask the agent to prepare the document for a dispute or a chargeback reported outside Stripe. Only owners and platform admins (`disputes.manage`) submit evidence to Stripe, from the page or by confirming the agent's plan; the step is checked again when it runs and is logged as `DISPUTE_EVIDENCE_SUBMITTED`. Front desk and housekeepers don't see disputes, and the agent doesn't describe a dispute on screen to them.
+
+## The agent's tools
+
+Each of the agent's tools needs the permission of the screen it stands in for, checked when the step is planned and again, as the person confirming, when it runs: the logs need `activity.view` (the channel sync log also `channels.view`); recording a payment `payments.collect`; a refund `payments.refund` (and `folio.adjust` to also lower what the stay costs); the card authorization form `booking.cardAuth`; the do-not-rent list `dnr.view` to check and `dnr.manage` to change; guest messages `requests.view`; the night audit `audit.run`; a room type's settings `inventory.write`; channel status `channels.view`. When a role can't, the agent says who can instead of looking for another way.
 
 ## Owner-granted permissions (Settings → Permissions)
 
@@ -49,3 +61,7 @@ Owners can give other roles, **at their own hotel only**, permissions that are o
 ## Reports (`reports.view`)
 
 Front desk, managers, owners and platform admins can run reports at `/admin/reports` (also linked from the front desk): arrivals, departures, in house, cancellations and no-shows, occupancy, revenue, or a custom report with their own dates, filters (status, room type, source, payment method) and columns. Housekeepers can't. Every CSV download is written to the hotel's activity log as `REPORT_EXPORTED` (who, which dates, which columns), because it takes guest details off the system. Saved reports live in the browser of the person who saved them.
+
+## Vendors (`vendors.view`, `vendors.manage`)
+
+`/admin/vendors` lists each hotel's suppliers and third-party service partners (linen, food, maintenance, IT ...) with contact person, phone, email, website, address, the hotel's account number and notes. By default only **owners** (and platform admins) see or change it. Under Settings → Permissions an owner can, per hotel, let managers, front desk or housekeepers **see** the list (`vendors.view`) and let **managers** add, change and remove vendors (`vendors.manage`, which includes seeing). The page and API check this per hotel (`canAtProperty`); the sidebar hides Vendors from anyone without either. Every add, change (with before and after) and removal is in the hotel's activity log: `VENDOR_ADD`, `VENDOR_UPDATE`, `VENDOR_REMOVE`.

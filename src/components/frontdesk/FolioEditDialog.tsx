@@ -7,6 +7,7 @@ import { CARD_NUMBER_REFUSED, METHOD_LABEL, containsCardNumber, type PaymentMeth
 import { api } from '@/lib/fetcher';
 import { RECORDED_PAYMENT_METHODS, type FolioEdit, type FolioEditTarget, type FolioView } from '@/lib/folio';
 import { formatMoney } from '@/lib/format';
+import { UNIT_LABEL, describeSavedCharge, savedChargeTotal, type SavedChargeView } from '@/lib/saved-charges';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -65,6 +66,9 @@ export function FolioEditDialog({
   const [why, setWhy] = React.useState('');
   const [busy, setBusy] = React.useState<'save' | 'remove' | null>(null);
   const [error, setError] = React.useState('');
+  // Adding a charge: the usual charge it was picked from, and whether to keep this price as the usual one.
+  const [picked, setPicked] = React.useState<SavedChargeView | null>(null);
+  const [remember, setRemember] = React.useState(false);
   // The values as the dialog opened, so a refresh behind it doesn't change what's being edited.
   const [base, setBase] = React.useState<FolioEditing | null>(editing);
 
@@ -77,6 +81,8 @@ export function FolioEditDialog({
     setMethod('');
     setNote('');
     setDate('');
+    setPicked(null);
+    setRemember(false);
     switch (editing.type) {
       case 'room':
         setLabel(editing.label);
@@ -125,6 +131,17 @@ export function FolioEditDialog({
   const reasonShort = t?.type === 'allowance' && label.replace(/\s+/g, ' ').trim().length < 3;
   const valid = !!t && amount.trim() !== '' && !amountError && !refundError && !labelMissing && !reasonShort && !cardNumber;
 
+  // A new charge with a name and price the hotel hasn't saved (or saved at another price): offer to keep it.
+  const sameName = t?.type === 'addCharge' ? folio.savedCharges.find((c) => c.name.toLowerCase() === label.replace(/\s+/g, ' ').trim().toLowerCase()) : undefined;
+  const offerRemember =
+    t?.type === 'addCharge' && folio.canSaveCharges && !!label.trim() && value > 0 && !amountError && (!sameName || (sameName.unit === 'STAY' && Math.abs(sameName.amount - value) > 0.004));
+
+  function pick(c: SavedChargeView) {
+    setPicked(c);
+    setLabel(c.name);
+    setAmount(amountText(savedChargeTotal(c, { nights: folio.nights }, 1, currency)));
+  }
+
   function body(): FolioEdit | null {
     if (!t) return null;
     const reason = why.trim() || undefined;
@@ -151,6 +168,14 @@ export function FolioEditDialog({
     try {
       const next = await api<FolioView>(`/api/admin/bookings/${bookingId}/folio`, { method: 'PATCH', json: edit });
       toast.success(done);
+      if (edit.target === 'addCharge' && remember && offerRemember) {
+        try {
+          await api('/api/admin/saved-charges', { method: 'POST', json: { propertyId: folio.propertyId, name: edit.name.replace(/\s+/g, ' ').trim(), amount: edit.amount, unit: 'STAY' } });
+          toast.success(`“${edit.name.trim()}” is saved at ${fmt(edit.amount, currency)} for next time`);
+        } catch (e) {
+          toast.error(`The charge was added, but its usual price wasn’t saved: ${(e as Error).message}`);
+        }
+      }
       onClose();
       void onSaved(next).catch(() => undefined);
     } catch (e) {
@@ -184,6 +209,29 @@ export function FolioEditDialog({
         </DialogHeader>
         {t && (
           <div className="space-y-4">
+            {t.type === 'addCharge' && folio.savedCharges.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-sm font-medium">Usual charges</p>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Usual charges">
+                  {folio.savedCharges.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      aria-pressed={picked?.id === c.id && label.trim() === c.name}
+                      onClick={() => pick(c)}
+                      title={c.note ?? undefined}
+                      className={cn(
+                        'inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3.5 py-1 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                        picked?.id === c.id && label.trim() === c.name ? 'border-primary/50 bg-primary-soft text-primary-soft-foreground' : 'border-border-strong/50 bg-surface text-muted-foreground hover:border-border-strong hover:text-foreground'
+                      )}
+                    >
+                      {c.name}
+                      <span className="font-normal tabular">{describeSavedCharge(c, currency)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {(t.type === 'room' || t.type === 'charge' || t.type === 'addCharge') && (
               <Field label="Description" htmlFor="folio-label" hint={t.type === 'room' ? `Leave empty for the room type’s name (${t.defaultLabel}).` : undefined} error={labelMissing ? 'Say what the charge is for.' : undefined}>
                 <Input id="folio-label" autoComplete="off" maxLength={t.type === 'room' ? 120 : 80} value={label} placeholder={t.type === 'room' ? t.defaultLabel : 'e.g. Minibar, Parking, Late check-out'} onChange={(e) => setLabel(e.target.value)} />
@@ -198,7 +246,15 @@ export function FolioEditDialog({
               <Field
                 label={`${t.type === 'allowance' ? 'Amount taken off' : payment ? 'Amount paid' : 'Amount'} (${currency})`}
                 htmlFor="folio-amount"
-                hint={t.type === 'room' ? 'The room’s price for the whole stay, before taxes and fees.' : t.type === 'allowance' ? `At most ${fmt(t.max, currency)}.` : undefined}
+                hint={
+                  t.type === 'room'
+                    ? 'The room’s price for the whole stay, before taxes and fees.'
+                    : t.type === 'allowance'
+                      ? `At most ${fmt(t.max, currency)}.`
+                      : t.type === 'addCharge' && picked && picked.unit === 'NIGHT' && label.trim() === picked.name
+                        ? `${fmt(picked.amount, currency)} ${UNIT_LABEL.NIGHT} × ${folio.nights} night${folio.nights === 1 ? '' : 's'}.`
+                        : undefined
+                }
                 error={amountError}
               >
                 <Input id="folio-amount" inputMode="decimal" autoComplete="off" value={amount} onChange={(e) => setAmount(e.target.value)} />
@@ -235,6 +291,23 @@ export function FolioEditDialog({
               <Field label="Date" htmlFor="folio-day">
                 <Input id="folio-day" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
               </Field>
+            )}
+            {offerRemember && (
+              <label htmlFor="folio-remember" className="flex min-h-10 cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm">
+                <input
+                  id="folio-remember"
+                  type="checkbox"
+                  checked={remember}
+                  onChange={(e) => setRemember(e.target.checked)}
+                  className="mt-0.5 size-4 shrink-0 cursor-pointer rounded-sm border-input accent-[hsl(var(--primary))]"
+                />
+                <span className="min-w-0">
+                  <span className="block font-medium">
+                    {sameName ? `Make ${fmt(value, currency)} the usual price for “${sameName.name}”` : `Remember “${label.trim()}” at ${fmt(value, currency)} per stay`}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">It shows here next time, and the assistant uses it when someone asks for it by name. Change it any time in Settings.</span>
+                </span>
+              </label>
             )}
             <Field label="Why (optional)" htmlFor="folio-why" hint="Kept with the change in the activity log." error={cardNumber ? CARD_NUMBER_REFUSED : undefined}>
               <Input id="folio-why" autoComplete="off" maxLength={200} value={why} onChange={(e) => setWhy(e.target.value)} />

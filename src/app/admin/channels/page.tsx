@@ -11,6 +11,7 @@ import { Callout, EmptyState, Skeleton } from '@/components/ui/primitives';
 import { PageShell } from '@/components/console/PageShell';
 import { useConsole } from '@/components/console/ConsoleProvider';
 import { CHANNEL_NAMES, ChannelBadge, ModeBadge, StatusBadge, timeAgo } from '@/components/channels/ChannelBadges';
+import { channelInfo } from '@/lib/channels/catalog';
 
 type Connection = {
   id: string;
@@ -56,10 +57,6 @@ type Overview = {
   }>;
 };
 
-const CHANNEL_INFO: Record<string, string> = {
-  EXPEDIA: 'Expedia, Hotels.com, Vrbo and the Expedia Group network',
-  BOOKING_COM: 'Booking.com and its partner network',
-};
 
 export default function ChannelsPage() {
   const { propertyId, can } = useConsole();
@@ -88,7 +85,7 @@ export default function ChannelsPage() {
   return (
     <PageShell
       title="Channels"
-      description="Sell your rooms on Expedia and Booking.com and keep their rates and availability in step with HotelOne."
+      description="Sell your rooms on Expedia, Booking.com, Google, Airbnb and more, and keep their rates and availability in step with HotelOne."
       actions={
         <>
           <Button variant="outline" size="sm" onClick={() => mutate()}>
@@ -115,7 +112,7 @@ export default function ChannelsPage() {
         </Card>
       ) : !takesBookings ? (
         <Callout tone="info" title="Channels are for hotels that take bookings in HotelOne">
-          {property.name} keeps its reservations in its own system, so HotelOne can’t tell Expedia or Booking.com what’s free. Connect the OTAs in your
+          {property.name} keeps its reservations in its own system, so HotelOne can’t tell the OTAs what’s free. Connect the OTAs in your
           own PMS or channel manager instead.
         </Callout>
       ) : (
@@ -129,7 +126,7 @@ export default function ChannelsPage() {
                     <ChannelBadge channel={channel} />
                     <span className="text-xs text-muted-foreground">Not connected</span>
                   </div>
-                  <p className="text-sm text-muted-foreground">{CHANNEL_INFO[channel]}</p>
+                  <p className="text-sm text-muted-foreground">{channelInfo(channel)?.reach}</p>
                   {canManage ? (
                     <Button asChild variant="outline" size="sm" className="self-start">
                       <Link href={`/admin/channels/connect?propertyId=${property.id}&channel=${channel}`}>

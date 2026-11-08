@@ -21,6 +21,7 @@ import {
   Cable,
   Globe,
   Network,
+  Truck,
   type LucideIcon,
 } from 'lucide-react';
 import type { SetupPath } from '@/lib/dto';
@@ -35,6 +36,8 @@ export interface NavItem {
   agent?: boolean;
   /** Setup paths this screen belongs to (default: the hotel runs fully on HotelOne). */
   paths?: SetupPath[];
+  /** Shown only to people holding one of these permissions at the selected hotel (owners can grant them per hotel). */
+  anyOf?: string[];
 }
 
 const ALL: SetupPath[] = ['FULL', 'BRIDGE', 'VOICE'];
@@ -56,6 +59,7 @@ const GROUPS: NavGroup[] = [
       { label: 'Reservations', href: '/admin/bookings', icon: CalendarCheck2 },
       { label: 'Reports', href: '/admin/reports', icon: FileSpreadsheet },
       { label: 'Do Not Rent', href: '/admin/do-not-rent', icon: Ban },
+      { label: 'Vendors', href: '/admin/vendors', icon: Truck, paths: ALL, anyOf: ['vendors.view', 'vendors.manage'] },
       { label: TERMS.voice, href: '/admin/voice', icon: AudioLines, paths: ALL },
     ],
   },
@@ -85,11 +89,12 @@ const GROUPS: NavGroup[] = [
 ];
 
 /** Navigation filtered to what this role can open (same rules as middleware). */
-export function navFor(role: string | undefined, opts: { agentEnabled: boolean; setupPath?: SetupPath }): NavGroup[] {
+export function navFor(role: string | undefined, opts: { agentEnabled: boolean; setupPath?: SetupPath; can?: (perm: string) => boolean }): NavGroup[] {
   const path = opts.setupPath ?? 'FULL';
+  const allowed = (i: NavItem) => !i.anyOf || !opts.can || i.anyOf.some((p) => opts.can!(p));
   return GROUPS.map((g) => ({
     ...g,
-    items: g.items.filter((i) => canAccessConsolePath(role, i.href) && (!i.agent || opts.agentEnabled) && (i.paths ?? ['FULL']).includes(path)),
+    items: g.items.filter((i) => canAccessConsolePath(role, i.href) && (!i.agent || opts.agentEnabled) && (i.paths ?? ['FULL']).includes(path) && allowed(i)),
   })).filter((g) => g.items.length > 0);
 }
 

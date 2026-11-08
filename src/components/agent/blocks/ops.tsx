@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, Info, Siren, UserRound } from 'lucide-react';
+import Link from 'next/link';
+import { AlertTriangle, ArrowUpRight, Info, Siren, UserRound } from 'lucide-react';
 import type { AgentBlock } from '@/lib/agent/blocks';
 import { timeAgo } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
@@ -177,30 +178,67 @@ export function AlertsBlock({ block }: { block: Extract<AgentBlock, { type: 'ale
 }
 
 export function ActivityBlock({ block }: { block: Extract<AgentBlock, { type: 'activity' }> }) {
+  const id = React.useId();
+  const total = block.total ?? block.items.length;
+  const filtered = !!block.title && block.title !== 'Activity';
   return (
-    <BlockCard>
+    <BlockCard aria-labelledby={id}>
       {block.items.length === 0 ? (
-        <p className="px-4 py-8 text-center text-sm text-muted-foreground">Nothing has happened yet today. Changes made here or in the classic screens will show up.</p>
+        <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+          {filtered || block.description ? 'Nothing in the activity log matches that.' : 'Nothing has happened yet today. Changes made here or in the classic screens will show up.'}
+        </p>
       ) : (
         <>
-          <BlockHeader title="Activity" meta={<CountPill n={block.items.length} label="entries" />} className="py-2.5" />
+          <BlockHeader
+            id={id}
+            title={block.title ?? 'Activity'}
+            description={block.description}
+            meta={
+              total > block.items.length ? (
+                <span className="text-xs tabular text-muted-foreground">
+                  Latest {block.items.length} of {total}
+                </span>
+              ) : (
+                <CountPill n={block.items.length} label="entries" />
+              )
+            }
+            className="py-2.5"
+          />
           <ol className="divide-y">
             {block.items.map((a) => (
               <li key={a.id} className="flex items-start gap-3 px-4 py-2.5">
                 <Avatar name={a.user.name} size="sm" className="mt-0.5" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm">{a.summary}</p>
+                  <p className="break-words text-sm">{a.summary}</p>
                   <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
                     <span>{a.user.name}</span>
                     <span aria-hidden>·</span>
-                    <time dateTime={a.at}>{timeAgo(a.at)}</time>
+                    <time dateTime={a.at} title={new Date(a.at).toLocaleString()}>
+                      {timeAgo(a.at)}
+                    </time>
                     <SourceBadge source={a.source} quiet className="ml-0.5" />
+                    {a.flag && (
+                      <Badge variant="warning" size="sm" className="ml-0.5">
+                        <AlertTriangle aria-hidden className="size-3" />
+                        <span className="sr-only">Worth a look: </span>
+                        {a.flag}
+                      </Badge>
+                    )}
                   </p>
                 </div>
               </li>
             ))}
           </ol>
         </>
+      )}
+      {block.href && block.items.length > 0 && (
+        <div className="border-t px-4 py-2">
+          <Button asChild size="sm" variant="ghost">
+            <Link href={block.href}>
+              Open the activity log <ArrowUpRight aria-hidden />
+            </Link>
+          </Button>
+        </div>
       )}
     </BlockCard>
   );

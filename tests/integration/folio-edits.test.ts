@@ -122,6 +122,39 @@ describe('editing the folio', () => {
     expect(first.summary).toContain('room $200.00 (was $240.00)');
   });
 
+  it('sets several lines to one total: the room and a percentage tax share it, fixed fees keep theirs', async () => {
+    const { h, owner, booking } = await setup();
+    // Two nights at 120 with 10% tax: 240 + 24. "Make the room and tax together 200."
+    let folio = await editFolio(owner, booking.id, { target: 'setTotal', refs: ['room', 'charge:0'], amount: 200, expected: { room: 240, 'charge:0': 24 }, reason: 'Agreed rate' });
+    expect(folio.lines.filter((l) => l.section === 'CHARGES').map((l) => [l.kind, l.label, l.amount])).toEqual([
+      ['ROOM', 'Queen', 181.82],
+      ['TAX', 'Sales tax', 18.18],
+    ]);
+    expect(folio.totals.charges).toBe(200);
+    // The tax moved with the room, so it's still 10% of it.
+    expect(folio.edits['charge:0']).toMatchObject({ percent: 10 });
+
+    // A fixed fee keeps its amount; the room and tax share the rest.
+    folio = await editFolio(owner, booking.id, { target: 'addCharge', name: 'Resort fee', amount: 15 });
+    folio = await editFolio(owner, booking.id, { target: 'setTotal', refs: ['room', 'charge:0', 'charge:1'], amount: 150, expected: { room: 181.82, 'charge:0': 18.18, 'charge:1': 15 } });
+    expect(folio.lines.filter((l) => l.section === 'CHARGES').map((l) => [l.label, l.amount])).toEqual([
+      ['Queen', 122.73],
+      ['Sales tax', 12.27],
+      ['Resort fee', 15],
+    ]);
+    const b = await getBookingForStaff(owner.actor, booking.id);
+    expect([Number(b.totalPrice), Number(b.subtotalPrice)]).toEqual([150, 122.73]);
+
+    // The tax alone to a total: it's a fixed amount from then on.
+    folio = await editFolio(owner, booking.id, { target: 'setTotal', refs: ['charge:0'], amount: 10, expected: { 'charge:0': 12.27 } });
+    expect(folio.edits['charge:0']).toMatchObject({ amount: 10, percent: null });
+
+    // Changed meanwhile: refused, nothing written.
+    await expect(editFolio(owner, booking.id, { target: 'setTotal', refs: ['room', 'charge:0'], amount: 100, expected: { room: 240, 'charge:0': 24 } })).rejects.toMatchObject({ status: 409 });
+    const log = await audits(h.property.id, 'FOLIO_EDIT');
+    expect(JSON.parse(log[0].detail!).summary).toMatch(/room \+ “Sales tax” together \$200\.00 \(was \$264\.00\): room \$181\.82, “Sales tax” \$18\.18 \(Agreed rate\)/);
+  });
+
   it('edits recorded payments fully, removes them, and edits allowances', async () => {
     const { h, owner, desk, booking } = await setup();
     await recordCashPayment(desk, booking.id, { kind: 'PAYMENT', amount: 100 });
