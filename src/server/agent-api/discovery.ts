@@ -34,7 +34,7 @@ const EXAMPLES = [
   'Find me a room in Santa Cruz next weekend for two and book it.',
   'Is parking free at The Saltwater Inn?',
   'Something in Monterey for 3 nights from November 12, under $250 a night.',
-  'Find my booking — code ABC123, last name Smith.',
+  'Find my booking. The code is ABC123 and the last name is Smith.',
 ];
 
 function limitsText(): string {
@@ -53,15 +53,15 @@ export function llmsTxt(origin: string): string {
   const u = agentUrls(origin);
   return `# ${PRODUCT_NAME}
 
-> ${PRODUCT_NAME} lists independent hotels, inns and motels with their own booking sites. AI assistants can search them, check live availability and prices, answer guests' questions and book — through an MCP server or a REST API. No sign-up or key is needed to search or to get a booking link.
+> ${PRODUCT_NAME} lists independent hotels, inns and motels with their own booking sites. AI assistants can search them, check live availability and prices, answer guests' questions and book, through an MCP server or a REST API. No sign-up or key is needed to search or to get a booking link.
 
 ${PRODUCT_DESCRIPTION}
 
 ## Connect
 
 - [MCP server (all hotels)](${u.mcp}): Streamable HTTP, stateless JSON-RPC (protocol ${MCP_PROTOCOL_VERSIONS.join(', ')}). Add it as a custom connector or remote MCP server; no authentication needed.
-- One hotel's own MCP server: ${u.hotelMcpTemplate} — the same tools for that hotel only (no hotel id needed).
-- [REST API](${u.rest}) and its [OpenAPI 3.1 description](${u.openapi}) — import as a GPT Action or any OpenAPI tool.
+- One hotel's own MCP server: ${u.hotelMcpTemplate} (the same tools for that hotel only (no hotel id needed).
+- [REST API](${u.rest}) and its [OpenAPI 3.1 description](${u.openapi}). Import as a GPT Action or any OpenAPI tool.
 - [Agent card](${u.agentCard}) · [MCP manifest](${u.mcpManifest}) · [Full details for models](${u.llmsFull})
 - [How to connect ChatGPT, Claude, Grok, Le Chat and others](${u.page})
 
@@ -69,7 +69,7 @@ ${PRODUCT_DESCRIPTION}
 
 1. search_hotels (GET ${REST_BASE}/hotels) with a place and, if known, dates (YYYY-MM-DD), guests and rooms.
 2. check_availability (GET ${REST_BASE}/hotels/{propertyId}/availability) for the hotel the person picks.
-3. get_booking_link (POST ${REST_BASE}/booking-links): a checkout link with everything filled in — the person opens it and confirms in one tap. This is the default.
+3. get_booking_link (POST ${REST_BASE}/booking-links): a checkout link with everything filled in. The person opens it and confirms in one tap. This is the default.
 4. No screen? request_booking (POST ${REST_BASE}/booking-requests): the hotel team confirms and sends a link.
 5. With a hotel's API key ("book" scope): create_booking (POST ${REST_BASE}/bookings) makes a confirmed booking, paid at the hotel.
 
@@ -96,7 +96,7 @@ function argsList(schema: JsonSchema): string {
       const type = Array.isArray(p.type) ? (p.type as string[]).join(' | ') : (p.type as string | undefined) ?? 'object';
       const flags = [required.includes(name) ? 'required' : 'optional', p.default !== undefined ? `default ${JSON.stringify(p.default)}` : ''].filter(Boolean).join(', ');
       const nested = p.type === 'object' && p.properties ? `\n${argsList(p).replace(/^/gm, '  ')}` : '';
-      return `  - \`${name}\` (${type}, ${flags})${p.description ? ` — ${p.description}` : ''}${nested}`;
+      return `  - \`${name}\` (${type}, ${flags})${p.description ? `: ${p.description}` : ''}${nested}`;
     })
     .join('\n');
 }
@@ -119,7 +119,7 @@ export function llmsFullTxt(origin: string): string {
   const checkOut = addDaysISO(checkIn, 2);
   const tools = toolCatalog()
     .map(
-      (t) => `### ${t.name} — ${t.title}${t.needsKey ? ' (API key with the "book" scope)' : ''}
+      (t) => `### ${t.name}: ${t.title}${t.needsKey ? ' (API key with the "book" scope)' : ''}
 
 ${t.description}
 
@@ -138,7 +138,7 @@ ${argsList(t.inputSchema)}`,
 ## MCP server
 
 - Endpoint: ${u.mcp} (all hotels) or ${u.hotelMcpTemplate} (one hotel: no search_hotels, no propertyId argument; ask_hotel lists that hotel's topics).
-- Transport: Streamable HTTP, stateless. POST one JSON-RPC 2.0 message (or a batch) with \`Content-Type: application/json\`; answers are \`application/json\`. Notifications get 202. No SSE stream and no Mcp-Session-Id — GET returns 405.
+- Transport: Streamable HTTP, stateless. POST one JSON-RPC 2.0 message (or a batch) with \`Content-Type: application/json\`; answers are \`application/json\`. Notifications get 202. No SSE stream and no Mcp-Session-Id. GET returns 405.
 - Protocol versions: ${MCP_PROTOCOL_VERSIONS.join(', ')} (initialize negotiates; latest ${MCP_LATEST_VERSION}). Server ${PRODUCT_NAME} ${MCP_SERVER_VERSION}.
 - Methods: initialize, notifications/initialized, ping, tools/list, tools/call.
 - Tool results carry \`structuredContent\` (the JSON result) and the same JSON as text; failures come back with \`isError: true\` and a message to relay.
@@ -147,7 +147,7 @@ ${argsList(t.inputSchema)}`,
 
 ## Authentication
 
-Searching, details, availability, answers, booking links, booking requests and lookups are public. create_booking needs \`Authorization: Bearer ho_live_…\` — a key the hotel owner creates in the ${PRODUCT_NAME} console (AI assistants). A key for one hotel books only there. A bad or revoked key gets HTTP 401 on every call (it never silently falls back to public access).
+Searching, details, availability, answers, booking links, booking requests and lookups are public. create_booking needs \`Authorization: Bearer ho_live_…\` (a key the hotel owner creates in the ${PRODUCT_NAME} console (AI assistants). A key for one hotel books only there. A bad or revoked key gets HTTP 401 on every call (it never silently falls back to public access).
 
 ## REST API
 
@@ -251,7 +251,7 @@ export function mcpManifest(origin: string) {
   const u = agentUrls(origin);
   return {
     name: PRODUCT_NAME,
-    title: `${PRODUCT_NAME} — find and book hotels`,
+    title: `${PRODUCT_NAME}: find and book hotels`,
     description: 'Search independent hotels, check live availability and prices, answer guests’ questions and book.',
     version: MCP_SERVER_VERSION,
     websiteUrl: u.page,

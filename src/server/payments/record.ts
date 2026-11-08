@@ -240,7 +240,7 @@ export async function recordPaymentSucceeded(paymentIntentId: string, opts_: { a
     }
     const note = free
       ? `Confirmed · ${shown(amountCents)}${forReservation} arrived after the hold expired and the rooms were still free`
-      : `${shown(amountCents)}${forReservation} arrived after the hold expired and ${expired.length > 1 ? 'not all the rooms are free' : 'the rooms are gone'} — refund this payment`;
+      : `${shown(amountCents)}${forReservation} arrived after the hold expired and ${expired.length > 1 ? 'not all the rooms are free' : 'the rooms are gone'}. Refund this payment`;
     for (const l of expired) {
       await prisma.booking.update({
         where: { id: l.id },

@@ -46,7 +46,7 @@ export default function AddPropertyPage() {
       const created = await api<{ id: string; name: string }>('/api/admin/properties', { method: 'POST', json: toPropertyPayload(draft) });
       await mutate('/api/admin/context');
       setPropertyId(created.id);
-      toast.success(`${created.name} created — now add its rooms`);
+      toast.success(`${created.name} created. Now add its rooms`);
       router.push('/admin/room-types/add');
     } catch (err) {
       setServerError((err as Error).message);

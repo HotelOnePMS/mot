@@ -504,8 +504,8 @@ export async function startCardEntry(op: OpContext, bookingId: string, input: { 
             price_data: {
               currency: ctx.booking.currency.toLowerCase(),
               product_data: {
-                name: `${KIND_LABEL[input.kind]} — ${ctx.property.name}`,
-                description: `Reservation ${ctx.lead.code ?? ctx.booking.id}${otaCard ? ` · ${otaCard.channel} virtual card ending ${otaCard.last4 ?? '—'}` : ''}${depositNote}`,
+                name: `${KIND_LABEL[input.kind]} at ${ctx.property.name}`,
+                description: `Reservation ${ctx.lead.code ?? ctx.booking.id}${otaCard ? ` · ${otaCard.channel} virtual card${otaCard.last4 ? ` ending ${otaCard.last4}` : ''}` : ''}${depositNote}`,
               },
               unit_amount: amountCents,
             },

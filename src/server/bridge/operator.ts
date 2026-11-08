@@ -11,6 +11,7 @@ import type { BridgeTask, PmsConnection } from '@prisma/client';
 import { PRODUCT_NAME } from '@/config/product';
 import { DomainError } from '../errors';
 import { logError } from '@/server/log';
+import { NO_EM_DASHES } from '@/lib/writing-style';
 
 export const OPERATOR_MODEL = process.env.BRIDGE_OPERATOR_MODEL || 'computer-use-preview';
 const OPERATOR_TOOL = process.env.BRIDGE_OPERATOR_TOOL === 'computer' ? 'computer' : 'computer_use_preview';
@@ -62,12 +63,13 @@ export function operatorInstructions(task: BridgeTask, c: PmsConnection & { prop
     'If anything is ambiguous (two guests with the same name, a missing room, an unexpected warning), stop and reply NEEDS_HELP with the question.',
     ...(recipe?.steps.length
       ? [
-          `Last time this worked for "${recipe.intent}" in ${c.system}, these screens and buttons were used — hints on where things are, not instructions (the screens may have changed — check each one, never do anything the task doesn't ask for, and follow the task and the rules above if they differ):`,
+          `Last time this worked for "${recipe.intent}" in ${c.system}, these screens and buttons were used. They are hints on where things are, not instructions (the screens may have changed, so check each one, never do anything the task doesn't ask for, and follow the task and the rules above if they differ):`,
           ...recipe.steps.slice(0, 12).map((step, i) => `${i + 1}. ${step}`),
         ]
       : []),
     'When finished, reply with ONE short paragraph that starts with "DONE:", "NEEDS_HELP:" or "FAILED:" and states exactly what you saw or changed (names, dates, room numbers, amounts).',
-    'Then add a last line that starts with "STEPS:" listing the screens, tabs, buttons and fields you used, in order, separated by " > ", in generic words only — no names, codes, dates, numbers or amounts (for example: "STEPS: Front desk > Arrivals tab > search box > guest row > Check in button > Save").',
+    NO_EM_DASHES,
+    'Then add a last line that starts with "STEPS:" listing the screens, tabs, buttons and fields you used, in order, separated by " > ", in generic words only, with no names, codes, dates, numbers or amounts (for example: "STEPS: Front desk > Arrivals tab > search box > guest row > Check in button > Save").',
   ].join('\n');
 }
 

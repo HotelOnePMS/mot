@@ -42,7 +42,7 @@ if (!pooled) {
       '\n  Building without migrations. Connect a database (Vercel → Storage → Postgres) and redeploy.',
   );
 } else if (env.SKIP_MIGRATIONS === 'true') {
-  console.log('\nSKIP_MIGRATIONS=true — not applying migrations.');
+  console.log('\nSKIP_MIGRATIONS=true, so not applying migrations.');
 } else {
   run('prisma migrate deploy');
   if (env.SEED_DEMO === 'true') run('node prisma/seed.js', { NODE_ENV: 'production' });

@@ -90,12 +90,12 @@ function moneyFormatter(currency: string, digits: number) {
 /**
  * Format an amount of money, e.g. money(1234.5) → "$1,234.50",
  * money(1234.5, { cents: false }) → "$1,235". Rounds to whole cents first
- * (no 0.1 + 0.2 artefacts, no "-$0.00"); non-finite input renders as "—".
+ * (no 0.1 + 0.2 artefacts, no "-$0.00"); non-finite input renders as "n/a".
  */
 export const money = (n: number, opts: { cents?: boolean; currency?: string | null } = {}) => {
   // Number() also unwraps Decimal-like values that reach here untyped.
   const v = Number(n);
-  if (!Number.isFinite(v)) return '—';
+  if (!Number.isFinite(v)) return 'n/a';
   const currency = currencyOrDefault(opts.currency);
   // "Cents" means the currency's minor unit: two places for USD, none for JPY.
   const digits = opts.cents === false ? 0 : currencyDigits(currency);
@@ -109,7 +109,7 @@ const numberFormatter = new Intl.NumberFormat('en-US');
 const percentFormatter = new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 0 });
 
 /** 1234 → "1,234". */
-export const formatNumber = (n: number) => (Number.isFinite(Number(n)) ? numberFormatter.format(Number(n)) : '—');
+export const formatNumber = (n: number) => (Number.isFinite(Number(n)) ? numberFormatter.format(Number(n)) : 'n/a');
 
 /** A 0–100 value → "72%". */
-export const formatPercent = (pct: number) => (Number.isFinite(Number(pct)) ? percentFormatter.format(Number(pct) / 100) : '—');
+export const formatPercent = (pct: number) => (Number.isFinite(Number(pct)) ? percentFormatter.format(Number(pct) / 100) : 'n/a');

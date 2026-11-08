@@ -22,6 +22,6 @@ export const DEMO_LOCK_MESSAGE = 'Demo hotels can’t be connected to an outside
 /** Outbound connection attempts (connect / test / refresh) per user: 12 a minute. */
 export function limitOutbound(actor: Actor): void {
   if (!floodGuard(`pms-outbound:${actor.userId}`, 12, 60_000)) {
-    throw new DomainError(429, 'RATE_LIMITED', 'That’s a lot of connection attempts — wait a minute and try again.');
+    throw new DomainError(429, 'RATE_LIMITED', 'That’s a lot of connection attempts. Wait a minute and try again.');
   }
 }

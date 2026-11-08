@@ -82,7 +82,7 @@ function NextTrip({ trip }: { trip: Trip }) {
             </div>
             <div data-voice-avoid>
               <dt className="text-xs text-muted-foreground">Confirmation</dt>
-              <dd className="font-mono font-semibold tracking-wider">{trip.code ?? '—'}</dd>
+              <dd className="font-mono font-semibold tracking-wider">{trip.code ?? 'Pending'}</dd>
             </div>
           </dl>
           <span className="mt-auto inline-flex items-center gap-1.5 pt-6 text-sm font-semibold text-brand">
@@ -203,7 +203,7 @@ export default function TripsPage() {
             {firstName && <p className="text-sm font-medium text-muted-foreground">Welcome back, {firstName}</p>}
             <h1 className="mt-1 font-display text-4xl tracking-tight sm:text-5xl">{LABELS.myTrips}</h1>
             <p className="mt-2 text-muted-foreground" aria-live="polite">
-              {!data ? ' ' : upcoming.length ? `You have ${plural(upcoming.length, 'upcoming stay')}.` : 'No stays coming up — where to next?'}
+              {!data ? ' ' : upcoming.length ? `You have ${plural(upcoming.length, 'upcoming stay')}.` : 'No stays coming up. Where to next?'}
             </p>
           </div>
           <Button asChild variant="outline" className="self-start sm:self-auto">
@@ -259,7 +259,7 @@ export default function TripsPage() {
             <EmptyState
               icon={Luggage}
               title="No trips yet"
-              description="When you book a stay it shows up here — with your confirmation, directions and free changes until the day before."
+              description="When you book a stay it shows up here, with your confirmation, directions and free changes until the day before."
               action={
                 <Button asChild size="lg">
                   <Link href="/properties">{LABELS.findStay}</Link>
@@ -286,7 +286,7 @@ export default function TripsPage() {
                   <EmptyState
                     icon={CalendarDays}
                     title="Nothing planned yet"
-                    description="Find your next stay — book direct for the best rate and free changes until the day before."
+                    description="Find your next stay. Book direct for the best rate and free changes until the day before."
                     action={
                       <Button asChild>
                         <Link href="/properties">{LABELS.findStay}</Link>

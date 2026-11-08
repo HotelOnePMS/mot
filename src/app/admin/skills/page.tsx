@@ -125,7 +125,7 @@ function AnswerRow({ s, a }: { s: SkillView; a: Actions }) {
           {AUDIENCE_LABEL[s.audience]}
         </Badge>
         <span>{usedLine(s)}</span>
-        {s.status === 'DISABLED' && <span>Off — agents won’t use it</span>}
+        {s.status === 'DISABLED' && <span>Off. Agents won’t use it</span>}
         {s.editIn && (
           <Link href={s.editIn.href} className="inline-flex min-h-6 items-center gap-1 font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             {s.editIn.label}
@@ -179,7 +179,7 @@ function RecipeRow({ s, a }: { s: SkillView; a: Actions }) {
       </p>
       {s.autoDisabled && (
         <Callout tone="warning" className="mt-3 py-2.5">
-          Switched off after {s.failStreak ?? 3} tries in a row didn’t work — your PMS screens may have changed. It turns back on by itself the next time the operator finishes this kind of task. You can also switch it on now.
+          Switched off after {s.failStreak ?? 3} tries in a row didn’t work. Your PMS screens may have changed. It turns back on by itself the next time the operator finishes this kind of task. You can also switch it on now.
         </Callout>
       )}
       <button
@@ -349,7 +349,7 @@ export default function SkillsPage() {
       const suggestion = s.status === 'SUGGESTED';
       const msg = suggestion
         ? on
-          ? `Approved — ${s.kind === 'RECIPE' ? 'the PMS operator follows it from now on' : 'anyone can run it by name now'}`
+          ? `Approved: ${s.kind === 'RECIPE' ? 'the PMS operator follows it from now on' : 'anyone can run it by name now'}`
           : 'Suggestion dismissed'
         : on
           ? `Agents will use “${s.title}” again`
@@ -382,7 +382,7 @@ export default function SkillsPage() {
     if (editing) return patch(editing, { title: d.question, answer: d.answer, audience: d.audience }, 'Answer saved');
     try {
       await api('/api/admin/skills', { method: 'POST', json: { propertyId, kind: 'ANSWER', question: d.question, answer: d.answer, audience: d.audience } });
-      toast.success('Answer added — agents can use it right away');
+      toast.success('Answer added. Agents can use it right away');
       await mutate();
       return true;
     } catch (e) {
@@ -402,7 +402,7 @@ export default function SkillsPage() {
     }
     try {
       await api('/api/admin/skills', { method: 'POST', json: { propertyId, kind: 'MACRO', name: d.name, steps: d.steps } });
-      toast.success(`Shortcut added — say “${d.name.toLowerCase()}” to the agent`);
+      toast.success(`Shortcut added. Say “${d.name.toLowerCase()}” to the agent`);
       await mutate();
       return true;
     } catch (e) {
@@ -549,7 +549,7 @@ export default function SkillsPage() {
               </ul>
             ) : (
               <Empty>
-                No shortcuts yet. Ask the agent to do something — like “check out room 201” — then say “save that as a shortcut called quick checkout”. Next time, “quick checkout for
+                No shortcuts yet. Ask the agent to do something, like “check out room 201”, then say “save that as a shortcut called quick checkout”. Next time, “quick checkout for
                 Smith” does it again.
               </Empty>
             )}
@@ -565,7 +565,7 @@ export default function SkillsPage() {
                     ))}
                   </ul>
                 ) : (
-                  <Empty>When the PMS operator finishes a task, it saves the screens and buttons it used here — and follows them next time.</Empty>
+                  <Empty>When the PMS operator finishes a task, it saves the screens and buttons it used here, and follows them next time.</Empty>
                 )}
               </>
             )}
@@ -617,7 +617,7 @@ export default function SkillsPage() {
                 {manual.map((s) => (s.kind === 'ANSWER' ? <AnswerRow key={s.id} s={s} a={actions} /> : s.kind === 'MACRO' ? <ShortcutRow key={s.id} s={s} a={actions} /> : <RecipeRow key={s.id} s={s} a={actions} />))}
               </ul>
             ) : (
-              <Empty>Nothing added yet. Add an answer for questions your settings don’t cover — like late checkout, luggage storage or the nearest pharmacy.</Empty>
+              <Empty>Nothing added yet. Add an answer for questions your settings don’t cover, like late checkout, luggage storage or the nearest pharmacy.</Empty>
             )}
           </Section>
 

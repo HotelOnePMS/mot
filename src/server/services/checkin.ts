@@ -469,7 +469,7 @@ export async function completeGuidedCheckIn(
   }
 
   const idText = `${ID_TYPE_LABEL[input.id.idType] ?? 'ID'} (${id.country}, ending ${id.last4})`;
-  await recordAudit(ctx, booking.propertyId, 'GUEST_ID_RECORDED', `Checked ${summary.guest.name}’s ${idText}${id.reason ? ` — accepted: ${id.reason}` : ''}`, { bookingId: booking.id });
+  await recordAudit(ctx, booking.propertyId, 'GUEST_ID_RECORDED', `Checked ${summary.guest.name}’s ${idText}${id.reason ? ` (accepted: ${id.reason})` : ''}`, { bookingId: booking.id });
   await recordAudit(ctx, booking.propertyId, 'REGISTRATION_SIGNED', `${summary.guest.name} signed the registration card (${sig.method === 'DRAWN' ? 'drawn' : 'typed'} signature)`, { bookingId: booking.id });
   if (waived && input.deposit.kind === 'NONE') {
     await recordAudit(ctx, booking.propertyId, 'DEPOSIT_WAIVED', `Checked in without a security deposit (${summary.code})${input.deposit.reason?.trim() ? `: ${input.deposit.reason.trim().slice(0, 200)}` : ''}`, { bookingId: booking.id });

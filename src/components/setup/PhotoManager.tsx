@@ -73,7 +73,7 @@ export function PhotoManager({ endpoint, editable = true }: { endpoint: string; 
     if (!files?.length) return;
     const list = [...files].filter((f) => f.type.startsWith('image/'));
     if (!list.length) {
-      toast.error('Those files aren’t photos — use JPEG, PNG, WebP or HEIC.');
+      toast.error('Those files aren’t photos. Use JPEG, PNG, WebP or HEIC.');
       return;
     }
     const tooBig = list.find((f) => f.size > MAX_SOURCE_BYTES);
@@ -88,7 +88,7 @@ export function PhotoManager({ endpoint, editable = true }: { endpoint: string; 
       for (const file of list) {
         setProgress(list.length > 1 ? `Uploading ${done + 1} of ${list.length}…` : 'Uploading…');
         const image = await toUploadDataUrl(file);
-        if (image.length > MAX_UPLOAD_CHARS) throw new Error(`${file.name} is too large to upload — try a JPEG or a smaller photo.`);
+        if (image.length > MAX_UPLOAD_CHARS) throw new Error(`${file.name} is too large to upload. Try a JPEG or a smaller photo.`);
         await api(endpoint, { method: 'POST', json: { images: [image] } });
         done += 1;
         await mutate();
@@ -225,7 +225,7 @@ export function PhotoManager({ endpoint, editable = true }: { endpoint: string; 
         open={!!confirmDelete}
         onOpenChange={(o) => !o && setConfirmDelete(null)}
         title="Delete this photo?"
-        description={confirmDelete?.isMain ? 'It’s your cover photo — the next photo becomes the cover. This can’t be undone.' : 'It’s removed from your booking page right away. This can’t be undone.'}
+        description={confirmDelete?.isMain ? 'It’s your cover photo, so the next photo becomes the cover. This can’t be undone.' : 'It’s removed from your booking page right away. This can’t be undone.'}
         confirmLabel="Delete photo"
         destructive
         loading={!!confirmDelete && busy === confirmDelete.id}

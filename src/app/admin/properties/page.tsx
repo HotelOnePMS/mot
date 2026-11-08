@@ -91,7 +91,7 @@ export default function PropertiesPage() {
             <EmptyState
               icon={Building2}
               title="No properties yet"
-              description="Add your first property — its name, address and brand color — to start taking bookings."
+              description="Add your first property (its name, address and brand color) to start taking bookings."
               action={
                 can('property.create') ? (
                   <Button asChild>

@@ -197,7 +197,7 @@ async function loop({ server, token, worker }) {
     const cfg = await loadConfig();
     const page = desktopContext.pages()[0] ?? (await desktopContext.newPage());
     if (cfg?.loginUrl && page.url() === 'about:blank') await page.goto(cfg.loginUrl).catch(() => undefined);
-    log(`Connected as ${cfg?.property ?? 'your hotel'} — keep this window signed in to ${cfg?.system ?? 'your PMS'}.`);
+    log(`Connected as ${cfg?.property ?? 'your hotel'}. Keep this window signed in to ${cfg?.system ?? 'your PMS'}.`);
   }
   log(worker ? 'Cloud worker ready.' : 'Waiting for work from HotelOne…');
   for (;;) {

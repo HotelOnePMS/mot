@@ -152,7 +152,7 @@ export function McpSetupFields({
       </div>
       <fieldset disabled={locked} className="mt-4 grid gap-4 sm:grid-cols-2">
         <legend className="sr-only">MCP server</legend>
-        <Field label="MCP server address" required className="sm:col-span-2 sm:max-w-xl" hint="It starts with https:// — for example https://mcp.yourpms.com/mcp">
+        <Field label="MCP server address" required className="sm:col-span-2 sm:max-w-xl" hint="It starts with https://, for example https://mcp.yourpms.com/mcp">
           <Input type="url" inputMode="url" autoComplete="off" spellCheck={false} required value={form.url} onChange={(e) => set({ url: e.target.value })} placeholder="https://" />
         </Field>
         <div className="sm:col-span-2">
@@ -191,7 +191,7 @@ export function McpSetupFields({
       <div aria-live="polite" className="mt-4 empty:hidden">
         {test.result && (
           <Callout tone="success" title={`${serverName(test.result.server)} answered`}>
-            {test.result.toolCount} tool{test.result.toolCount === 1 ? '' : 's'} found — {test.result.contract.matched} of {test.result.contract.total} of the recommended ones. Nothing is saved until you connect.
+            {test.result.toolCount} tool{test.result.toolCount === 1 ? '' : 's'} found. {test.result.contract.matched} of {test.result.contract.total} of the recommended ones. Nothing is saved until you connect.
           </Callout>
         )}
         {test.error && (
@@ -229,10 +229,10 @@ export function McpPanel({ system, onChange }: { system: string; onChange: () =>
     try {
       if (kind === 'test') {
         const r = await api<TestResult>('/api/admin/pms/test', { method: 'POST', json: { propertyId } });
-        toast.success(`${serverName(r.server)} answered in ${r.ms < 1000 ? `${r.ms} ms` : `${(r.ms / 1000).toFixed(1)} s`} — ${r.toolCount} tools`);
+        toast.success(`${serverName(r.server)} answered in ${r.ms < 1000 ? `${r.ms} ms` : `${(r.ms / 1000).toFixed(1)} s`}, ${r.toolCount} tools`);
       } else {
         const r = await api<{ tools: unknown[] }>('/api/admin/pms/refresh-tools', { method: 'POST', json: { propertyId } });
-        toast.success(`Tools refreshed — ${r.tools.length} found`);
+        toast.success(`Tools refreshed, ${r.tools.length} found`);
       }
     } catch (e) {
       toast.error((e as Error).message);
@@ -335,13 +335,13 @@ export function McpPanel({ system, onChange }: { system: string; onChange: () =>
             <li key={op.operation}>
               <Badge variant={op.tool ? 'success' : 'outline'} size="sm" icon={op.tool ? Check : CircleDashed} className={cn(!op.tool && 'text-muted-foreground')}>
                 {op.title}
-                <span className="sr-only">{op.tool ? ` — ${system} has it` : ` — ${system} doesn’t offer it`}</span>
+                <span className="sr-only">{op.tool ? `, ${system} has it` : `, ${system} doesn’t offer it`}</span>
               </Badge>
             </li>
           ))}
         </ul>
         {tools.length === 0 ? (
-          <p className="mt-4 text-sm text-muted-foreground">No tools cached yet — refresh the tools.</p>
+          <p className="mt-4 text-sm text-muted-foreground">No tools cached yet. Refresh the tools.</p>
         ) : (
           <>
             <ul className="mt-4 divide-y rounded-xl border" aria-label={`${system} tools`}>
@@ -392,7 +392,7 @@ export function McpPanel({ system, onChange }: { system: string; onChange: () =>
           <Webhook className="size-4 text-muted-foreground" aria-hidden /> Updates from {system}
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Give {system} this address so new bookings, cancellations and room changes show up in your activity log — where the agent sees them too.{' '}
+          Give {system} this address so new bookings, cancellations and room changes show up in your activity log, where the agent sees them too.{' '}
           <Link href="/developers/pms#events" className="font-medium text-primary underline-offset-4 hover:underline">
             How updates are signed
           </Link>
@@ -405,7 +405,7 @@ export function McpPanel({ system, onChange }: { system: string; onChange: () =>
                 <p className="text-sm font-medium">Signing secret</p>
                 <CommandLine command={secret} label="Copy the signing secret" />
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-xs text-muted-foreground">Keep it private — anyone with it can post updates to your activity log.</p>
+                  <p className="text-xs text-muted-foreground">Keep it private. Anyone with it can post updates to your activity log.</p>
                   <Button variant="ghost" size="sm" onClick={() => setSecret(null)}>
                     Hide
                   </Button>

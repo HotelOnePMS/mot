@@ -197,7 +197,7 @@ function ConnectNumber({ propertyId, isAdmin, onConnected }: { propertyId: strin
             <Input autoComplete="off" spellCheck={false} value={sid} onChange={(e) => setSid(e.target.value.trim())} placeholder="AC…" maxLength={40} className="font-mono" />
           </Field>
         </div>
-        <Field label="Auth Token" hint={`Next to the Account SID. ${PRODUCT_NAME} checks it with Twilio and hands it to ElevenLabs once to set up the number — it isn’t stored here.`}>
+        <Field label="Auth Token" hint={`Next to the Account SID. ${PRODUCT_NAME} checks it with Twilio and hands it to ElevenLabs once to set up the number. It isn’t stored here.`}>
           <div className="relative sm:max-w-md">
             <Input
               type={showToken ? 'text' : 'password'}
@@ -289,7 +289,7 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
       const res = await api<PhoneOverview>('/api/admin/voice/phone', { method: 'PUT', json: { propertyId, enabled: next.enabled, transferNumber: next.transferNumber.trim() || null } });
       await mutate(res, { revalidate: false });
       if (res.statusError) toast.error(res.statusError);
-      else toast.success(next.enabled ? 'Phone line is on' : 'Phone line paused — calls get a short “not available” message');
+      else toast.success(next.enabled ? 'Phone line is on' : 'Phone line paused. Calls get a short “not available” message');
       onChanged?.();
     } catch (e) {
       toast.error((e as Error).message);
@@ -326,7 +326,7 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
   );
   const urlNotice = data.urlIssue && (
     <Callout tone="warning" title={`${PRODUCT_NAME} needs a public web address for phone calls`}>
-      <p>Calls can’t reach this site yet. This is a one-time server setting — your developer or {PRODUCT_NAME} contact can fix it.</p>
+      <p>Calls can’t reach this site yet. This is a one-time server setting. Your developer or {PRODUCT_NAME} contact can fix it.</p>
       <DeveloperNote open={isAdmin} className="mt-3">
         <p>{data.urlIssue}</p>
       </DeveloperNote>
@@ -375,7 +375,7 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
             <div className="min-w-0 flex-1">
               <h2 className="text-base font-semibold tracking-tight">Answer your hotel phone with this voice</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Same answers as your booking page — live availability, prices, bookings and messages for the team. Keep your number: forward the calls you can’t pick up. WhatsApp works too.
+                Same answers as your booking page: live availability, prices, bookings and messages for the team. Keep your number: forward the calls you can’t pick up. WhatsApp works too.
               </p>
             </div>
             {data.canManage ? (
@@ -392,7 +392,7 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
   }
 
   const numbers = data.status?.numbers ?? [];
-  const agentName = data.status?.agentName ?? `${PRODUCT_NAME} — ${property?.name ?? 'your hotel'} phone`;
+  const agentName = data.status?.agentName ?? `${PRODUCT_NAME}: ${property?.name ?? 'your hotel'} phone`;
   const agentId = data.status?.agentId;
   const target = numbers[0]?.phoneNumber ?? '<new number>';
   const hasNumber = numbers.length > 0;
@@ -455,7 +455,7 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
               <h2 className="text-base font-semibold tracking-tight">Phone line</h2>
               <span aria-live="polite">{badge}</span>
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">Calls — and WhatsApp messages — to these numbers are answered by your voice front desk.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Calls and WhatsApp messages to these numbers are answered by your voice front desk.</p>
           </div>
           <Button variant="outline" size="sm" onClick={() => void mutate()} loading={isValidating} loadingText="Checking the line…">
             <RefreshCw aria-hidden /> Refresh
@@ -470,7 +470,7 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
               {numbers.length === 0 && (
                 <li className="flex items-center gap-3 rounded-xl border border-dashed px-4 py-4 text-sm text-muted-foreground">
                   <CircleDashed className="size-4 shrink-0" aria-hidden />
-                  No number rings this hotel yet — follow the steps below.
+                  No number rings this hotel yet. Follow the steps below.
                 </li>
               )}
               {numbers.map((n) => (
@@ -522,13 +522,13 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
         <Card className="p-5 sm:p-6">
           <h2 className="text-base font-semibold tracking-tight">{hasNumber ? 'How calls reach the assistant' : 'Connect your number'}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {hasNumber ? 'Your number is connected. Open a step to check or change it.' : 'Five short steps — most hotels are done in ten minutes.'}
+            {hasNumber ? 'Your number is connected. Open a step to check or change it.' : 'Five short steps. Most hotels are done in ten minutes.'}
           </p>
           <ol className="mt-4 space-y-2.5">
             <Step n={1} title="Get a phone number for the assistant" who="You, or whoever handles your phones" done={hasNumber} defaultOpen={!hasNumber}>
               <ul className="list-disc space-y-1.5 pl-5 marker:text-muted-foreground">
                 <li>
-                  <span className="text-foreground">Most countries:</span> a local number from Twilio — about $1.15 a month in the US. In Twilio, open{' '}
+                  <span className="text-foreground">Most countries:</span> a local number from Twilio (about $1.15 a month in the US). In Twilio, open{' '}
                   <strong className="font-medium text-foreground">Phone Numbers → Buy a number</strong>, pick one with Voice, then connect it above.
                 </li>
                 <li>
@@ -540,12 +540,12 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
               </ul>
             </Step>
 
-            <Step n={2} title="Connect the number to this hotel" who="With Connect a number above — or in ElevenLabs" done={hasNumber}>
+            <Step n={2} title="Connect the number to this hotel" who="With Connect a number above, or in ElevenLabs" done={hasNumber}>
               <p>
                 A Twilio number: use <strong className="font-medium text-foreground">Connect a number</strong> above. Exotel or a SIP trunk: whoever runs your {PRODUCT_NAME} ElevenLabs account opens{' '}
                 <strong className="font-medium text-foreground">Agents → Phone numbers → Import number</strong> and chooses the agent <strong className="font-medium text-foreground">{agentName}</strong>.
               </p>
-              <p>Hotel owners don’t need access to that account — send the number and these details to the person who runs it.</p>
+              <p>Hotel owners don’t need access to that account. Send the number and these details to the person who runs it.</p>
               <div className="flex flex-col gap-2 rounded-lg border bg-surface-sunken/50 p-3 sm:flex-row sm:items-center sm:justify-between">
                 <dl className="min-w-0 space-y-0.5 text-sm">
                   <div className="flex gap-2">
@@ -566,7 +566,7 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
               </div>
             </Step>
 
-            <Step n={3} title="Keep your hotel number — forward calls to the assistant" who="Dial these from the hotel phone">
+            <Step n={3} title="Keep your hotel number, forward calls to the assistant" who="Dial these from the hotel phone">
               {!hasNumber && <p>Once the assistant has a number, these codes fill in with it.</p>}
               <dl className="space-y-2">
                 <DialCode value={`**61*${target}*11*20#`} copyable={hasNumber}>
@@ -588,14 +588,14 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
             <Step n={4} title="Answer WhatsApp too" who={`Whoever runs your ${PRODUCT_NAME} ElevenLabs account`} optional done={hasWhatsApp}>
               <p>
                 In ElevenLabs open <strong className="font-medium text-foreground">Agents → WhatsApp → Import account</strong>, sign in with the hotel’s Meta business account and assign the same agent. The assistant then answers WhatsApp
-                messages — and WhatsApp calls, once calling is turned on in WhatsApp Manager.
+                messages, plus WhatsApp calls once calling is turned on in WhatsApp Manager.
               </p>
               <p>A number can’t be in the WhatsApp Business app at the same time. The easy choice: use the assistant’s own number for WhatsApp, and keep the app on the hotel’s number for your team.</p>
             </Step>
 
             <Step n={5} title="Test it">
               <p>
-                Call the assistant’s number directly first — ask for a room next weekend, then leave a message and check it lands in Messages. Then call your hotel number and let it ring through, or send the WhatsApp
+                Call the assistant’s number directly first. Ask for a room next weekend, then leave a message and check it lands in Messages. Then call your hotel number and let it ring through, or send the WhatsApp
                 number a message.
               </p>
             </Step>
@@ -626,7 +626,7 @@ export function PhoneLine({ onChanged, onOpenSettings }: { onChanged?: () => voi
               <Field
                 label="Put callers through to"
                 optional
-                hint="When a caller asks for a person. Use a direct line or mobile that doesn’t forward back to the assistant — otherwise calls loop. Leave it empty to take a message instead."
+                hint="When a caller asks for a person. Use a direct line or mobile that doesn’t forward back to the assistant. Otherwise calls loop. Leave it empty to take a message instead."
               >
                 <Input type="tel" inputMode="tel" autoComplete="tel" value={transfer} onChange={(e) => setTransfer(e.target.value)} placeholder="+1 831 555 0100" maxLength={40} />
               </Field>

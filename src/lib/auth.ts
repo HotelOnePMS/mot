@@ -13,7 +13,7 @@ const googleClientId = process.env.GOOGLE_CLIENT_ID;
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
 const googleEnabled = !!googleClientId && !!googleClientSecret;
 if (!googleEnabled) {
-  console.warn("GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET not set — Google sign-in is disabled; email/password login remains available.");
+  console.warn("GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET not set. Google sign-in is disabled; email/password login remains available.");
 }
 
 /** How this session signed in: SSO sessions rely on the identity provider's own two-step sign-in. */

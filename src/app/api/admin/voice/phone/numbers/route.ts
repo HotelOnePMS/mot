@@ -15,7 +15,7 @@ const DEMO_LOCKED = 'Phone numbers can’t be connected to demo hotels. Set up y
 
 /** Checks shared by every change: ElevenLabs is set up, the hotel has a phone line, it isn't a demo hotel. */
 async function phoneLineFor(actor: Actor, propertyId: string) {
-  if (!elevenLabsConfigured()) throw new DomainError(409, 'VOICE_DISABLED', 'Phone lines run on ElevenLabs Agents — add ELEVENLABS_API_KEY to the server first.');
+  if (!elevenLabsConfigured()) throw new DomainError(409, 'VOICE_DISABLED', 'Phone lines run on ElevenLabs Agents. Add ELEVENLABS_API_KEY to the server first.');
   const property = await prisma.property.findUniqueOrThrow({ where: { id: propertyId }, select: { isDemo: true, phoneLine: { select: { enabled: true } } } });
   assertNotDemoHotel(actor, property.isDemo, DEMO_LOCKED);
   if (!property.phoneLine) throw new DomainError(409, 'NO_PHONE_LINE', 'Turn on the phone line first, then connect a number to it.');
@@ -71,7 +71,7 @@ export const PUT = handleRoute(async (request: NextRequest) => {
   const propertyId = await resolvePropertyId(actor, body.propertyId);
   await phoneLineFor(actor, propertyId);
   const number = (await accountNumbers(propertyId)).find((n) => n.id === body.phoneNumberId);
-  if (!number) throw new DomainError(404, 'NOT_FOUND', 'That number isn’t in the ElevenLabs account any more — refresh and try again.');
+  if (!number) throw new DomainError(404, 'NOT_FOUND', 'That number isn’t in the ElevenLabs account any more. Refresh and try again.');
   await assignAccountNumber(propertyId, number.id);
   await recordAudit(
     { actor, source: 'classic' },

@@ -33,7 +33,7 @@ export function speakBlocks(blocks: AgentBlock[], currency = 'USD'): { summary: 
         );
         break;
       case 'rooms':
-        parts.push(`${b.title}: ${b.rooms.length} room${b.rooms.length === 1 ? '' : 's'}${b.rooms.length ? ` — ${list(b.rooms.map((r) => `${r.number} ${r.status.toLowerCase()}`), 8)}` : ''}`);
+        parts.push(`${b.title}: ${b.rooms.length} room${b.rooms.length === 1 ? '' : 's'}${b.rooms.length ? `, ${list(b.rooms.map((r) => `${r.number} ${r.status.toLowerCase()}`), 8)}` : ''}`);
         break;
       case 'roomOptions':
         parts.push(`Best rooms for ${b.guestName}: ${list(b.options.slice(0, 3).map((o) => `${o.room.number} (${o.reasons.slice(0, 2).join(', ')})`))}`);
@@ -47,7 +47,7 @@ export function speakBlocks(blocks: AgentBlock[], currency = 'USD'): { summary: 
         parts.push(`${b.title}: ${b.averagePct}% average occupancy, ${money(b.revenue, { cents: false, currency })} revenue, ADR ${money(b.adr, { cents: false, currency })}`);
         break;
       case 'forecast':
-        parts.push(list(b.periods.map((p) => `${p.label}: ${p.occupancyPct}% — ${p.recommendation}`)));
+        parts.push(list(b.periods.map((p) => `${p.label}: ${p.occupancyPct}%. ${p.recommendation}`)));
         break;
       case 'housekeeping':
         parts.push(`${b.title}: ${b.tasks.filter((t) => t.status === 'PENDING').length} to clean, ${b.tasks.filter((t) => t.status === 'IN_PROGRESS').length} in progress`);
@@ -57,10 +57,10 @@ export function speakBlocks(blocks: AgentBlock[], currency = 'USD'): { summary: 
         break;
       case 'plan':
         plan = { title: b.plan.title };
-        parts.push(`Plan waiting for confirmation — ${b.plan.title}: ${list(b.plan.steps.map((s) => s.summary))}${b.plan.warnings.length ? `. Warnings: ${b.plan.warnings.join('; ')}` : ''}`);
+        parts.push(`Plan waiting for confirmation. ${b.plan.title}: ${list(b.plan.steps.map((s) => s.summary))}${b.plan.warnings.length ? `. Warnings: ${b.plan.warnings.join('; ')}` : ''}`);
         break;
       case 'result':
-        parts.push(`${b.ok ? 'Done' : 'Not done'} — ${b.title}${b.lines.length ? `: ${list(b.lines)}` : ''}`);
+        parts.push(`${b.ok ? 'Done' : 'Not done'}: ${b.title}${b.lines.length ? `: ${list(b.lines)}` : ''}`);
         break;
       case 'clarify':
         parts.push(`Question: ${b.question} Options: ${b.options.map((o) => o.label).join(', ')}`);
@@ -72,7 +72,7 @@ export function speakBlocks(blocks: AgentBlock[], currency = 'USD'): { summary: 
         parts.push(`Problem: ${b.text}`);
         break;
       case 'bridgeTask':
-        parts.push(`Sent to ${b.system}. The operator is working on it — the result will appear on screen in a minute.`);
+        parts.push(`Sent to ${b.system}. The operator is working on it. The result will appear on screen in a minute.`);
         break;
       case 'folio':
         parts.push(

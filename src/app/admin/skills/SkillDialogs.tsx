@@ -94,13 +94,13 @@ export function AnswerDialog({
         <form onSubmit={submit} noValidate className="space-y-5">
           <DialogHeader>
             <DialogTitle>{initial ? 'Edit answer' : 'Add an answer'}</DialogTitle>
-            <DialogDescription>Agents give this answer when someone asks the question — in the staff agent, on the phone and in chat.</DialogDescription>
+            <DialogDescription>Agents give this answer when someone asks the question: in the staff agent, on the phone and in chat.</DialogDescription>
           </DialogHeader>
           <Field label="Question" error={errors.question} hint="How people usually ask it.">
             <Input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="e.g. Is there a late checkout?" maxLength={120} autoComplete="off" />
           </Field>
           <Field label="Answer" error={errors.answer}>
-            <Textarea value={answer} onChange={(e) => setAnswer(e.target.value)} rows={4} maxLength={4000} placeholder="e.g. Yes — until 1 PM for $30, if the room isn’t needed. Ask the front desk." />
+            <Textarea value={answer} onChange={(e) => setAnswer(e.target.value)} rows={4} maxLength={4000} placeholder="e.g. Yes, until 1 PM for $30, if the room isn’t needed. Ask the front desk." />
           </Field>
           <div className="space-y-2">
             <p id="answer-audience" className="text-sm font-medium">
@@ -117,7 +117,7 @@ export function AnswerDialog({
               ]}
             />
             <p className="text-xs text-muted-foreground">
-              {audience === 'STAFF' ? 'Only the staff agent uses it — guests never hear it.' : 'The voice agent, phone line and guests’ AI assistants can say it too.'}
+              {audience === 'STAFF' ? 'Only the staff agent uses it. Guests never hear it.' : 'The voice agent, phone line and guests’ AI assistants can say it too.'}
               {guestLocked && ' Answers for guests stay as they are in the demo hotels.'}
             </p>
           </div>
@@ -168,7 +168,7 @@ export function StepsDialog({
     const lines = linesOf(steps);
     const next = {
       name: name.trim() ? undefined : recipe ? 'Give it a name.' : 'Give the shortcut a short name, like “late checkout”.',
-      steps: lines.length ? (lines.length > (recipe ? 40 : 20) ? `At most ${recipe ? 40 : 20} steps.` : undefined) : recipe ? 'Keep at least one step.' : 'Add at least one step — a command you’d type to the agent.',
+      steps: lines.length ? (lines.length > (recipe ? 40 : 20) ? `At most ${recipe ? 40 : 20} steps.` : undefined) : recipe ? 'Keep at least one step.' : 'Add at least one step (a command you’d type to the agent).',
     };
     setErrors(next);
     if (next.name || next.steps) return;
@@ -186,7 +186,7 @@ export function StepsDialog({
             <DialogTitle>{recipe ? 'Edit PMS recipe' : initial ? 'Edit shortcut' : 'Add a shortcut'}</DialogTitle>
             <DialogDescription>
               {recipe
-                ? 'The steps the PMS operator is given for this kind of task. Keep them general — no guest names, codes or numbers.'
+                ? 'The steps the PMS operator is given for this kind of task. Keep them general: no guest names, codes or numbers.'
                 : 'A shortcut runs these commands in the staff agent, one after another. Changes still wait for someone to confirm them.'}
             </DialogDescription>
           </DialogHeader>

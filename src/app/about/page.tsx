@@ -14,8 +14,8 @@ export const metadata: Metadata = {
 };
 
 const PRINCIPLES = [
-  { icon: Building2, title: 'Your brand, your guests', text: 'Guests book with you, not with us. Your name, your colours, your data — exportable any time.' },
-  { icon: MessageSquareText, title: 'Say it, see it', text: 'Software should understand “check in the Smiths” and show you the right screen — not make you hunt for it.' },
+  { icon: Building2, title: 'Your brand, your guests', text: 'Guests book with you, not with us. Your name, your colours, your data (exportable any time).' },
+  { icon: MessageSquareText, title: 'Say it, see it', text: 'Software should understand “check in the Smiths” and show you the right screen, not make you hunt for it.' },
   { icon: ShieldCheck, title: 'People stay in charge', text: 'The agent proposes, a person confirms. Every action is permission-checked and written to the activity log.' },
 ];
 
@@ -39,7 +39,7 @@ export default function AboutPage() {
             <h1 className="mt-4 text-balance font-display text-4xl font-medium leading-[1.1] tracking-tight sm:text-6xl">Built for the people who keep the lights on</h1>
             <div className="mx-auto mt-6 h-1 w-14 rounded-full bg-highlight" aria-hidden />
             <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-muted-foreground">
-              Independent hotel owners do everything — front desk, housekeeping, night audit — and still lose 15–25% of every booking to online travel agencies, plus every guest who calls after hours and gets no answer.
+              Independent hotel owners do everything (front desk, housekeeping, night audit) and still lose 15–25% of every booking to online travel agencies, plus every guest who calls after hours and gets no answer.
             </p>
             <p className="mx-auto mt-4 max-w-2xl text-pretty text-lg leading-relaxed text-foreground">
               {PRODUCT_NAME} gives them a booking site under their own name, a front desk they can run by just saying what they need, and a voice that never misses a call.

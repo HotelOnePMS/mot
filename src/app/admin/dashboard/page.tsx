@@ -93,10 +93,10 @@ function Checklist({ items, welcome, propertyId }: { items: DashboardData['check
               <p className="text-sm font-medium text-muted-foreground">Getting set up</p>
             )}
             <h2 id="setup-title" className="mt-1 text-balance text-xl font-semibold tracking-tight">
-              {welcome ? `Welcome to ${PRODUCT_NAME} — let’s finish the basics.` : `${done} of ${items.length} steps done`}
+              {welcome ? `Welcome to ${PRODUCT_NAME}! Let’s finish the basics.` : `${done} of ${items.length} steps done`}
             </h2>
             <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-              Each step takes a minute or two. You can also just tell the agent what you need — it works with whatever you’ve set up so far.
+              Each step takes a minute or two. You can also just tell the agent what you need. It works with whatever you’ve set up so far.
             </p>
             <div
               className="mt-4 h-2 overflow-hidden rounded-full bg-muted"
@@ -166,9 +166,9 @@ function ForecastCard({ days }: { days: OccupancyDay[] }) {
   const soft = days.filter((d) => d.occupancyPct < 40).length;
   const insight =
     weekendAvg >= 80
-      ? `Weekends are pacing at ${weekendAvg}% — there may be room to raise rates.`
+      ? `Weekends are pacing at ${weekendAvg}%. There may be room to raise rates.`
       : soft >= 5
-        ? `${soft} of the next ${days.length} nights are under 40% — a midweek offer could help.`
+        ? `${soft} of the next ${days.length} nights are under 40%. A midweek offer could help.`
         : `Averaging ${avg}% over the next ${days.length} nights.`;
   return (
     <Card className="flex min-w-0 flex-col p-5 sm:p-6">
@@ -407,7 +407,7 @@ function Dashboard() {
                 className="border-t py-10"
                 icon={CalendarDays}
                 title="No reservations yet"
-                description="Share your booking page — new reservations show up here the moment they’re made."
+                description="Share your booking page. New reservations show up here the moment they’re made."
                 action={
                   property ? (
                     <Button asChild size="sm" variant="outline">

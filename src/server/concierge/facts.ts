@@ -44,7 +44,7 @@ export const CURRENCY = 'USD' as const;
 export const runsOnHotelOne = (setupPath: string | null | undefined) => (setupPath ?? 'FULL') === 'FULL';
 
 /** What callers are told when a hotel hasn't given a policy: the team answers it. */
-const NOT_ON_FILE = 'Not on file — offer to take a message so the team can confirm.';
+const NOT_ON_FILE = 'Not on file. Offer to take a message so the team can confirm.';
 
 /**
  * The check-in/out times and cancellation policy guests are told: the booking

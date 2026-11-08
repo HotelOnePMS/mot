@@ -55,12 +55,12 @@ export async function createCheckoutSession(input: { bookings: CheckoutBooking[]
         line_items: bookings
           .filter((b) => toCents(b.paymentDue) > 0)
           .map((b) => {
-            const label = `${b.propertyName} — ${b.roomTypeName}`;
+            const label = `${b.propertyName}: ${b.roomTypeName}`;
             return {
               price_data: {
                 currency: b.currency.toLowerCase(),
                 product_data: {
-                  name: isDeposit ? `Deposit — ${label}` : label,
+                  name: isDeposit ? `Deposit: ${label}` : label,
                   description: `${toDateString(b.checkIn)} → ${toDateString(b.checkOut)}, ${b.rooms} room(s), ${b.guests} guest(s)`,
                 },
                 unit_amount: toCents(b.paymentDue),

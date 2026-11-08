@@ -231,7 +231,7 @@ export default function ProfilePage() {
                     )}
                     <div className="mt-6 flex flex-wrap items-center justify-end gap-3 border-t pt-5">
                       <p className={cn('mr-auto text-sm', dirty ? 'font-medium text-foreground' : 'text-muted-foreground')} role="status">
-                        {dirty ? 'You have unsaved changes' : nothingToSave ? 'Nothing to save yet — edit a field first.' : 'All changes saved'}
+                        {dirty ? 'You have unsaved changes' : nothingToSave ? 'Nothing to save yet. Edit a field first.' : 'All changes saved'}
                       </p>
                       {dirty && (
                         <Button type="button" variant="ghost" onClick={() => setDraft(toDraft(data))}>

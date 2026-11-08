@@ -305,8 +305,8 @@ describe('after review', () => {
     const text = JSON.stringify(evidence!.summary);
     expect(text).toContain('Photo ID checked at the desk');
     expect(text).toContain('number ending 4567');
-    expect(text).not.toMatch(/ID matches guest — not done/);
-    expect(text).not.toMatch(/Registration signed — not done/);
+    expect(text).not.toMatch(/ID matches guest, not done/);
+    expect(text).not.toMatch(/Registration signed, not done/);
 
     // Long after check-out, the dispute is still open: the Suite line's photo stays.
     const later = new Date(Date.now() + 400 * 86_400_000);

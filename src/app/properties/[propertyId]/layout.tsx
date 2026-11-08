@@ -6,7 +6,7 @@ type Props = { params: Promise<{ propertyId: string }> };
 
 /** One line for search results and link previews (≈155 characters). */
 function summary(p: { tagline: string | null; description: string | null; name: string; city: string; state: string }): string {
-  const text = [p.tagline, p.description].filter(Boolean).join(' — ').replace(/\s+/g, ' ').trim();
+  const text = [p.tagline, p.description].filter(Boolean).join('. ').replace(/\s+/g, ' ').trim();
   const fallback = `Book ${p.name} in ${p.city}, ${p.state} direct: live prices, instant confirmation and free changes until the day before.`;
   const out = text || fallback;
   return out.length > 158 ? `${out.slice(0, 155).replace(/\s+\S*$/, '')}…` : out;
@@ -22,7 +22,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!p) {
     return { title: 'Hotel not found', robots: { index: false } };
   }
-  const title = `${p.name} · ${p.city} — Book direct`;
+  const title = `${p.name} · ${p.city} | Book direct`;
   const description = summary(p);
   const photo = p.photos[0]?.url;
   const images = photo ? [{ url: photo, alt: p.name }] : undefined;

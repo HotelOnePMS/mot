@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return NextResponse.json({ error: 'A JSON object is required.' }, { status: 400 });
   const { stayos_session: token, stayos_tool: name, ...args } = raw;
   if (typeof name !== 'string' || !TOOL_NAMES.has(name)) return reply({ error: 'Unknown tool.' });
-  if (typeof token !== 'string' || token.length < 20) return reply({ error: 'This call isn’t connected to the hotel’s systems — offer to take a message, or ask them to call back.' });
+  if (typeof token !== 'string' || token.length < 20) return reply({ error: 'This call isn’t connected to the hotel’s systems. Offer to take a message, or ask them to call back.' });
 
   let t;
   try {
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
     .update({ where: { id: t.sid }, data: { toolCalls: { increment: 1 } }, select: { toolCalls: true, callerNumber: true } })
     .catch(() => null);
   if (!session) return reply({ error: 'This call has ended.' });
-  if (session.toolCalls > MAX_TOOL_CALLS) return reply({ error: 'This call has made a lot of lookups already — offer to take a message for the team instead.' });
+  if (session.toolCalls > MAX_TOOL_CALLS) return reply({ error: 'This call has made a lot of lookups already. Offer to take a message for the team instead.' });
 
   return reply(await guestToolOutput(propertyId, name, args, { kind: 'PHONE', callerNumber: session.callerNumber, via: t.ch }));
 }

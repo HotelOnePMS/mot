@@ -84,7 +84,7 @@ function HotelLink({ origin, hotelId, hotelName, listed, voiceOnly }: { origin: 
     : '';
   const can = [
     { icon: CalendarCheck2, text: 'Check live availability and prices for any dates.' },
-    { icon: MessageSquareText, text: 'Answer questions from your saved answers — FAQs, amenities, policies and rooms.' },
+    { icon: MessageSquareText, text: 'Answer questions from your saved answers: FAQs, amenities, policies and rooms.' },
     { icon: Link2, text: 'Hand the guest your own checkout with everything filled in. They confirm in one tap.' },
     { icon: Inbox, text: 'No screen? Send you a booking request in Messages for your team to confirm.' },
   ];
@@ -98,7 +98,7 @@ function HotelLink({ origin, hotelId, hotelName, listed, voiceOnly }: { origin: 
         <div className="min-w-0 flex-1 space-y-5">
           <SectionHeader
             title="Your hotel’s assistant link"
-            description="Guests add this link to their AI assistant once. After that they can ask about your hotel and book — just by asking."
+            description="Guests add this link to their AI assistant once. After that they can ask about your hotel and book, just by asking."
           />
           {voiceOnly ? (
             <Callout
@@ -126,7 +126,7 @@ function HotelLink({ origin, hotelId, hotelName, listed, voiceOnly }: { origin: 
             </Callout>
           )}
           <CopyField label="Assistant link (MCP)" value={url} copyLabel="Copy link" copiedLabel="Link copied" />
-          <CopyField label="Message for guests — paste it in emails, on your website or in WhatsApp" value={message} copyLabel="Copy message" copiedLabel="Message copied" prose />
+          <CopyField label="Message for guests (paste it in emails, on your website or in WhatsApp)" value={message} copyLabel="Copy message" copiedLabel="Message copied" prose />
           <div>
             <h3 className="text-sm font-medium">What assistants can do with it</h3>
             <ul className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -147,7 +147,7 @@ function HotelLink({ origin, hotelId, hotelName, listed, voiceOnly }: { origin: 
             <Link href="/admin/voice#settings" className="font-medium text-primary underline-offset-4 hover:underline">
               voice settings
             </Link>{' '}
-            and hotel details — add an FAQ there and assistants can use it right away. Requests land in{' '}
+            and hotel details. Add an FAQ there and assistants can use it right away. Requests land in{' '}
             <Link href="/admin/voice#messages" className="font-medium text-primary underline-offset-4 hover:underline">
               Messages
             </Link>
@@ -306,7 +306,7 @@ function ApiKeys({ propertyId, hotelName, origin }: { propertyId: string; hotelN
           <div className="min-w-0 flex-1">
             <SectionHeader
               title="API keys"
-              description={`For partners and developers whose own AI agents — like a Muse or Grok app — should make confirmed bookings at ${hotelName}. Guests pay at the hotel. Guests using ChatGPT or Claude don’t need a key.`}
+              description={`For partners and developers whose own AI agents, like a Muse or Grok app, should make confirmed bookings at ${hotelName}. Guests pay at the hotel. Guests using ChatGPT or Claude don’t need a key.`}
             />
           </div>
         </div>
@@ -439,7 +439,7 @@ function ApiKeys({ propertyId, hotelName, origin }: { propertyId: string; hotelN
         open={!!revoking}
         onOpenChange={(o) => !o && setRevoking(null)}
         title={`Revoke “${revoking?.name ?? ''}”?`}
-        description="It stops working right away, and any assistant using it loses access. This can’t be undone — you can always create a new key."
+        description="It stops working right away, and any assistant using it loses access. This can’t be undone. You can always create a new key."
         confirmLabel="Revoke key"
         destructive
         loading={busy}

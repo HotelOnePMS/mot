@@ -108,7 +108,7 @@ function MyRooms() {
           <p className="text-xs font-medium text-muted-foreground">{today ? fmtDay(today, 'long') : ' '}</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">My rooms</h1>
           <p className="mt-1 text-sm text-muted-foreground" aria-live="polite">
-            {isLoading ? ' ' : open.length ? `${rooms(open.length)} to go — rooms for arriving guests first.` : 'All caught up. Nice work!'}
+            {isLoading ? ' ' : open.length ? `${rooms(open.length)} to go. Rooms for arriving guests come first.` : 'All caught up. Nice work!'}
           </p>
         </div>
         <ProgressRing done={done.length} total={mine.length} />
@@ -154,7 +154,7 @@ function MyRooms() {
                           )}
                           {t.room.occupancy === 'OCCUPIED' && (
                             <Badge variant="neutral" icon={DoorClosed}>
-                              Guest staying — knock first
+                              Guest staying, knock first
                             </Badge>
                           )}
                         </div>
@@ -193,7 +193,7 @@ function MyRooms() {
 
           {available.length > 0 && (
             <section aria-labelledby="hk-available">
-              <SectionHeader id="hk-available" title="Available to pick up" description="Nobody has these yet — take one when you’re free." />
+              <SectionHeader id="hk-available" title="Available to pick up" description="Nobody has these yet. Take one when you’re free." />
               <ul className="mt-3 space-y-2">
                 {available.map((t) => (
                   <li key={t.id} className="flex items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 shadow-xs">

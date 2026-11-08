@@ -38,7 +38,7 @@ export const PATCH = handleRoute(async (request: NextRequest, { params }: Route)
   const skill = await skillForStaff(actor, skillId);
   const body = await parseJson(request, patchSchema);
   const edits = body.title !== undefined || body.description !== undefined || body.answer !== undefined || body.audience !== undefined || body.steps !== undefined;
-  if (edits && skill.source === 'CONFIG') throw badRequest('This answer is made from your settings — change the words there, or switch it off here.');
+  if (edits && skill.source === 'CONFIG') throw badRequest('This answer is made from your settings. Change the words there, or switch it off here.');
   if (body.answer !== undefined && skill.kind !== 'ANSWER') throw badRequest('Only saved answers have an answer.');
   if (body.audience !== undefined && skill.kind !== 'ANSWER') throw badRequest('Only saved answers can be for guests.');
   if (body.steps !== undefined && skill.kind === 'ANSWER') throw badRequest('Saved answers don’t have steps.');

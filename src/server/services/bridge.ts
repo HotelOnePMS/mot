@@ -181,7 +181,7 @@ export async function enqueueTask(ctx: OpContext, propertyId: string, input: { k
   const mcp = c.mode === 'MCP';
   const lastHour = await prisma.bridgeTask.count({ where: { propertyId, createdAt: { gte: new Date(Date.now() - 3600_000) } } });
   if (lastHour >= Number((mcp ? process.env.PMS_MCP_MAX_TASKS_PER_HOUR : process.env.BRIDGE_MAX_TASKS_PER_HOUR) || (mcp ? 120 : 30))) {
-    throw new DomainError(429, 'RATE_LIMITED', `That’s ${lastHour} PMS tasks in the last hour — the hourly limit. Try again shortly.`);
+    throw new DomainError(429, 'RATE_LIMITED', `That’s ${lastHour} PMS tasks in the last hour, which is the hourly limit. Try again shortly.`);
   }
   const task = await prisma.bridgeTask.create({
     data: { propertyId, connectionId: c.id, kind: input.kind, instruction: input.instruction.slice(0, 1000), payload: input.payload ?? {}, requestedById: ctx.actor.userId },

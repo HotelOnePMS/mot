@@ -172,7 +172,7 @@ export default function Navigation({
           <Link
             href={marketing ? '/' : '/properties'}
             className="shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            aria-label={marketing ? `${PRODUCT_NAME} home` : `${LABELS.findStay} — ${PRODUCT_NAME}`}
+            aria-label={marketing ? `${PRODUCT_NAME} home` : `${LABELS.findStay} | ${PRODUCT_NAME}`}
           >
             <Logo />
           </Link>

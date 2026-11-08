@@ -54,7 +54,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (!/^[a-z0-9]{10,40}$/i.test(connectionId)) return reply(404, { error: 'Unknown connection.' });
   const ip = clientIp(request);
   if (!floodGuard(`pms-events:${connectionId}`, 240) || !floodGuard(`pms-events-ip:${ip}`, 600)) {
-    return reply(429, { error: 'Too many events — slow down.' }, { 'Retry-After': '60' });
+    return reply(429, { error: 'Too many events. Slow down.' }, { 'Retry-After': '60' });
   }
 
   const raw = await readCapped(request, EVENT_MAX_BYTES);

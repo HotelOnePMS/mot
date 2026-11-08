@@ -170,7 +170,7 @@ async function desiredSkills(propertyId: string): Promise<ConfigSkill[] | null> 
   if (p.roomTypes.length) {
     const rooms = p.roomTypes.map((rt) => {
       const extras = rt.amenities.slice(0, 4).join(', ');
-      return `${rt.name} — sleeps ${rt.capacity}, from ${price(Number(rt.basePrice), p.currency)} a night${extras ? ` (${extras})` : ''}`;
+      return `${rt.name}: sleeps ${rt.capacity}, from ${price(Number(rt.basePrice), p.currency)} a night${extras ? ` (${extras})` : ''}`;
     });
     out.push({
       key: 'rooms',
@@ -178,7 +178,7 @@ async function desiredSkills(propertyId: string): Promise<ConfigSkill[] | null> 
       description: 'The room types, how many guests each sleeps and their starting nightly prices. Use for questions about room options or rough prices; check availability for exact prices on given dates.',
       audience: 'ALL',
       kind: 'ANSWER',
-      body: { answer: clip(`${p.name} has ${rooms.length} room type${rooms.length > 1 ? 's' : ''}: ${rooms.join('; ')}. Prices change by date — check availability for the exact price of a stay.`, 4000) },
+      body: { answer: clip(`${p.name} has ${rooms.length} room type${rooms.length > 1 ? 's' : ''}: ${rooms.join('; ')}. Prices change by date. Check availability for the exact price of a stay.`, 4000) },
     });
   }
 

@@ -25,7 +25,7 @@ const schema = z.object({
   account: z.object({
     firstName: z.string().trim().min(1, 'is required').max(60),
     lastName: z.string().trim().min(1, 'is required').max(60),
-    email: z.string().trim().toLowerCase().email('must be a valid email').refine((v) => !isDemoEmail(v), 'belongs to the public demo — use your own email'),
+    email: z.string().trim().toLowerCase().email('must be a valid email').refine((v) => !isDemoEmail(v), 'belongs to the public demo. Use your own email'),
     password: z.string().max(200),
   }),
   property: z.object({
@@ -75,17 +75,17 @@ const schema = z.object({
 export const POST = handleRoute(async (request: NextRequest) => {
   const body = await parseJson(request, schema);
   if (body.path === 'VOICE' && body.roomTypes.length === 0) {
-    throw new DomainError(400, 'VALIDATION', 'Add at least one room type with its price — the voice quotes it to callers.', { issues: [{ path: ['roomTypes', 0, 'name'], message: 'is required' }] });
+    throw new DomainError(400, 'VALIDATION', 'Add at least one room type with its price. The voice quotes it to callers.', { issues: [{ path: ['roomTypes', 0, 'name'], message: 'is required' }] });
   }
   const urlIssue = body.bridge ? cloudLoginUrlIssue(body.bridge.mode, body.bridge.loginUrl) : null;
   if (urlIssue) throw badRequest(urlIssue);
   // Sign-up is open, so cap new hotels per hour (shared across server instances).
   const recentSignups = await prisma.property.count({ where: { isDemo: false, createdAt: { gte: new Date(Date.now() - 3600_000) } } });
   if (recentSignups >= Number(process.env.ONBOARDING_MAX_PER_HOUR || 30)) {
-    throw new DomainError(429, 'RATE_LIMITED', 'Lots of hotels are signing up right now — please try again in a little while.');
+    throw new DomainError(429, 'RATE_LIMITED', 'Lots of hotels are signing up right now. Please try again in a little while.');
   }
   if (await prisma.user.findUnique({ where: { email: body.account.email }, select: { id: true } })) {
-    throw conflict('An account with this email already exists — sign in instead.');
+    throw conflict('An account with this email already exists. Sign in instead.');
   }
   const problem = passwordProblem(body.account.password, { email: body.account.email, name: body.account.firstName });
   if (problem) throw badRequest(`Password: ${problem}`);
@@ -132,7 +132,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
       data: {
         propertyId: property.id,
         voice: body.voice?.voice ?? 'marin',
-        greeting: body.voice?.greeting || `Thanks for calling ${body.property.name} — how can I help?`,
+        greeting: body.voice?.greeting || `Thanks for calling ${body.property.name}, how can I help?`,
         handoffPhone: body.voice?.handoffPhone || body.property.phone,
         enabled: true,
         // Voice-only hotels have no booking page to show it on.

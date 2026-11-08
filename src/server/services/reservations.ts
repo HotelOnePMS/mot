@@ -95,7 +95,7 @@ export async function createDeskReservation(ctx: OpContext, input: DeskReservati
     rooms: input.rooms,
     notes: input.notes,
     paymentStatus: input.paid ? 'PAID' : 'PAY_AT_PROPERTY',
-    createdVia: `Taken at the front desk by ${actor.name}${input.paid ? ' — paid at the desk' : ' — pay at property'}`,
+    createdVia: `Taken at the front desk by ${actor.name}${input.paid ? ', paid at the desk' : ', pay at property'}`,
     source: 'FRONT_DESK',
     createdById: actor.userId,
   }).catch(async (e) => {

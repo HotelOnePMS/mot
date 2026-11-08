@@ -157,7 +157,7 @@ export const CONTRACT: ContractOperation[] = [
   {
     name: 'update_rates',
     title: 'Update rates',
-    description: 'Change the nightly rate of a room type for a date range or a list of dates — to an amount, or by a percentage.',
+    description: 'Change the nightly rate of a room type for a date range or a list of dates: to an amount, or by a percentage.',
     writes: true,
     inputSchema: {
       type: 'object',

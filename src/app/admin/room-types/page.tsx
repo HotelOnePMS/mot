@@ -182,7 +182,7 @@ export default function RoomTypesPage() {
             <EmptyState
               icon={BedDouble}
               title="No room types yet"
-              description="Start with the kinds of rooms you sell — like “Ocean King” or “Family Suite” — then add the room numbers."
+              description="Start with the kinds of rooms you sell, like “Ocean King” or “Family Suite”, then add the room numbers."
               action={
                 editable ? (
                   <Button asChild>
@@ -278,7 +278,7 @@ export default function RoomTypesPage() {
                                 <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
                                 {list.length === 0
                                   ? `Add room numbers so guests can be given a room (${formatNumber(t.totalRooms)} to set up).`
-                                  : `${formatNumber(gap)} more sellable room${gap > 1 ? 's' : ''} than room numbers — add the rest so every guest can get a key.`}
+                                  : `${formatNumber(gap)} more sellable room${gap > 1 ? 's' : ''} than room numbers. Add the rest so every guest can get a key.`}
                               </p>
                             )}
                           </div>

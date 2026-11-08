@@ -33,7 +33,7 @@ const HEADINGS: Record<Audience, { title: string; subtitle: string }> = {
   console: { title: 'Sign in to your hotel console', subtitle: 'For hotel owners and their teams.' },
   traveller: { title: 'Sign in to manage your trips', subtitle: 'Your bookings, receipts and directions in one place.' },
   // Not "Welcome back": first-time staff, invited by their owner, land here too.
-  everyone: { title: 'Sign in', subtitle: 'Guests and hotel teams use the same sign-in — we’ll take you to the right place.' },
+  everyone: { title: 'Sign in', subtitle: 'Guests and hotel teams use the same sign-in. We’ll take you to the right place.' },
 };
 
 type FieldErrors = { email?: string; password?: string; otp?: string };
@@ -157,7 +157,7 @@ function LoginForm() {
 
       {onboarded && (
         <Callout tone="info" role="status" className="mt-6">
-          Your hotel is ready — sign in to open your console.
+          Your hotel is ready. Sign in to open your console.
         </Callout>
       )}
       {signedOut && (
@@ -364,7 +364,7 @@ function LoginAside() {
       <p className="text-2xs font-semibold uppercase tracking-[0.18em] text-highlight">{PRODUCT_NAME}</p>
       <p className="mt-4 font-display text-4xl leading-[1.15] tracking-tight">Every booking direct. Every call answered.</p>
       <p className="mt-4 text-base leading-relaxed text-inverse-foreground/75">
-        Travellers manage their stays here. Hotel teams run the front desk, rates and the {TERMS.agent} — from the same sign-in.
+        Travellers manage their stays here. Hotel teams run the front desk, rates and the {TERMS.agent}, from the same sign-in.
       </p>
       <ul className="mt-10 grid gap-4 text-sm text-inverse-foreground/85">
         {[

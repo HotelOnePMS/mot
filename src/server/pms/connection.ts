@@ -229,7 +229,7 @@ export async function disconnectMcp(ctx: OpContext, propertyId: string) {
   requirePermission(ctx.actor, 'bridge.manage');
   const c = await prisma.pmsConnection.findUnique({ where: { propertyId } });
   if (!c) return { ok: true };
-  if (!isMcpConnection(c)) throw conflict('This PMS is connected through the desktop connector or cloud browser — disconnect it on the Your PMS page.');
+  if (!isMcpConnection(c)) throw conflict('This PMS is connected through the desktop connector or cloud browser. Disconnect it on the Your PMS page.');
   await prisma.$transaction([
     prisma.bridgeTask.updateMany({ where: { connectionId: c.id, status: { in: ['QUEUED', 'NEEDS_HELP'] } }, data: { status: 'CANCELLED', finishedAt: new Date() } }),
     prisma.pmsConnection.delete({ where: { id: c.id } }),

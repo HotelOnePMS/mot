@@ -139,7 +139,7 @@ function TestCall({ propertyId, connected, showModels, voiceOnly }: { propertyId
             {voice.error ? (
               <span className="text-destructive">{voice.error}</span>
             ) : live ? (
-              agentLine ?? 'Listening — ask about a room for next weekend.'
+              agentLine ?? 'Listening. Ask about a room for next weekend.'
             ) : (
               voiceOnly
                 ? 'Start a test call with your voice front desk. It answers like it does on your phone line, with your prices and settings.'
@@ -202,21 +202,21 @@ function GoLive({ data, onTab }: { data: VoiceOverview; onTab: (t: Tab) => void 
   const steps: { title: string; text: string; done: boolean; cta: string; href?: string; tab?: Tab }[] = [
     {
       title: 'Rooms and prices',
-      text: s.roomTypes ? `${s.roomTypes} room type${s.roomTypes > 1 ? 's' : ''} for the voice to quote. Set different prices for busy nights under Rates.` : 'Add your room types and nightly prices — the voice quotes them.',
+      text: s.roomTypes ? `${s.roomTypes} room type${s.roomTypes > 1 ? 's' : ''} for the voice to quote. Set different prices for busy nights under Rates.` : 'Add your room types and nightly prices. The voice quotes them.',
       done: s.roomTypes > 0,
       cta: s.roomTypes ? 'Check rooms' : 'Add rooms',
       href: '/admin/room-types',
     },
     {
       title: 'Policies and common questions',
-      text: s.faqs ? `${s.faqs} answer${s.faqs > 1 ? 's' : ''} so far — parking, breakfast, pets and early check-in are the usual ones.` : 'Add answers to the questions callers ask most — parking, breakfast, pets, early check-in.',
+      text: s.faqs ? `${s.faqs} answer${s.faqs > 1 ? 's' : ''} so far. Parking, breakfast, pets and early check-in are the usual ones.` : 'Add answers to the questions callers ask most: parking, breakfast, pets, early check-in.',
       done: s.policies && s.faqs > 0,
       cta: 'Open Settings',
       tab: 'settings',
     },
     {
       title: 'Hear it yourself',
-      text: s.testCalls ? 'You’ve talked to it. Try again after changing Settings — new calls use them straight away.' : 'Press Test call above and ask for a room next weekend, like a guest would.',
+      text: s.testCalls ? 'You’ve talked to it. Try again after changing Settings. New calls use them straight away.' : 'Press Test call above and ask for a room next weekend, like a guest would.',
       done: s.testCalls > 0,
       cta: 'Test call',
     },
@@ -317,7 +317,7 @@ function Settings({ data, onSaved }: { data: VoiceOverview; onSaved: () => void 
         method: 'PUT',
         json: { propertyId, ...cfg, faqs: cfg.faqs.filter((f) => f.q.trim() && f.a.trim()) },
       });
-      toast.success('Voice settings saved — new calls use them right away');
+      toast.success('Voice settings saved. New calls use them right away');
       onSaved();
     } catch (e) {
       toast.error((e as Error).message);
@@ -348,7 +348,7 @@ function Settings({ data, onSaved }: { data: VoiceOverview; onSaved: () => void 
             text={
               setupPath === 'VOICE'
                 ? 'Answer callers with your prices and policies, and take booking requests and messages for your team.'
-                : 'Answer guest questions by voice with live availability and prices — on your booking page and your phone line.'
+                : 'Answer guest questions by voice with live availability and prices, on your booking page and your phone line.'
             }
             checked={cfg.enabled}
             onChange={(v) => set('enabled', v)}
@@ -473,7 +473,7 @@ function Settings({ data, onSaved }: { data: VoiceOverview; onSaved: () => void 
               value={cfg.greeting ?? ''}
               onChange={(e) => set('greeting', e.target.value.replace(/\n/g, ' '))}
               onKeyDown={(e) => e.key === 'Enter' && e.preventDefault()}
-              placeholder="Thanks for calling the Saltwater Inn — how can I help?"
+              placeholder="Thanks for calling the Saltwater Inn, how can I help?"
               maxLength={300}
             />
           </Field>
@@ -492,7 +492,7 @@ function Settings({ data, onSaved }: { data: VoiceOverview; onSaved: () => void 
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <h2 className="text-base font-semibold tracking-tight">Answers to common questions</h2>
-              <p className="mt-0.5 text-sm text-muted-foreground">Parking, breakfast, pets, early check-in — the voice quotes these word for word.</p>
+              <p className="mt-0.5 text-sm text-muted-foreground">Parking, breakfast, pets, early check-in: the voice quotes these word for word.</p>
             </div>
             <Button variant="outline" size="sm" onClick={addFaq} disabled={cfg.faqs.length >= 40}>
               <Plus aria-hidden /> Add a question
@@ -502,7 +502,7 @@ function Settings({ data, onSaved }: { data: VoiceOverview; onSaved: () => void 
             {cfg.faqs.length === 0 && (
               <div className="rounded-xl border border-dashed px-4 py-8 text-center">
                 <p className="text-sm font-medium">No answers yet</p>
-                <p className="mt-1 text-sm text-muted-foreground">Add your top three questions to start — parking, breakfast and check-in times are the usual ones.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Add your top three questions to start. Parking, breakfast and check-in times are the usual ones.</p>
               </div>
             )}
             {cfg.faqs.map((f, i) => (
@@ -525,7 +525,7 @@ function Settings({ data, onSaved }: { data: VoiceOverview; onSaved: () => void 
                     className="min-h-10 resize-none [field-sizing:content]"
                     value={f.a}
                     onChange={(e) => set('faqs', cfg.faqs.map((x, j) => (j === i ? { ...x, a: e.target.value } : x)))}
-                    placeholder="Yes — free on-site parking for every guest."
+                    placeholder="Yes, free on-site parking for every guest."
                   />
                 </Field>
                 <IconButton label={`Remove question ${i + 1}`} className="justify-self-end text-muted-foreground hover:text-destructive sm:mt-7" onClick={() => set('faqs', cfg.faqs.filter((_, j) => j !== i))}>
@@ -668,7 +668,7 @@ function Requests({ voiceOnly }: { voiceOnly: boolean }) {
                         onClick={async () => {
                           try {
                             await navigator.clipboard.writeText(new URL(link.path!, window.location.origin).toString());
-                            toast.success('Booking link copied — send it to the guest');
+                            toast.success('Booking link copied. Send it to the guest');
                           } catch {
                             toast.error('Couldn’t copy the link');
                           }
@@ -730,17 +730,17 @@ export default function VoicePage() {
     : !data.phoneReady
       ? 'Answer your hotel number and WhatsApp with this voice.'
       : !data.phoneLine
-        ? 'Answer your hotel number with this voice — and WhatsApp too. Keep your number and forward the calls you miss.'
+        ? 'Answer your hotel number with this voice, and WhatsApp too. Keep your number and forward the calls you miss.'
         : data.phoneLine.enabled && data.config.enabled
-          ? 'On — answers every phone and WhatsApp number you point at this hotel’s agent.'
-          : 'Paused — callers hear a short “not available” message.';
+          ? 'On. It answers every phone and WhatsApp number you point at this hotel’s agent.'
+          : 'Paused. Callers hear a short “not available” message.';
 
   return (
     <div className={FRAME}>
       <div className="space-y-6">
         <PageHeader
           title="Voice front desk"
-          description={property ? `The voice that answers for ${property.name} — ${voiceOnly ? 'on your phone line' : 'on your booking page and your phone line'}.` : undefined}
+          description={property ? `The voice that answers for ${property.name}, ${voiceOnly ? 'on your phone line' : 'on your booking page and your phone line'}.` : undefined}
           actions={
             <SegmentedControl
               layoutId="voice-tab"
@@ -840,10 +840,10 @@ export default function VoicePage() {
                         icon: Globe,
                         title: 'Booking page',
                         text: !(data.config.guestWidget && data.config.enabled)
-                          ? 'Off — turn it on in Settings.'
+                          ? 'Off. Turn it on in Settings.'
                           : data.connected
-                            ? 'Live — guests see “Talk to us”.'
-                            : 'Switched on — appears for guests once a voice service is connected.',
+                            ? 'Live. Guests see “Talk to us”.'
+                            : 'Switched on. It appears for guests once a voice service is connected.',
                         ok: data.config.guestWidget && data.config.enabled && data.connected,
                         onClick: !(data.config.guestWidget && data.config.enabled) ? () => setTab('settings') : undefined,
                         cta: 'Open Settings',

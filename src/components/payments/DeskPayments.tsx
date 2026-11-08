@@ -413,7 +413,7 @@ export function CollectPaymentDialog({
                       </p>
                       {active.method === 'VIRTUAL_CARD' && vcc && (
                         <p className="text-muted-foreground">
-                          Copy the full number, expiry and code from the {vcc.channel} extranet ({vcc.brand ?? 'card'} ending {vcc.last4 ?? '—'}). HotelOne never stores card numbers.
+                          Copy the full number, expiry and code from the {vcc.channel} extranet ({vcc.brand ?? 'card'}{vcc.last4 ? ` ending ${vcc.last4}` : ''}). HotelOne never stores card numbers.
                         </p>
                       )}
                       {pageUrl && (
@@ -513,7 +513,7 @@ export function CollectPaymentDialog({
               <div className="space-y-2 rounded-xl border p-3 text-sm">
                 <p className="flex items-center gap-2 font-medium">
                   <Landmark className="size-4 text-muted-foreground" aria-hidden />
-                  {vcc.channel} {vcc.type === 'VIRTUAL' ? 'virtual card' : 'guest card'} · {vcc.brand ?? 'Card'} ending {vcc.last4 ?? '—'}
+                  {vcc.channel} {vcc.type === 'VIRTUAL' ? 'virtual card' : 'guest card'} · {vcc.brand ?? 'Card'}{vcc.last4 ? ` ending ${vcc.last4}` : ''}
                   {vcc.expiry ? ` · exp ${vcc.expiry}` : ''}
                 </p>
                 <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
@@ -816,7 +816,7 @@ export function CheckInCollect({ booking }: { booking: Pick<BookingSummary, 'id'
       </div>
       {data.otaCard?.type === 'VIRTUAL' && data.balance > 0.004 && (
         <p className="text-xs text-muted-foreground">
-          {data.otaCard.channel} sent a virtual card ({data.otaCard.brand ?? 'card'} ending {data.otaCard.last4 ?? '—'}){data.otaCard.chargeable ? '. Charge it under Take payment → Virtual card.' : `. ${data.otaCard.reason}`}
+          {data.otaCard.channel} sent a virtual card ({data.otaCard.brand ?? 'card'}{data.otaCard.last4 ? ` ending ${data.otaCard.last4}` : ''}){data.otaCard.chargeable ? '. Charge it under Take payment → Virtual card.' : `. ${data.otaCard.reason}`}
         </p>
       )}
       <CollectPaymentDialog booking={booking} kind={collect ?? 'PAYMENT'} open={collect !== null} onOpenChange={(o) => !o && setCollect(null)} />
@@ -880,7 +880,7 @@ export function DeskPayments({ booking }: { booking: BookingSummary }) {
 
       {data.otaCard && (
         <p className="mt-3 text-xs text-muted-foreground">
-          {data.otaCard.channel} {data.otaCard.type === 'VIRTUAL' ? 'virtual card' : 'guest card'} on file: {data.otaCard.brand ?? 'card'} ending {data.otaCard.last4 ?? '—'}
+          {data.otaCard.channel} {data.otaCard.type === 'VIRTUAL' ? 'virtual card' : 'guest card'} on file: {data.otaCard.brand ?? 'card'}{data.otaCard.last4 ? ` ending ${data.otaCard.last4}` : ''}
           {data.otaCard.balance !== null ? `, balance ${fmt(data.otaCard.balance, data.otaCard.currency ?? data.currency)}` : ''}
           {data.otaCard.chargeable ? '' : `. ${data.otaCard.reason}`}
         </p>

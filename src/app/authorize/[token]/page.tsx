@@ -79,7 +79,7 @@ interface Values {
 type Errors = Partial<Record<keyof Values, string>>;
 
 const CLOSED: Record<Exclude<CardAuthDisplayStatus, 'PENDING'>, { title: string; body: string; done?: boolean }> = {
-  SIGNED: { title: 'Already signed', body: 'This authorization has been signed. Thank you — there’s nothing more to do.', done: true },
+  SIGNED: { title: 'Already signed', body: 'This authorization has been signed. Thank you. There’s nothing more to do.', done: true },
   VERIFIED: { title: 'Already signed', body: 'This authorization has been signed and checked by the hotel. Thank you.', done: true },
   REJECTED: { title: 'Reviewed by the hotel', body: 'The hotel reviewed this authorization. If they asked you to sign again, they’ll send you a new link.' },
   CANCELLED: { title: 'This link was replaced', body: 'The hotel cancelled this request or sent a newer link. Use the most recent one, or ask them for a new link.' },

@@ -18,7 +18,7 @@ export const COMMAND_EXAMPLES = [
   'auto-assign housekeeping',
   'show the housekeeping board',
   'mark 203 clean',
-  'room 106 out of order — broken AC',
+  'room 106 out of order, broken AC',
   'availability next weekend for 2 guests',
   'forecast the next 3 weekends',
   'occupancy this week',

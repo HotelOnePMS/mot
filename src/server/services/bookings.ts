@@ -221,7 +221,7 @@ export async function createReservation(input: CreateReservationInput): Promise<
     if (!roomType || !roomType.isActive || !roomType.property.isActive) throw notFound('Room type');
     if (roomType.propertyId !== input.propertyId) throw badRequest('That room type does not belong to this property.');
     // Voice-only hotels take bookings in their own system; HotelOne only quotes them.
-    if (roomType.property.setupPath === 'VOICE') throw badRequest(`This hotel takes bookings directly — please call ${roomType.property.phone}.`);
+    if (roomType.property.setupPath === 'VOICE') throw badRequest(`This hotel takes bookings directly. Please call ${roomType.property.phone}.`);
   }
   const roomTypes = types as NonNullable<(typeof types)[number]>[];
   if (input.checkIn < hotelToday(new Date(), localeOf(roomTypes[0].property).timezone)) throw badRequest('Check-in date cannot be in the past.');
@@ -338,7 +338,7 @@ export async function createReservation(input: CreateReservationInput): Promise<
                     create: {
                       status: 'PENDING',
                       notes: [
-                        online ? 'Booked online — awaiting card payment' : (input.createdVia ?? 'Booking created'),
+                        online ? 'Booked online, awaiting card payment' : (input.createdVia ?? 'Booking created'),
                         lines.length > 1 ? `part of reservation ${leadCode} (${lines.length} room types)` : null,
                       ]
                         .filter(Boolean)
@@ -364,7 +364,7 @@ export async function createReservation(input: CreateReservationInput): Promise<
       if (!retryable) throw e;
     }
   }
-  throw new DomainError(503, 'BUSY', 'The hotel is busy right now — please try again.');
+  throw new DomainError(503, 'BUSY', 'The hotel is busy right now. Please try again.');
 }
 
 /** The other bookings in the same multi-room-type reservation (empty for a single booking). */
@@ -530,7 +530,7 @@ export async function transitionBooking(
     // Early departure: release the unused nights back to inventory.
     const newOut = today > toISODate(booking.checkIn) ? today : addDaysISO(toISODate(booking.checkIn), 1);
     data.checkOut = atNoonUTC(newOut);
-    effects.push(`Early departure — stay shortened to ${formatDay(newOut)}`);
+    effects.push(`Early departure: stay shortened to ${formatDay(newOut)}`);
     historyNote = [historyNote, `Early check-out (was due ${formatDay(toISODate(booking.checkOut))})`].filter(Boolean).join(' · ');
   }
 

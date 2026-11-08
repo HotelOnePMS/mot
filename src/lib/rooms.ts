@@ -21,6 +21,6 @@ export function parseRoomNumbers(input: string, max = 200): { numbers: string[] 
     }
   }
   const unique = [...new Set(out)];
-  if (unique.length > max) return { error: `That’s ${unique.length} rooms — add up to ${max} at a time.` };
+  if (unique.length > max) return { error: `That’s ${unique.length} rooms. Add up to ${max} at a time.` };
   return { numbers: unique };
 }

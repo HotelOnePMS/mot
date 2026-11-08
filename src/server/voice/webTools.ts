@@ -81,7 +81,7 @@ async function hotelFor(session: WebVoiceSession, given: string | null | undefin
   if (session.scope === 'HOTEL') {
     if (id && id !== session.pid) {
       const name = (await prisma.property.findUnique({ where: { id: session.pid! }, select: { name: true } }))?.name ?? 'this hotel';
-      return { error: `This line only handles ${name}. Leave property_id empty — it means ${name}.` };
+      return { error: `This line only handles ${name}. Leave property_id empty. It means ${name}.` };
     }
     return { id: session.pid! };
   }
@@ -89,7 +89,7 @@ async function hotelFor(session: WebVoiceSession, given: string | null | undefin
   return { id: (await findListedHotel(id)).id };
 }
 
-const hotelOnly = (tool: string) => ({ error: `${tool} isn’t available on a hotel’s own line — this conversation is only about this hotel.` });
+const hotelOnly = (tool: string) => ({ error: `${tool} isn’t available on a hotel’s own line. This conversation is only about this hotel.` });
 
 /** Front-desk tools that hotels keeping their own system answer through guestTools: prices without availability, requests instead of checkout. */
 const REQUEST_ONLY_DESK_TOOLS = new Set(['get_property_info', 'check_availability', 'start_booking', 'request_booking']);
@@ -238,7 +238,7 @@ export async function runWebTool(session: WebVoiceSession, name: string, raw: un
     case 'find_booking': {
       const a = z.object({ confirmation_code: z.string().trim().min(4).max(20), last_name: z.string().trim().min(1).max(60) }).parse(args);
       // A conversation can't be used to guess codes.
-      await consumeRateLimit(`voice:find_booking:${session.sid}`, 6, 10 * 60_000, 'That’s a lot of lookups — ask the guest to check the code in their confirmation email.');
+      await consumeRateLimit(`voice:find_booking:${session.sid}`, 6, 10 * 60_000, 'That’s a lot of lookups. Ask the guest to check the code in their confirmation email.');
       if (hotel) return runGuestTool(session.pid!, 'find_booking', a);
       const r = await findBooking({ code: a.confirmation_code, lastName: a.last_name });
       if (!r.found) return { found: false, say: 'I couldn’t find a booking with that code and last name.' };
@@ -277,6 +277,6 @@ export async function webToolOutput(session: WebVoiceSession, name: string, args
   } catch (e) {
     // conciergeError logs unexpected failures.
     const err = conciergeError(e);
-    return { error: err.code === 'INTERNAL' ? 'That lookup failed — offer to take a message for the team instead.' : err.error };
+    return { error: err.code === 'INTERNAL' ? 'That lookup failed. Offer to take a message for the team instead.' : err.error };
   }
 }

@@ -53,7 +53,7 @@ const SCENES: Scene[] = [
     ),
   },
   {
-    command: 'Check in the Smiths — quiet room, high floor, note it’s their anniversary',
+    command: 'Check in the Smiths, quiet room, high floor, note it’s their anniversary',
     render: (phase) => (
       <div className="overflow-hidden rounded-xl border border-agent/30 bg-card shadow-glow">
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-b bg-agent-soft px-4 py-2.5">
@@ -68,7 +68,7 @@ const SCENES: Scene[] = [
             <span className="rounded-md bg-muted px-1.5 text-2xs text-muted-foreground">quiet · floor 3</span>
           </li>
           <li className="flex items-start gap-2">
-            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" /> Add note: “Anniversary — chilled bubbles on arrival”
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" /> Add note: “Anniversary: chilled bubbles on arrival”
           </li>
         </ul>
         <div className="flex items-center justify-end gap-3 border-t px-4 py-2.5">

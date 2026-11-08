@@ -750,7 +750,7 @@ async function planSetRates(ctx: ToolCtx, raw: unknown): Promise<PlanOutput> {
     const beforeLabel = before.length === 1 ? fmt(before[0]) : `${fmt(Math.min(...before))}–${fmt(Math.max(...before))}`;
     const afterLabel = c.price !== undefined ? fmt(c.price) : c.reset ? `base ${fmt(Number(rt.basePrice))}` : `${c.percent! > 0 ? '+' : ''}${c.percent}%`;
     if (c.price !== undefined && before.length && Math.abs(c.price - before[0]) / before[0] > 0.5) {
-      warnings.push(`${rt.name}: ${fmt(c.price)} is more than 50% away from the current ${fmt(before[0])} — double-check it.`);
+      warnings.push(`${rt.name}: ${fmt(c.price)} is more than 50% away from the current ${fmt(before[0])}. Double-check it.`);
     }
     const days = c.weekdays?.length && c.weekdays.length < 7 ? ` (${c.weekdays.map((d) => WEEKDAY[d]).join('/')} only)` : '';
     steps.push({
@@ -772,7 +772,7 @@ async function planCreateReservation(ctx: ToolCtx, raw: unknown): Promise<PlanOu
   const rt = await resolveRoomTypeExact(ctx.propertyId, a.room_type);
   const avail = await propertyAvailability({ propertyId: ctx.propertyId, checkIn: a.check_in, checkOut: a.check_out, guests: a.guests, rooms: a.rooms });
   const row = avail.find((r) => r.id === rt.id);
-  if (!row || row.available < a.rooms) throw new HarnessInputError(`${rt.name} has ${row?.available ?? 0} room(s) free for those dates — not enough. Check availability for another type.`);
+  if (!row || row.available < a.rooms) throw new HarnessInputError(`${rt.name} has ${row?.available ?? 0} room(s) free for those dates, which isn’t enough. Check availability for another type.`);
   const { currency } = await hotelLocale(ctx.propertyId);
   const nights = diffDays(a.check_in, a.check_out);
   return {
@@ -1053,7 +1053,7 @@ function blockText(b: AgentBlock): string[] {
 function blocksForModel(blocks: AgentBlock[]): string {
   const keep = blocks.filter((b) => !['suggestions', 'navigate'].includes(b.type));
   const text = JSON.stringify(keep, (_k, v) => (v === null || v === undefined || v === '' ? undefined : typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : v));
-  return text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}… (truncated — narrow the query for more)` : text;
+  return text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}… (truncated; narrow the query for more)` : text;
 }
 
 // ---------------------------------------------------------------------------
@@ -1214,7 +1214,7 @@ async function runTool(ctx: ToolCtx, name: string, raw: unknown, acc: HarnessRes
   if (name === 'list_room_types') return { blocks: [], forModel: JSON.stringify(await roomTypesResult(ctx.propertyId)) };
   if (name === 'get_rate_calendar') {
     const text = JSON.stringify(await rateCalendarResult(ctx.propertyId, raw));
-    return { blocks: [], forModel: text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}… (truncated — ask for fewer nights or one room type)` : text };
+    return { blocks: [], forModel: text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}… (truncated; ask for fewer nights or one room type)` : text };
   }
   if (name === 'run_report') {
     if (!can(ctx.actor, 'reports.view')) return { blocks: [], forModel: 'Reports aren’t part of this person’s role: say so.', isError: true };

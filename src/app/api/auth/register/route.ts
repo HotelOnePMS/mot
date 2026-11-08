@@ -13,7 +13,7 @@ import { logError } from '@/server/log';
 const schema = z.object({
   firstName: z.string().trim().min(1, 'is required').max(60),
   lastName: z.string().trim().min(1, 'is required').max(60),
-  email: z.string().trim().toLowerCase().email('must be a valid email').refine((v) => !isDemoEmail(v), 'belongs to the public demo — use your own email'),
+  email: z.string().trim().toLowerCase().email('must be a valid email').refine((v) => !isDemoEmail(v), 'belongs to the public demo. Use your own email'),
   phone: z.string().trim().max(40).optional().nullable(),
   password: z.string().max(200),
 });
@@ -30,7 +30,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
   if (problem) throw badRequest(`Password: ${problem}`);
   await recordAttempt([SIGNUP_IP(ip)], true);
   if (await prisma.user.findFirst({ where: { email: { equals: body.email, mode: 'insensitive' } }, select: { id: true } })) {
-    throw conflict('An account with this email already exists — sign in instead.');
+    throw conflict('An account with this email already exists. Sign in instead.');
   }
   const user = await prisma.user.create({
     data: {

@@ -52,7 +52,7 @@ async function update(request: NextRequest, { params }: Params) {
   const body = await parseJson(request, updateSchema);
   if (body.totalRooms !== undefined) {
     const physical = await prisma.room.count({ where: { roomTypeId } });
-    if (body.totalRooms < physical) throw badRequest(`There are ${physical} room numbers set up for this type — remove some before lowering the count.`);
+    if (body.totalRooms < physical) throw badRequest(`There are ${physical} room numbers set up for this type. Remove some before lowering the count.`);
   }
   // Saved, logged with what changed, and passed on to the booking channels by the service (also used by the agent).
   const updated = await updateRoomType({ actor, source: 'classic' }, roomType.id, body);

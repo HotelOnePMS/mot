@@ -160,7 +160,7 @@ async function* runModel(
   } catch (e) {
     logError('agent/engine', 'Model engine failed:', e);
     if (!shown) return false;
-    yield { type: 'block', block: { type: 'error', text: 'I lost my connection partway through. Nothing was changed — please ask again.' } };
+    yield { type: 'block', block: { type: 'error', text: 'I lost my connection partway through. Nothing was changed. Please ask again.' } };
     yield { type: 'done', engine: 'llm', ms: Date.now() - started };
     return true;
   }
@@ -262,7 +262,7 @@ export async function* runAgent(input: AgentRunInput): AsyncGenerator<AgentEvent
     const n = exp.steps.length;
     yield {
       type: 'block',
-      block: { type: 'text', text: `Running the shortcut **${hit.skill.title}**${n > 1 ? ` — ${n} steps` : ''}:${n === 1 ? ` “${exp.steps[0]}”` : ''}` },
+      block: { type: 'text', text: `Running the shortcut **${hit.skill.title}**${n > 1 ? `, ${n} steps` : ''}:${n === 1 ? ` “${exp.steps[0]}”` : ''}` },
     };
     if (bridged) {
       yield* runBridged(input, exp.steps.join(', then '), today);
@@ -273,7 +273,7 @@ export async function* runAgent(input: AgentRunInput): AsyncGenerator<AgentEvent
     const all: Intent[] = [];
     for (const [i, step] of exp.steps.entries()) {
       if (parseSkillCommand(step)) {
-        yield { type: 'block', block: { type: 'text', text: `Skipped step ${i + 1} (“${step}”) — a shortcut can’t run another shortcut.` } };
+        yield { type: 'block', block: { type: 'text', text: `Skipped step ${i + 1} (“${step}”) because a shortcut can’t run another shortcut.` } };
         continue;
       }
       const intents = parseMessage(step, today);
@@ -313,7 +313,7 @@ export async function* runAgent(input: AgentRunInput): AsyncGenerator<AgentEvent
             `I work in **${system}** for you. Look-ups go straight through, and I **always ask before changing anything** there.\n` +
             '• **Look up:** “who’s arriving today?”, “find the reservation for Grace Okafor”, “which rooms are dirty?”\n' +
             '• **Change:** “check in Jordan Smith into room 204”, “add a note to Smith: late arrival”\n' +
-            '• **Hotel questions:** “is parking free?” — answered from your saved answers',
+            '• **Hotel questions:** “is parking free?” is answered from your saved answers',
         },
       };
       for (const block of await shortcutListBlocks(actor, propertyId, { forHelp: true })) if (block.type !== 'suggestions') yield { type: 'block', block };
@@ -502,11 +502,11 @@ export async function confirmPlan(actor: Actor, token: string): Promise<ConfirmR
         ? 'Some changes didn’t go through'
         : bridged.length === plan.steps.length
           ? bridged.every((t) => t.mode === 'MCP')
-            ? `Sent to ${bridged[0].system} — the result is below`
-            : `Sent to ${bridged[0].system} — the operator is on it`
+            ? `Sent to ${bridged[0].system}. The result is below`
+            : `Sent to ${bridged[0].system}. The operator is on it`
           : plan.steps.length === 1
             ? 'Done'
-            : `Done — ${plan.steps.length} changes made`,
+            : `Done: ${plan.steps.length} changes made`,
       lines,
     },
   ];

@@ -21,13 +21,13 @@ function key(): Buffer {
     const k = Buffer.from(raw, 'base64');
     if (k.length !== 32) throw new Error(`${name} must be 32 bytes, base64-encoded (openssl rand -base64 32).`);
     if (current && legacy && current !== legacy) {
-      console.warn('HOTELONE_VAULT_KEY and STAYOS_VAULT_KEY differ — using HOTELONE_VAULT_KEY. Logins sealed with the other key can’t be opened; give both the same value.');
+      console.warn('HOTELONE_VAULT_KEY and STAYOS_VAULT_KEY differ. Using HOTELONE_VAULT_KEY. Logins sealed with the other key can’t be opened; give both the same value.');
     }
     cached = k;
     return k;
   }
   if (process.env.NODE_ENV === 'production') {
-    throw new Error('HOTELONE_VAULT_KEY is not set (STAYOS_VAULT_KEY is also accepted) — stored credentials are disabled until it is configured.');
+    throw new Error('HOTELONE_VAULT_KEY is not set (STAYOS_VAULT_KEY is also accepted). Stored credentials are disabled until it is configured.');
   }
   // Never change these labels or the fallback secret: they derive the key that
   // opens logins already sealed in development databases.

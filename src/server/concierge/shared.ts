@@ -29,7 +29,7 @@ export interface StayInput {
 /** Date rules every stay passes: not in the past, check-out after check-in, at most 30 nights. */
 export function stayDateError(s: { checkIn: string; checkOut: string }, longStayMessage: string, timezone?: string): string | null {
   const today = hotelToday(new Date(), timezone);
-  if (s.checkIn < today) return `Check-in can’t be in the past — today is ${formatDay(today, 'weekday')}.`;
+  if (s.checkIn < today) return `Check-in can’t be in the past. Today is ${formatDay(today, 'weekday')}.`;
   if (s.checkOut <= s.checkIn) return 'Check-out must be after check-in.';
   if (diffDays(s.checkIn, s.checkOut) > MAX_NIGHTS) return longStayMessage;
   return null;
@@ -133,10 +133,10 @@ export async function bookableStay(
   const error = stayDateError(a, longStayMessage, (await hotelLocale(propertyId)).timezone);
   if (error) return { error };
   const rt = await prisma.roomType.findFirst({ where: { id: a.roomTypeId, propertyId, isActive: true }, select: { id: true, name: true, capacity: true } });
-  if (!rt) return { error: 'That room type isn’t available here — check availability again.' };
-  if (a.guests > rt.capacity * a.rooms) return { error: `The ${rt.name} sleeps up to ${rt.capacity} per room — add a room or choose a larger room.` };
+  if (!rt) return { error: 'That room type isn’t available here. Check availability again.' };
+  if (a.guests > rt.capacity * a.rooms) return { error: `The ${rt.name} sleeps up to ${rt.capacity} per room. Add a room or choose a larger room.` };
   const quote = await quoteStay(prisma, { roomTypeId: rt.id, checkIn: a.checkIn, checkOut: a.checkOut, rooms: a.rooms, guests: a.guests });
-  if (liveInventory && quote.available < a.rooms) return { error: `The ${rt.name} is no longer free for those dates — check availability again.` };
+  if (liveInventory && quote.available < a.rooms) return { error: `The ${rt.name} is no longer free for those dates. Check availability again.` };
   return { roomType: rt, quote, nights: diffDays(a.checkIn, a.checkOut) };
 }
 
@@ -182,26 +182,26 @@ export async function bookableReservation(
   const error = stayDateError(a, longStayMessage, (await hotelLocale(propertyId)).timezone);
   if (error) return { error };
   if (!lines.length) return { error: 'Say which room types to book.' };
-  if (lines.length > MAX_RESERVATION_LINES) return { error: `One booking can hold up to ${MAX_RESERVATION_LINES} room types — send a message to the team for bigger groups.` };
+  if (lines.length > MAX_RESERVATION_LINES) return { error: `One booking can hold up to ${MAX_RESERVATION_LINES} room types. Send a message to the team for bigger groups.` };
   const rooms = totalRooms(lines);
-  if (rooms > MAX_RESERVATION_ROOMS) return { error: `One booking can hold up to ${MAX_RESERVATION_ROOMS} rooms — send a message to the team for bigger groups.` };
+  if (rooms > MAX_RESERVATION_ROOMS) return { error: `One booking can hold up to ${MAX_RESERVATION_ROOMS} rooms. Send a message to the team for bigger groups.` };
   const types = await prisma.roomType.findMany({ where: { id: { in: lines.map((l) => l.roomTypeId) }, propertyId, isActive: true }, select: { id: true, name: true, capacity: true } });
   const rts = lines.map((l) => types.find((t) => t.id === l.roomTypeId));
-  if (rts.some((t) => !t)) return { error: 'One of those room types isn’t available here — check availability again.' };
+  if (rts.some((t) => !t)) return { error: 'One of those room types isn’t available here. Check availability again.' };
   const party = splitParty(
     a.guests,
     lines.map((l, i) => ({ rooms: l.rooms, capacity: rts[i]!.capacity }))
   );
   if (!party) {
     const sleeps = lines.reduce((s, l, i) => s + l.rooms * rts[i]!.capacity, 0);
-    return { error: a.guests < lines.length ? 'Each room type needs at least one guest — drop a room type or add guests.' : `Those rooms sleep up to ${sleeps} — add a room or choose larger rooms.` };
+    return { error: a.guests < lines.length ? 'Each room type needs at least one guest. Drop a room type or add guests.' : `Those rooms sleep up to ${sleeps}. Add a room or choose larger rooms.` };
   }
   const out: BookableReservation['lines'] = [];
   for (const [i, l] of lines.entries()) {
     const rt = rts[i]!;
     const quote = await quoteStay(prisma, { roomTypeId: rt.id, checkIn: a.checkIn, checkOut: a.checkOut, rooms: l.rooms, guests: party[i] });
     if (liveInventory && quote.available < l.rooms) {
-      return { error: quote.available ? `Only ${quote.available} ${rt.name} left for those dates — check availability again.` : `The ${rt.name} is no longer free for those dates — check availability again.` };
+      return { error: quote.available ? `Only ${quote.available} ${rt.name} left for those dates. Check availability again.` : `The ${rt.name} is no longer free for those dates. Check availability again.` };
     }
     out.push({ roomType: rt, quote, nights: diffDays(a.checkIn, a.checkOut), rooms: l.rooms, guests: party[i] });
   }
@@ -260,7 +260,7 @@ export async function submitBookingRequest(propertyId: string, a: BookingRequest
   if (!a.phone && !a.email) return { error: 'Ask for an email or a callback number so the team can confirm the booking.' };
   const lines = stayLines(a);
   if ('error' in lines) return lines;
-  const stay = await bookableReservation(propertyId, { ...a, lines }, 'Stays over 30 nights go through the team — take a message instead.', liveInventory);
+  const stay = await bookableReservation(propertyId, { ...a, lines }, 'Stays over 30 nights go through the team. Take a message instead.', liveInventory);
   if ('error' in stay) return stay;
   const { nights } = stay;
   const rooms = stay.rooms;
@@ -283,8 +283,8 @@ export async function submitBookingRequest(propertyId: string, a: BookingRequest
     quoted_total: total,
     currency: stay.currency,
     say: liveInventory
-      ? `I’ve sent your request to the team — they’ll confirm and send you a link to finish booking${a.email ? ' by email' : ''}. It isn’t booked until then.`
-      : `I’ve sent your request to the front desk — they’ll check the room is free and ${a.phone ? 'call you back' : 'email you'} to confirm. It isn’t booked until then.`,
+      ? `I’ve sent your request to the team. They’ll confirm and send you a link to finish booking${a.email ? ' by email' : ''}. It isn’t booked until then.`
+      : `I’ve sent your request to the front desk. They’ll check the room is free and ${a.phone ? 'call you back' : 'email you'} to confirm. It isn’t booked until then.`,
   };
 }
 

@@ -17,7 +17,7 @@ export function DemoBanner({ className }: { className?: string }) {
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-1.5 text-xs sm:px-6 sm:text-sm">
         <p>
           <span className="font-semibold">Demo hotel</span>
-          <span className="text-inverse-foreground/75"> — this is the booking site your guests see.</span>
+          <span className="text-inverse-foreground/75">: this is the booking site your guests see.</span>
         </p>
         <p className="flex items-center gap-4">
           <Link href="/demo" className={bannerLink}>

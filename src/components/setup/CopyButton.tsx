@@ -17,7 +17,7 @@ export function useCopy(timeout = 2000) {
     if (timer.current) clearTimeout(timer.current);
   }, []);
   const copy = React.useCallback(
-    async (text: string, failMessage = 'Couldn’t copy — select the text and copy it instead.') => {
+    async (text: string, failMessage = 'Couldn’t copy. Select the text and copy it instead.') => {
       try {
         await navigator.clipboard.writeText(text);
         setCopied(true);

@@ -119,7 +119,7 @@ function quickRanges(today: ISODate): { label: string; from: ISODate; to: ISODat
 }
 
 function formatCell(v: ReportCell, col: ReportColumn, currency: string): string {
-  if (v === null || v === undefined || v === '') return '—';
+  if (v === null || v === undefined || v === '') return 'n/a';
   switch (col.format) {
     case 'money':
       return formatMoney(Number(v), currency, { cents: true });

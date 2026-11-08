@@ -163,7 +163,7 @@ export default function AnalyticsPage() {
             </Card>
 
             <Card className="flex flex-col p-5 sm:p-6">
-              <SectionHeader title="Top revenue nights" description="Where demand is strongest — candidates for higher rates." />
+              <SectionHeader title="Top revenue nights" description="Where demand is strongest. These are candidates for higher rates." />
               {best.length === 0 ? (
                 <p className="mt-4 rounded-xl border border-dashed border-border-strong/40 px-4 py-8 text-center text-sm text-muted-foreground">
                   No revenue booked in this range yet.

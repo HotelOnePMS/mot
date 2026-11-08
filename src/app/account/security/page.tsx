@@ -65,7 +65,7 @@ function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void 
         <Button variant="outline" onClick={copy}>
           <Copy aria-hidden /> Copy codes
         </Button>
-        <Button onClick={onDone}>I’ve saved them — sign in again</Button>
+        <Button onClick={onDone}>I’ve saved them. Sign in again</Button>
       </div>
     </div>
   );

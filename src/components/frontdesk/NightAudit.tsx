@@ -243,7 +243,7 @@ export function NightAuditSheet({ open, onOpenChange }: { open: boolean; onOpenC
                           {b.guest.name}
                         </Link>{' '}
                         <span className="text-muted-foreground">
-                          · room {b.room?.number ?? '—'} · due out {fmtDay(b.checkOut, 'weekday')}
+                          · room {b.room?.number ?? 'not assigned'} · due out {fmtDay(b.checkOut, 'weekday')}
                         </span>
                       </li>
                     ))}
@@ -257,7 +257,7 @@ export function NightAuditSheet({ open, onOpenChange }: { open: boolean; onOpenC
                     {data.unpaidInHouse.map((b) => (
                       <li key={b.id} className="flex justify-between gap-3">
                         <span>
-                          {b.guest.name} <span className="text-muted-foreground">· room {b.room?.number ?? '—'}</span>
+                          {b.guest.name} <span className="text-muted-foreground">· room {b.room?.number ?? 'not assigned'}</span>
                         </span>
                         <span className="tabular">{money(b.checkOutDue, { currency: b.currency })}</span>
                       </li>
