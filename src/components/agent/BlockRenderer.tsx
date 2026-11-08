@@ -6,6 +6,7 @@ import { ClarifyBlock, ErrorBlock, NavigateBlock, ResultBlock, RichText, StatsBl
 import { ActivityBlock, AlertsBlock, HousekeepingBlock, RoomsBlock } from './blocks/ops';
 import { PlanCard } from './blocks/PlanCard';
 import { BridgeTaskBlock } from './blocks/bridge';
+import { DisputeBlock } from './blocks/dispute';
 import { FolioBlock } from './blocks/folio';
 import { ReportBlock } from './blocks/report';
 import { AvailabilityBlock, ForecastBlock, OccupancyBlock } from './blocks/revenue';
@@ -54,6 +55,8 @@ export function BlockRenderer({ block }: { block: AgentBlock }) {
       return <ReportBlock block={block} />;
     case 'folio':
       return <FolioBlock block={block} />;
+    case 'dispute':
+      return <DisputeBlock block={block} />;
     default:
       return null;
   }

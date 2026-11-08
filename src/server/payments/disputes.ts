@@ -2,22 +2,28 @@
  * Card disputes (chargebacks). When Stripe tells us a payment was disputed we
  * record it, assemble the evidence from our own records, and email the hotel's
  * owner. The hotel reviews the evidence in the console and submits it with an
- * explicit click: nothing is ever sent to Stripe or the bank automatically.
+ * explicit click (or by confirming the agent's plan): nothing is ever sent to
+ * Stripe or the bank automatically.
+ *
+ * A chargeback can also reach the hotel another way (a bank letter, the card
+ * terminal's processor). The same evidence is built for those on request, from
+ * the reservation alone, for the hotel to send itself; nothing is stored.
  */
 import type Stripe from 'stripe';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getStripe } from '@/lib/stripe';
 import { fromCents, toCents } from '@/lib/payments';
-import { assertPropertyAccess, requireStaff, scopeByProperty } from '../authz';
+import { assertPropertyAccess, requirePermission, requireStaff, scopeByProperty, type Actor } from '../authz';
 import { badRequest, notFound } from '../errors';
 import { sendDisputeAlert } from '../email';
 import { publicSiteUrl } from '../public-url';
-import { recordAudit } from '../services/audit';
+import { recordAudit, type OpContext } from '../services/audit';
+import { buildFolio } from '../services/folio';
 import { bookingInclude, toBookingSummary } from '../services/mappers';
 import { cardBrandLabel, countryName, ID_TYPE_LABEL, type CardAuthCheck, type IdType } from '@/lib/card-authorization';
 import { METHOD_LABEL, type PaymentMethod } from '@/lib/desk-payments';
-import { buildEvidenceSummary, renderEvidenceText, stripeEvidenceFields, type EvidenceInput, type EvidenceSummary } from './evidence';
+import { buildEvidenceSummary, evidenceGaps, renderEvidenceText, stripeEvidenceFields, type EvidenceInput, type EvidenceSummary } from './evidence';
 import { paymentLines, restorePaymentStatus } from './record';
 
 const OPEN_STATUSES = ['needs_response', 'warning_needs_response'];
@@ -25,7 +31,7 @@ const OPEN_STATUSES = ['needs_response', 'warning_needs_response'];
 const CHECKLIST_LABELS = { idMatched: 'ID matches guest', cardShown: 'Card shown', registrationSigned: 'Registration signed' } as const;
 
 /** Everything we know about the booking, in the shape the evidence builder wants. */
-async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string; reason: string | null; amount: number; currency: string }): Promise<EvidenceInput | null> {
+async function loadEvidenceInput(bookingId: string, dispute: EvidenceInput['dispute']): Promise<EvidenceInput | null> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
@@ -107,6 +113,7 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
     const u = staff.find((s) => s.id === id);
     return u ? `${u.firstName} ${u.lastName}`.trim() : null;
   };
+  const folio = await buildFolio(booking);
   const c = booking.checklist;
   const lastWith = (status: string) => [...booking.statusHistory].reverse().find((h) => h.status === status)?.createdAt.toISOString() ?? null;
   const p = booking.property;
@@ -222,6 +229,11 @@ async function loadEvidenceInput(bookingId: string, dispute: { stripeId: string;
     },
     riskFlags: summary.riskFlags,
     history: booking.statusHistory.map((h) => ({ status: h.status, notes: h.notes, at: h.createdAt.toISOString() })),
+    folio: {
+      currency: folio.currency,
+      lines: folio.lines.map((l) => ({ section: l.section, label: l.label, detail: l.detail, amount: l.amount, at: l.at })),
+      totals: folio.totals,
+    },
     dispute,
   };
 }
@@ -390,6 +402,13 @@ export async function getDispute(disputeId: string): Promise<{ dispute: DisputeD
 /** Send the evidence to Stripe. Only ever called from an explicit click by someone allowed to manage disputes. */
 export async function submitDisputeEvidence(disputeId: string): Promise<DisputeDTO> {
   const actor = await requireStaff('disputes.manage');
+  return submitDisputeEvidenceAs({ actor, source: 'classic' }, disputeId);
+}
+
+/** submitDisputeEvidence for a given person: the console's button, or a plan they confirmed in the agent. */
+export async function submitDisputeEvidenceAs(op: OpContext, disputeId: string): Promise<DisputeDTO> {
+  const { actor } = op;
+  requirePermission(actor, 'disputes.manage');
   const d = await prisma.dispute.findUnique({ where: { id: disputeId }, include: { ...DTO_INCLUDE, property: { select: { id: true, name: true, stripeAccountId: true } } } });
   if (!d) throw notFound('Dispute');
   assertPropertyAccess(actor, d.propertyId);
@@ -408,6 +427,122 @@ export async function submitDisputeEvidence(disputeId: string): Promise<DisputeD
     data: { evidenceSubmittedAt: new Date(), evidenceSubmittedById: actor.userId, status: updated.status },
     include: DTO_INCLUDE,
   });
-  await recordAudit({ actor, source: 'classic' }, d.propertyId, 'DISPUTE_EVIDENCE_SUBMITTED', `Submitted dispute evidence for ${d.booking?.code ?? d.stripeDisputeId}`, { bookingId: d.bookingId, disputeId: d.id });
+  await recordAudit(op, d.propertyId, 'DISPUTE_EVIDENCE_SUBMITTED', `Submitted dispute evidence for ${d.booking?.code ?? d.stripeDisputeId}`, { bookingId: d.bookingId, disputeId: d.id });
   return toDTO(row);
+}
+
+// ---------------------------------------------------------------------------
+// A reservation's dispute, for the agent and for chargebacks outside Stripe
+// ---------------------------------------------------------------------------
+
+/** What the person said about a chargeback Stripe didn't report: the claim and the amount, when known. */
+export interface ReportedChargeback {
+  reason?: string | null;
+  amount?: number | null;
+}
+
+/** The Stripe disputes on a reservation (any of its room types: one payment covers them all), newest first. */
+async function stripeDisputesOn(booking: { id: string; groupCode: string | null }) {
+  const lines = await paymentLines(booking);
+  return prisma.dispute.findMany({ where: { bookingId: { in: lines.map((l) => l.id) } }, include: DTO_INCLUDE, orderBy: { createdAt: 'desc' } });
+}
+
+/** The hotel's Stripe disputes that still wait for its evidence, nearest deadline first. */
+export async function openDisputesAt(actor: Actor, propertyId: string): Promise<DisputeDTO[]> {
+  requirePermission(actor, 'disputes.view');
+  assertPropertyAccess(actor, propertyId);
+  const rows = await prisma.dispute.findMany({
+    where: { propertyId, status: { in: OPEN_STATUSES }, evidenceSubmittedAt: null },
+    include: DTO_INCLUDE,
+    orderBy: [{ evidenceDueBy: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }],
+    take: 20,
+  });
+  return rows.map(toDTO);
+}
+
+const CHARGED = ['SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'];
+
+/**
+ * The stay a guest's dispute is about, when the person named the guest rather than the reservation: this one if
+ * Stripe reported a dispute on it, else the guest's stay that has one, else this one if it was charged, else the
+ * guest's latest charged stay. A returning guest's upcoming booking is rarely what the bank is asking about.
+ */
+export async function disputedBookingId(actor: Actor, booking: { id: string; groupCode: string | null; propertyId: string; userId: string }): Promise<string> {
+  requirePermission(actor, 'disputes.view');
+  assertPropertyAccess(actor, booking.propertyId);
+  if ((await stripeDisputesOn(booking)).length) return booking.id;
+  const guest = { propertyId: booking.propertyId, userId: booking.userId };
+  const disputed = await prisma.dispute.findFirst({ where: { propertyId: booking.propertyId, booking: guest }, orderBy: { createdAt: 'desc' }, select: { bookingId: true } });
+  if (disputed?.bookingId) return disputed.bookingId;
+  const lines = await paymentLines(booking);
+  if (await prisma.payment.count({ where: { bookingId: { in: lines.map((l) => l.id) }, status: { in: CHARGED } } })) return booking.id;
+  const charged = await prisma.booking.findFirst({ where: { ...guest, payments: { some: { status: { in: CHARGED } } } }, orderBy: { checkIn: 'desc' }, select: { id: true } });
+  return charged?.id ?? booking.id;
+}
+
+/** The Stripe dispute on a reservation that still waits for the hotel's evidence, if there is one. */
+export async function openDisputeOn(actor: Actor, booking: { id: string; groupCode: string | null; propertyId: string }): Promise<DisputeDTO | null> {
+  requirePermission(actor, 'disputes.view');
+  assertPropertyAccess(actor, booking.propertyId);
+  const open = (await stripeDisputesOn(booking)).map(toDTO).find((d) => d.canSubmit);
+  return open ?? null;
+}
+
+/** Evidence for a chargeback the hotel heard about outside Stripe: built from the reservation, never stored. */
+async function reportedEvidence(bookingId: string, currency: string, reported: ReportedChargeback) {
+  const input = await loadEvidenceInput(bookingId, { stripeId: null, reason: reported.reason ?? null, amount: 0, currency });
+  if (!input) throw notFound('Booking');
+  // Unless the person said, what's disputed is what was paid (or, with nothing paid, the stay).
+  input.dispute.amount = reported.amount && reported.amount > 0 ? reported.amount : input.folio?.totals.paid || input.booking.totalPrice;
+  return { input, summary: buildEvidenceSummary(input) };
+}
+
+export interface DisputeCase {
+  /** The dispute Stripe reported for the reservation; null when the hotel heard of the chargeback another way. */
+  dispute: DisputeDTO | null;
+  summary: EvidenceSummary | null;
+  /** What's missing or weak, for the hotel (not part of the evidence). Empty once it can't be answered any more. */
+  gaps: string[];
+  reason: string | null;
+  amount: number;
+  currency: string;
+}
+
+/**
+ * A guest's dispute or chargeback: the newest Stripe dispute on the reservation, its evidence rebuilt from current
+ * records while it can still be answered, or else the evidence for a chargeback reported outside Stripe.
+ */
+export async function disputeCase(
+  actor: Actor,
+  booking: { id: string; groupCode: string | null; propertyId: string; currency: string },
+  reported: ReportedChargeback = {}
+): Promise<DisputeCase> {
+  requirePermission(actor, 'disputes.view');
+  assertPropertyAccess(actor, booking.propertyId);
+  const [latest] = await stripeDisputesOn(booking);
+  if (latest) {
+    const dispute = toDTO(latest);
+    let summary = (latest.evidenceSummary as unknown as EvidenceSummary | null) ?? null;
+    let gaps: string[] = [];
+    if (!latest.evidenceSubmittedAt && OPEN_STATUSES.includes(latest.status)) {
+      const built = await refreshEvidence(latest.id);
+      if (built) {
+        summary = built.summary;
+        gaps = evidenceGaps(built.input);
+      }
+    }
+    return { dispute, summary, gaps, reason: latest.reason, amount: Number(latest.amount), currency: latest.currency };
+  }
+  const { input, summary } = await reportedEvidence(booking.id, booking.currency, reported);
+  return { dispute: null, summary, gaps: evidenceGaps(input), reason: input.dispute.reason, amount: input.dispute.amount, currency: input.dispute.currency };
+}
+
+/** The evidence document for a chargeback reported outside Stripe (the console's download for it). */
+export async function reportedChargebackEvidence(actor: Actor, bookingId: string, reported: ReportedChargeback): Promise<{ code: string; guestName: string; summary: EvidenceSummary }> {
+  requirePermission(actor, 'disputes.view');
+  const b = await prisma.booking.findUnique({ where: { id: bookingId }, select: { id: true, propertyId: true, currency: true, code: true, user: { select: { firstName: true, lastName: true } } } });
+  if (!b) throw notFound('Booking');
+  assertPropertyAccess(actor, b.propertyId);
+  const { summary } = await reportedEvidence(b.id, b.currency, reported);
+  return { code: b.code ?? b.id, guestName: `${b.user.firstName} ${b.user.lastName}`.trim(), summary };
 }

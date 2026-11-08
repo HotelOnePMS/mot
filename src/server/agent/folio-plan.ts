@@ -118,8 +118,8 @@ function simFrom(f: FolioView): FolioSim {
   };
 }
 
-const guestOf = (b: ResolvedBooking) => `${b.user.firstName} ${b.user.lastName}`.trim();
-const memoryOf = (b: ResolvedBooking): Partial<AgentContextState> => ({ lastBookingId: b.id, lastBookingCode: b.code ?? undefined, lastGuestName: guestOf(b), lastRoomNumber: b.room?.roomNumber });
+export const guestOf = (b: ResolvedBooking) => `${b.user.firstName} ${b.user.lastName}`.trim();
+export const memoryOf = (b: ResolvedBooking): Partial<AgentContextState> => ({ lastBookingId: b.id, lastBookingCode: b.code ?? undefined, lastGuestName: guestOf(b), lastRoomNumber: b.room?.roomNumber });
 const refused = (text: string): PlanOutput => ({ steps: [], warnings: [], risk: 'low', blocks: [{ type: 'error', text }] });
 
 /**

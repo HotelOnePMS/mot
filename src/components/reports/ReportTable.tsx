@@ -10,7 +10,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 
 /** A report cell as people read it: money in the hotel's currency, dates as days, "2026-11" as "Nov 2026". */
 export function formatReportCell(v: ReportCell, col: ReportColumn, currency: string): string {
-  if (v === null || v === undefined || v === '') return '—';
+  if (v === null || v === undefined || v === '') return 'n/a';
   switch (col.format) {
     case 'money':
       return formatMoney(Number(v), currency, { cents: true });

@@ -46,7 +46,7 @@ const editSchema = z.discriminatedUnion('target', [
 ]);
 
 /**
- * PATCH — change something on the folio: the room line, a tax or fee, an extra charge (add, change, remove), several
+ * PATCH: change something on the folio: the room line, a tax or fee, an extra charge (add, change, remove), several
  * lines to one total ("room and tax together $50"), an allowance, or a payment. folio.edit at the booking's hotel
  * (owners, or a role the owner allowed). Returns the folio.
  */

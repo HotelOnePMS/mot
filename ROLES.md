@@ -42,6 +42,10 @@ Every change is in the activity log as `FOLIO_EDIT`, with who, what it was befor
 
 **Usual charges** (*Settings → Usual charges*): a hotel's regular extras with their price, per stay, per night or each ("Pet fee", $50 per stay). Whoever has `charges.manage` (managers and owners) or `folio.edit` at the hotel can change the list; anyone who can see folios sees it. The folio's *Add charge* dialog offers them and can save a new one ("Remember this price"); the agent uses them for a charge asked for by name, and "pet fee is always $50" saves or changes one (after the person confirms). Changes are logged as `SAVED_CHARGE_CREATED` / `_UPDATED` / `_DELETED`.
 
+## Disputes (`disputes.view`, `disputes.manage`)
+
+Owners, managers and platform admins see card disputes (`/admin/disputes`) and the evidence for them, and can ask the agent to prepare the document for a dispute or a chargeback reported outside Stripe. Only owners and platform admins (`disputes.manage`) submit evidence to Stripe, from the page or by confirming the agent's plan; the step is checked again when it runs and is logged as `DISPUTE_EVIDENCE_SUBMITTED`. Front desk and housekeepers don't see disputes, and the agent doesn't describe a dispute on screen to them.
+
 ## Owner-granted permissions (Settings → Permissions)
 
 Owners can give other roles, **at their own hotel only**, permissions that are owner-only by default. The list is fixed in code (`GRANTABLE_PERMISSIONS` in `src/server/authz.ts`, with the roles each can go to); today it is `folio.edit` for managers and the front desk. Grants are stored per hotel and role (`RolePermissionGrant`), checked with `canAtProperty` / `requirePropertyPermission`, and sent to the console per hotel (`StaffProperty.grantedPermissions`, so `can()` reflects them). Giving or taking one back is logged as `PERMISSION_GRANT` / `PERMISSION_REVOKE`. Only owners and platform admins (`permissions.manage`) can change them.

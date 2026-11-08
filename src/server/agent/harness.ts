@@ -19,6 +19,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod/v4';
 import { prisma } from '@/lib/prisma';
+import { NO_EM_DASHES } from '@/lib/writing-style';
 import type { AgentBlock, AgentContextState, AgentEvent } from '@/lib/agent/blocks';
 import type { ISODate } from '@/lib/dto';
 import { roundMoney } from '@/lib/currency';
@@ -32,6 +33,7 @@ import { mayManageSavedCharges, savedChargesFor } from '../services/saved-charge
 import { DomainError } from '../errors';
 import { logError } from '../log';
 import type { DateRange, GuestRef, Intent, RoomPrefs } from './nlu';
+import { DISPUTE_REASON_HELP, DISPUTE_REASONS, disputeOnScreen, disputeRead, disputedStay, openDisputesRead, planSubmitDispute } from './dispute-tool';
 import { folioOpSchema, folioRead, newWriteState, planFolioEdits, type WriteState } from './folio-plan';
 import { HarnessInputError } from './input-error';
 import type { PlanStep } from './plan';
@@ -223,6 +225,20 @@ const definitions = {
     description: REPORT_TOOL_DESCRIPTION,
     schema: reportQuerySchema,
   },
+  get_dispute: {
+    kind: 'read',
+    label: 'Preparing the dispute evidence',
+    description:
+      'A guest’s card dispute or chargeback ("Lucas raised a chargeback", "the bank says room 12 disputed the charge"): finds the reservation and any dispute Stripe reported for it, ' +
+      'and builds the evidence document from the hotel’s records (a summary for the bank that answers the claim, the itemized folio, payments and card checks, the policy the guest accepted, ID check, registration card, check-in and check-out), ' +
+      'with what’s missing or weak. The person sees it as a card with buttons to download or print the document. Leave out guest to see the disputes from Stripe that still need a response.',
+    schema: z.object({
+      guest: guest.optional(),
+      reason: z.enum(DISPUTE_REASONS).optional().describe(DISPUTE_REASON_HELP),
+      amount: z.number().positive().max(1_000_000).optional().describe('The amount disputed, when the person said it and Stripe didn’t report the dispute. Defaults to what the guest paid.'),
+      respond_by: date.optional().describe('The deadline the bank or card processor gave, when the person said it.'),
+    }),
+  },
   // ---- Writes (planned, confirmed by the person) -------------------------
   set_rates: {
     kind: 'write',
@@ -321,6 +337,14 @@ const definitions = {
     description: 'Forget one of the hotel’s usual charges. Folios that already have it keep it.',
     schema: z.object({ name: z.string().min(1).max(80) }),
   },
+  submit_dispute_evidence: {
+    kind: 'write',
+    label: 'Preparing to send the evidence',
+    description:
+      'Send the evidence for a dispute Stripe reported to the cardholder’s bank, only when the person asks to (after they’ve seen it with get_dispute). ' +
+      'It can’t be undone and a dispute is answered once, so it is a step they confirm. Owners, or roles allowed to manage disputes.',
+    schema: z.object({ guest }),
+  },
   remember: {
     kind: 'write',
     label: 'Saving it for next time',
@@ -378,7 +402,7 @@ export const HOTEL_TOOLS: Anthropic.Beta.BetaTool[] = Object.entries(definitions
 
 /** The write tools with a property_id, for the portfolio-level AI advisor. */
 export const HOTEL_WRITE_TOOLS_FOR_ADVISOR: Anthropic.Beta.BetaTool[] = Object.entries(definitions)
-  .filter(([n, d]) => d.kind === 'write' && n !== 'create_reservation' && n !== 'edit_folio')
+  .filter(([n, d]) => d.kind === 'write' && n !== 'create_reservation' && n !== 'edit_folio' && n !== 'submit_dispute_evidence')
   .map(([n, d]) => toApiTool(n, d, { property_id: true }));
 
 export const isHotelWriteTool = (name: string) => isToolName(name) && definitions[name].kind === 'write';
@@ -621,6 +645,13 @@ async function planEditFolio(ctx: ToolCtx, raw: unknown, state: WriteState): Pro
   return planFolioEdits(ctx, r.value, a.edits, a.reason, state);
 }
 
+async function planSubmitDisputeEvidence(ctx: ToolCtx, raw: unknown): Promise<PlanOutput> {
+  const a = parseInput('submit_dispute_evidence', raw);
+  const r = await resolveBooking(ctx, toRef(a.guest), 'any');
+  if (!r.ok) return { steps: [], warnings: [], risk: 'low', blocks: [r.block], abort: true };
+  return planSubmitDispute(ctx, await disputedStay(ctx, r.value, !!a.guest.code));
+}
+
 const UNIT = { stay: 'STAY', night: 'NIGHT', item: 'ITEM' } as const;
 
 async function planSaveCharge(ctx: ToolCtx, raw: unknown, state: WriteState): Promise<PlanOutput> {
@@ -759,6 +790,12 @@ export async function describePage(ctx: ToolCtx, page: string | undefined): Prom
       };
     }
   }
+  if (parts[1] === 'disputes' && parts.length === 2) {
+    // ?dispute=<id>: the one open on the Disputes page (only one at this hotel, for someone who may see disputes).
+    const id = new URLSearchParams(page?.split('#')[0].split('?')[1] ?? '').get('dispute');
+    const shown = id ? await disputeOnScreen(ctx, id) : null;
+    if (shown) return shown;
+  }
   const name = PAGE_NAMES[parts[1]];
   return name ? { text: `On screen: the ${name} page.` } : null;
 }
@@ -793,6 +830,7 @@ export async function planHotelWrite(ctx: ToolCtx, name: string, raw: unknown, s
   else if (name === 'remove_saved_charge') out = await planRemoveSavedCharge(ctx, raw);
   else if (name === 'remember') out = await planRemember(ctx, raw);
   else if (name === 'create_reservation') out = await planCreateReservation(ctx, raw);
+  else if (name === 'submit_dispute_evidence') out = await planSubmitDisputeEvidence(ctx, raw);
   else {
     const intent = writeIntent(name, raw);
     if (!intent) throw new HarnessInputError(`Unknown write tool: ${name}`);
@@ -841,12 +879,16 @@ How to work:
 - Work out what the person wants, even from rough phrasing, typos ("ped fee" = pet fee), half sentences or a pasted table. Follow-ups refer to what you showed last ("patel", "her", "the arrival guy"): resolve them from that context. Look things up with the read tools when you need facts (ids, current prices, who is arriving) and make independent calls in parallel.
 - To change anything, call the write tools. Writes are never applied directly: each call adds steps to ONE plan the person reviews and confirms with a button. So never say a change is done — say you've prepared it for them to confirm. Put everything the person asked for into this one plan; don't ask permission first.
 - For rates: map each row of a request to set_rates changes (one call with all changes). Use list_room_types for exact names. Remember \`to\` in set_rates is the last night, inclusive; use \`nights\` for scattered dates and \`weekdays\` for patterns like Sun–Thu. Read the current calendar first only if you need current prices to compute something.
-- Folios: use edit_folio, with every change for one reservation in one call. To add a charge the hotel has a usual price for (listed with the conversation), leave out the amount and it's priced for the stay. If there's no usual price and the person didn't say one, ask how much — never guess an amount. "Make the room and tax together $50" is set_total over the room and its tax lines. Call get_folio first when you need line refs or current amounts.
+- Folios: use edit_folio, with every change for one reservation in one call. To add a charge the hotel has a usual price for (listed with the conversation), leave out the amount and it's priced for the stay. If there's no usual price and the person didn't say one, ask how much and never guess an amount. "Make the room and tax together $50" is set_total over the room and its tax lines. Call get_folio first when you need line refs or current amounts.
 - When the person says what something always costs ("pet fee is always $50", "rollaway is $20 a night"), call save_charge so it's remembered; if they also asked to charge it, do both in the same plan. A price they give for one guest only ("charge her $30 for the dog") is just that charge.
-- When they tell you something lasting about the hotel to remember (a policy, a fact, "from now on…"), call remember. For questions about hotel policies or amenities, use hotel_knowledge.
+- When they tell you something lasting about the hotel to remember (a policy, a fact, "from now on…"), call remember.
 - For any report, list, count, total or breakdown over dates (reservations, nights, occupancy, revenue, charges, payments, guests, sources…), build it with run_report: pick the dataset, filters, grouping and metrics yourself, whatever the person asked for. The table and its CSV download are shown to them; answer the question in a sentence or two from it.
+- When the person says a guest disputed a charge, raised a chargeback, or the bank or card company is asking about a payment, call get_dispute: it finds the reservation (and any dispute Stripe reported), and prepares the evidence document from the hotel's records, ready to download or print. Pass what the guest claims as reason when they said it, and the amount and deadline if they gave them. Then tell them in a sentence or two what the evidence shows, and anything missing that would help (ask them to add it if they can). Only send evidence to Stripe with submit_dispute_evidence when they ask you to.
 - The person may be looking at a page of the system while they talk to you (described with the conversation); "this guest", "this reservation" or "here" refer to it.
 - If a tool says something is ambiguous or impossible, fix your input and retry, or explain it plainly and ask one short question. Don't invent ids, names, rooms or prices.
+- For questions about hotel policies or amenities, use hotel_knowledge.
+
+${NO_EM_DASHES}
 
 Reply style: the cards from your tools are shown to the person automatically, so don't repeat their numbers at length. End with one or two short sentences: what you found or what's ready to confirm, plus anything that needs their attention. Plain words, no markdown headings.
 
@@ -991,6 +1033,21 @@ async function runTool(ctx: ToolCtx, name: string, raw: unknown, acc: HarnessRes
     const r = await resolveBooking(ctx, toRef(parseInput('get_folio', raw).guest), 'any');
     if (!r.ok) return { blocks: [], forModel: blockText(r.block).join('\n') || 'No such reservation.', isError: true };
     const out = await folioRead(ctx, r.value);
+    Object.assign(acc.memory, out.memory);
+    return { blocks: out.blocks, forModel: out.forModel };
+  }
+  if (name === 'get_dispute') {
+    if (!can(ctx.actor, 'disputes.view')) return { blocks: [], forModel: 'Disputes aren’t part of this person’s role (owners and managers handle them): say so.', isError: true };
+    const a = parseInput('get_dispute', raw);
+    const input = { reason: a.reason, amount: a.amount, respondBy: a.respond_by };
+    if (!a.guest) {
+      const out = await openDisputesRead(ctx, input);
+      Object.assign(acc.memory, out.memory ?? {});
+      return out;
+    }
+    const r = await resolveBooking(ctx, toRef(a.guest), 'any');
+    if (!r.ok) return { blocks: [], forModel: blockText(r.block).join('\n') || 'No such reservation.', isError: true };
+    const out = await disputeRead(ctx, await disputedStay(ctx, r.value, !!a.guest.code), input);
     Object.assign(acc.memory, out.memory);
     return { blocks: out.blocks, forModel: out.forModel };
   }

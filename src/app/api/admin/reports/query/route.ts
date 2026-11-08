@@ -16,7 +16,7 @@ const schema = z.object({
 });
 
 /**
- * GET /api/admin/reports/query — run a custom report (one the agent built from plain words, or a link to one) for the
+ * GET /api/admin/reports/query: run a custom report (one the agent built from plain words, or a link to one) for the
  * hotel (reports.view). format=csv downloads it as a spreadsheet and records the export in the activity log.
  */
 export const GET = handleRoute(async (request: NextRequest) => {

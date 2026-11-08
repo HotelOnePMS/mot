@@ -36,6 +36,7 @@ import { resolveBooking, resolveRoom, resolveRoomTypes, resolveTeamMember, type 
 import { guessActions, HOW_TO_TEXT } from './understand';
 import { logError } from '@/server/log';
 import { paymentLines } from '../payments/record';
+import { submitDisputeEvidenceAs } from '../payments/disputes';
 
 export type ToolCtx = ResolveCtx;
 
@@ -883,6 +884,7 @@ function done(summary: string): string {
     [/^Remember /, 'Remembered '],
     [/^Remember: /, 'Remembered: '],
     [/^Forget /, 'Forgot '],
+    [/^Submit /, 'Submitted '],
   ];
   for (const [re, to] of past) if (re.test(summary)) return summary.replace(re, to);
   return summary;
@@ -978,6 +980,11 @@ export async function executeStep(ctx: OpContext, step: PlanStep): Promise<StepR
       case 'remember': {
         await rememberAnswer(ctx, String(a.propertyId), { question: String(a.question), answer: String(a.answer), audience: a.audience === 'ALL' ? 'ALL' : 'STAFF' });
         return { ok: true, line: done(step.summary) };
+      }
+      case 'submit_dispute_evidence': {
+        // Checked again here: the person confirming may manage disputes, and it still waits for evidence.
+        await submitDisputeEvidenceAs(ctx, String(a.disputeId));
+        return { ok: true, line: done(step.summary), bookingId: String(a.bookingId) };
       }
       case 'create_reservation': {
         const b = await createDeskReservation(ctx, {

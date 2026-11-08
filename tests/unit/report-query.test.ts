@@ -141,8 +141,8 @@ test('a query that can’t run says what to fix', () => {
   assert.match(checkQuery({ ...base, from: '2025-01-01' }).join(' '), /at most 366 days/);
 });
 
-test('a report survives a link (base64url JSON), accents and dashes included', () => {
-  const q: ReportQuery = { dataset: 'charges', title: 'Café — pet fees', from: '2026-01-01', to: '2026-01-31', filters: [{ field: 'name', op: 'contains', value: 'pet' }] };
+test('a report survives a link (base64url JSON), accents and symbols included', () => {
+  const q: ReportQuery = { dataset: 'charges', title: 'Café · pet fees', from: '2026-01-01', to: '2026-01-31', filters: [{ field: 'name', op: 'contains', value: 'pet' }] };
   const s = encodeQuery(q);
   assert.match(s, /^[A-Za-z0-9_-]+$/);
   assert.deepEqual(decodeQuery(s), q);

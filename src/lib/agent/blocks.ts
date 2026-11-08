@@ -119,7 +119,36 @@ export type AgentBlock =
   /** `mode` is how HotelOne reaches the PMS (DESKTOP | CLOUD | MCP); older messages may lack it. */
   | { type: 'bridgeTask'; taskId: string; system: string; instruction: string; kind: string; mode?: string }
   /** A reservation's folio, shown live (and editable by hand) from the folio API; the totals are as the agent read them. */
-  | { type: 'folio'; bookingId: string; code: string; guestName: string; currency: string; total: number; balance: number };
+  | { type: 'folio'; bookingId: string; code: string; guestName: string; currency: string; total: number; balance: number }
+  | {
+      /** A guest's card dispute or chargeback, with the evidence document built from the hotel's records. */
+      type: 'dispute';
+      bookingId: string;
+      code: string;
+      guestName: string;
+      checkIn: ISODate;
+      checkOut: ISODate;
+      /** The dispute Stripe reported; null for a chargeback the hotel heard about another way. */
+      disputeId: string | null;
+      /** Stripe's status (needs_response, under_review, won, lost…), or 'reported'. */
+      status: string;
+      reason: string | null;
+      reasonLabel: string;
+      amount: number;
+      currency: string;
+      /** The deadline to answer: Stripe's, or the one the person gave (YYYY-MM-DD). */
+      respondBy: string | null;
+      submittedAt: string | null;
+      /** A Stripe dispute that still waits for evidence, and the viewer may send it. */
+      canSubmit: boolean;
+      /** The summary for the bank: the facts that answer the claim. */
+      points: string[];
+      /** For the hotel: what's missing or weak in the records. */
+      gaps: string[];
+      downloadHref: string;
+      printHref: string;
+      openHref: string;
+    };
 
 /** Conversation memory the client sends back so "them" and "that room" resolve. */
 export interface AgentContextState {
@@ -154,6 +183,10 @@ export function replySummary(blocks: AgentBlock[], max = 1500): string {
     else if (b.type === 'error') lines.push(`Error: ${b.text}`);
     else if (b.type === 'clarify') lines.push(`Asked: ${b.question}`);
     else if (b.type === 'folio') lines.push(`Folio of ${b.guestName} (#${b.code}): ${b.total} ${b.currency} in charges, balance ${b.balance} ${b.currency}`);
+    else if (b.type === 'dispute')
+      lines.push(
+        `Dispute on ${b.guestName}’s reservation (#${b.code}): ${b.reasonLabel}, ${b.amount} ${b.currency}, ${b.disputeId ? `Stripe status ${b.status}` : 'reported outside Stripe'}${b.respondBy ? `, respond by ${b.respondBy}` : ''}${b.gaps.length ? `. Missing: ${b.gaps.join('; ')}` : ''}`
+      );
     else if (b.type === 'report') {
       const cols = b.columns.map((c) => c.label).join(' | ');
       lines.push(`Report “${b.title}” (${b.from} to ${b.to}, ${b.totalRows} rows): ${cols}`);

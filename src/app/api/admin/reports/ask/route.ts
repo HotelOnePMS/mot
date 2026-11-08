@@ -15,7 +15,7 @@ const schema = z.object({
 });
 
 /**
- * POST /api/admin/reports/ask — build a report from plain words ("pet fees by month this year", "occupancy by
+ * POST /api/admin/reports/ask: build a report from plain words ("pet fees by month this year", "occupancy by
  * weekday in October") and run it (reports.view). Returns the query (and its link form), the result, and a short note;
  * or only a note when the request needs more detail.
  */

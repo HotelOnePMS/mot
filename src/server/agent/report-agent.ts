@@ -12,6 +12,7 @@ import { logError } from '../log';
 import type { Actor } from '../authz';
 import { hotelLocale, todayAt } from '../services/hotels';
 import { prisma } from '@/lib/prisma';
+import { NO_EM_DASHES } from '@/lib/writing-style';
 import { AGENT_MODEL } from './harness';
 import { ReportInputError, reportToolDef, runReportTool } from './report-tool';
 
@@ -30,6 +31,8 @@ function systemPrompt(hotel: string, today: string, currency: string): string {
   return `You turn a hotel staff member's request into a report for ${hotel}'s property management system. Always answer by calling run_report with the report that best answers the request, even when it's phrased loosely, has typos or leaves things out: pick the dataset, fields, grouping and metrics yourself and choose sensible defaults (an unnamed period means this month so far; "this year" is January 1 to today; "last month" is the whole previous month). Only if the request can't be a report at all, reply with one short question instead.
 
 Along with the call, write one short sentence saying what the report shows (e.g. "Pet fees by month since January."). Give it a short, clear title.
+
+${NO_EM_DASHES}
 
 Today at the hotel is ${today} (${WEEKDAY[dayOfWeek(today)]}). Amounts are in ${currency}.`;
 }
