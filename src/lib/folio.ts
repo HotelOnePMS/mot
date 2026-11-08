@@ -11,6 +11,7 @@
  * lines always add up to the cent (or yen, or fils).
  */
 import { currencyDigits, toMinorUnits } from './currency';
+import type { SavedChargeView } from './saved-charges';
 
 /** One line of the folio as staff and the guest see it. */
 export interface FolioLine {
@@ -180,7 +181,8 @@ export const RECORDED_PAYMENT_METHODS = ['CASH', 'EXTERNAL_CARD', 'OTHER'] as co
 /** What can be changed about one thing on the folio, with its values now (FolioView.edits, keyed by FolioLine.ref). */
 export type FolioEditTarget =
   | { type: 'room'; label: string; defaultLabel: string; amount: number }
-  | { type: 'charge'; index: number; name: string; amount: number; date: string | null; extra: boolean }
+  /** percent: the rate when the charge is a percentage of the room (it moves with the room when a total is split). */
+  | { type: 'charge'; index: number; name: string; amount: number; date: string | null; extra: boolean; percent: number | null }
   | { type: 'allowance'; id: string; amount: number; reason: string; max: number }
   | {
       type: 'payment';
@@ -198,6 +200,11 @@ export type FolioEditTarget =
 /** A change to the folio (PATCH /api/admin/bookings/:id/folio). `expected` is the line as the editor saw it: changed since, it's refused. */
 export type FolioEdit = { reason?: string } & (
   | { target: 'room'; label?: string | null; amount?: number; expected: { label: string; amount: number } }
+  /**
+   * Several lines together come to `amount` ("room and tax together $50"): refs are FolioLine.ref values (room,
+   * charge:<n>), expected what each showed. The room and percentage taxes share what's left after fixed fees (splitTotal).
+   */
+  | { target: 'setTotal'; refs: string[]; amount: number; expected: Record<string, number> }
   | { target: 'charge'; index: number; name?: string; amount?: number; date?: string | null; expected: { name: string; amount: number } }
   | { target: 'addCharge'; name: string; amount: number; date?: string | null }
   | { target: 'removeCharge'; index: number; expected: { name: string; amount: number } }
@@ -209,6 +216,7 @@ export type FolioEdit = { reason?: string } & (
 /** Everything on a booking's folio, as the server sends it (server/services/folio.ts). */
 export interface FolioView {
   bookingId: string;
+  propertyId: string;
   code: string;
   currency: string;
   status: string;
@@ -240,6 +248,61 @@ export interface FolioView {
   edits: Record<string, FolioEditTarget>;
   /** Checked out while money was still owed, with a manager's reason. */
   checkoutOverride: { amount: number; reason: string; by: string | null; at: string } | null;
+  /** The stay's length, for charges priced per night. */
+  nights: number;
+  rooms: number;
+  /** When canEdit: the hotel's usual extra charges ("Pet fee", $50 per stay) to pick from when adding one. */
+  savedCharges: SavedChargeView[];
+  /** When canEdit: the viewer can also change the hotel's usual charges (save a new one from the add dialog). */
+  canSaveCharges: boolean;
+}
+
+/** One line in a total being split (splitTotal), in minor units. */
+export interface SplitPart {
+  ref: string;
+  minor: number;
+  /** Moves with the total: the room, and taxes that are a percentage of it. Fixed fees keep their amount. */
+  scales: boolean;
+}
+
+/**
+ * New amounts (minor units) for lines that must together come to `totalMinor` ("make the room and tax together
+ * $50"). Fixed fees keep their amount and the room and percentage taxes share the rest in their current proportions,
+ * so a 12% tax stays 12% of the room. When there is nothing that scales, or the fixed fees alone are more than the
+ * total, every line is scaled. The room line (or the largest) takes the rounding, so the result adds up exactly.
+ */
+export function splitTotal(parts: readonly SplitPart[], totalMinor: number): Map<string, number> {
+  if (!parts.length) throw new Error('splitTotal needs at least one line');
+  const total = Math.max(0, Math.round(totalMinor));
+  let fixed = parts.filter((p) => !p.scales);
+  let scaling = parts.filter((p) => p.scales);
+  let fixedSum = fixed.reduce((s, p) => s + p.minor, 0);
+  if (!scaling.length || fixedSum > total) {
+    scaling = [...parts];
+    fixed = [];
+    fixedSum = 0;
+  }
+  const out = new Map<string, number>(fixed.map((p) => [p.ref, p.minor]));
+  const remaining = total - fixedSum;
+  const weight = scaling.reduce((s, p) => s + Math.max(0, p.minor), 0);
+  const anchor = scaling.find((p) => p.ref === 'room') ?? scaling.reduce((a, b) => (b.minor > a.minor ? b : a));
+  let given = 0;
+  for (const p of scaling) {
+    if (p === anchor) continue;
+    const share = weight > 0 ? Math.round((remaining * Math.max(0, p.minor)) / weight) : 0;
+    out.set(p.ref, share);
+    given += share;
+  }
+  let rest = remaining - given;
+  // Every share rounded up past what was left: take the difference back from the largest.
+  while (rest < 0) {
+    const [ref, v] = [...out.entries()].filter(([r]) => scaling.some((p) => p.ref === r)).reduce((a, b) => (b[1] > a[1] ? b : a));
+    const take = Math.min(v, -rest);
+    out.set(ref, v - take);
+    rest += take;
+  }
+  out.set(anchor.ref, rest);
+  return out;
 }
 
 /** Sums lines in the currency's precision: charges = ROOM+TAX+CHARGE, paid = PAYMENT (positive), refunded = REFUND (positive), balance = sum of signed amounts (negative = the hotel owes the guest). */

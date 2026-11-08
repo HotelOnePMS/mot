@@ -21,15 +21,21 @@ import { z } from 'zod/v4';
 import { prisma } from '@/lib/prisma';
 import type { AgentBlock, AgentContextState, AgentEvent } from '@/lib/agent/blocks';
 import type { ISODate } from '@/lib/dto';
+import { roundMoney } from '@/lib/currency';
+import { describeSavedCharge, findSavedCharge, matchSavedCharge, type SavedChargeView } from '@/lib/saved-charges';
 import { money } from '@/lib/status';
-import { can, canAtProperty } from '../authz';
+import { can } from '../authz';
 import { addDaysISO, dayOfWeek, diffDays, eachNight, formatDay, isISODate } from '../dates';
 import { hotelLocale } from '../services/hotels';
 import { nightlyRates, propertyAvailability } from '../services/inventory';
+import { mayManageSavedCharges, savedChargesFor } from '../services/saved-charges';
 import { DomainError } from '../errors';
 import { logError } from '../log';
 import type { DateRange, GuestRef, Intent, RoomPrefs } from './nlu';
+import { folioOpSchema, folioRead, newWriteState, planFolioEdits, type WriteState } from './folio-plan';
+import { HarnessInputError } from './input-error';
 import type { PlanStep } from './plan';
+import { ReportInputError, REPORT_TOOL_DESCRIPTION, reportBlock, reportForModel, reportQuerySchema, runReportTool } from './report-tool';
 import { resolveBooking } from './resolve';
 import { answerFromSkills } from './skills';
 import { maxRisk, planWrite, runRead, type PlanOutput, type ToolCtx } from './tools';
@@ -43,6 +49,9 @@ const EFFORT = (['low', 'medium', 'high'] as const).find((e) => e === process.en
 const MAX_ROUNDS = 8;
 const MAX_RESULT_CHARS = 14_000;
 const BETAS: Anthropic.Beta.AnthropicBeta[] = ['server-side-fallback-2026-07-01'];
+
+/** Model settings shared with the agent's helpers (the Reports page's report builder). */
+export const AGENT_MODEL = { model: MODEL, effort: EFFORT, betas: BETAS } as const;
 
 /** The model engine runs when an Anthropic key is configured, unless AGENT_LLM_ENABLED=false turns it off. */
 export function llmConfigured(): boolean {
@@ -200,6 +209,20 @@ const definitions = {
     description: 'Answer a policy or amenity question (parking, pets, breakfast, cancellation policy…) from the answers the hotel saved.',
     schema: z.object({ question: z.string().min(2).max(300) }),
   },
+  get_folio: {
+    kind: 'read',
+    label: 'Opening the folio',
+    description:
+      'A reservation’s folio: the room line, taxes and fees (with the percentage of the room for percentage taxes), extra charges, allowances, payments and the balance, ' +
+      'each line with the ref edit_folio uses ("room", "charge:<n>"). The person sees it as a live card they can also edit by hand.',
+    schema: z.object({ guest }),
+  },
+  run_report: {
+    kind: 'read',
+    label: 'Building the report',
+    description: REPORT_TOOL_DESCRIPTION,
+    schema: reportQuerySchema,
+  },
   // ---- Writes (planned, confirmed by the person) -------------------------
   set_rates: {
     kind: 'write',
@@ -263,18 +286,51 @@ const definitions = {
       paid: z.boolean().optional().describe('True only when the guest has paid in full now.'),
     }),
   },
-  add_folio_charge: {
+  edit_folio: {
     kind: 'write',
-    label: 'Preparing the charge',
+    label: 'Preparing the folio changes',
     description:
-      'Add an extra charge to a reservation’s folio (pet fee, late check-out, damage, minibar, parking…). Needs the amount: if the person didn’t say it, ' +
-      'look for the hotel’s usual fee with hotel_knowledge (e.g. "pet fee"); if that has none, ask the person how much instead of guessing.',
+      'Change a reservation’s folio. Put every change for it in one call; they run in order once the person confirms. ' +
+      'add_charge: an extra charge (pet fee, late check-out, minibar, damage…). Leave out amount to use the hotel’s usual price for it (the usual charges are listed with the conversation); ' +
+      'if it has none and the person didn’t say, ask them how much instead of guessing. quantity multiplies it (two pets). ' +
+      'set_line: a line’s new amount, name or date. remove_charge: take a charge off. ' +
+      'set_total: several lines together come to one amount ("make the room and tax together $50" → lines ["room", the tax refs]); the room and percentage taxes share it in proportion, fixed fees keep theirs. ' +
+      'discount: take money off the stay with a reason (an allowance; managers and owners). Lines are refs from get_folio: call it first for anything but add_charge.',
     schema: z.object({
       guest,
-      name: z.string().min(1).max(80).describe('What the charge is for, as it should read on the folio, e.g. "Pet fee".'),
-      amount: z.number().positive().max(100_000).describe('Amount in the hotel’s currency.'),
-      date: date.optional().describe('Day the charge applies to; defaults to none.'),
-      reason: z.string().max(200).optional(),
+      edits: z.array(folioOpSchema).min(1).max(20),
+      reason: z.string().max(200).optional().describe('Why, for the activity log.'),
+    }),
+  },
+  save_charge: {
+    kind: 'write',
+    label: 'Saving the usual charge',
+    description:
+      'Remember what a charge usually costs at this hotel ("pet fee is always $50", "rollaway bed is $20 a night"), or change the price of one already saved under that name. ' +
+      'From then on edit_folio’s add_charge uses it when no amount is given, and the folio’s Add charge dialog offers it.',
+    schema: z.object({
+      name: z.string().min(1).max(80).describe('As it should read on a folio, e.g. "Pet fee".'),
+      amount: z.number().positive().max(100_000).describe('The usual price, in the hotel’s currency.'),
+      unit: z.enum(['stay', 'night', 'item']).default('stay').describe('stay: once per stay; night: every night of the stay; item: each one (per pet, per bottle).'),
+      note: z.string().max(200).optional().describe('Anything staff should know, e.g. "per pet, cleaning included".'),
+    }),
+  },
+  remove_saved_charge: {
+    kind: 'write',
+    label: 'Removing the usual charge',
+    description: 'Forget one of the hotel’s usual charges. Folios that already have it keep it.',
+    schema: z.object({ name: z.string().min(1).max(80) }),
+  },
+  remember: {
+    kind: 'write',
+    label: 'Saving it for next time',
+    description:
+      'Keep a lasting fact or policy about the hotel that the person tells you ("late check-out is free until 1pm", "the pool closes at 9", "from now on…") as the hotel’s saved answer to a question; ' +
+      'hotel_knowledge finds it from then on, and it replaces an earlier answer to the same question. Not for what a charge costs: use save_charge.',
+    schema: z.object({
+      question: z.string().min(3).max(160).describe('The question it answers, as someone would ask it: "Until when is late check-out free?"'),
+      answer: z.string().min(1).max(2000).describe('The answer, in full sentences.'),
+      share_with_guests: z.boolean().optional().describe('True only when guests may hear it too (the voice line, the guest assistant). Default: staff only.'),
     }),
   },
   set_room_status: {
@@ -322,14 +378,13 @@ export const HOTEL_TOOLS: Anthropic.Beta.BetaTool[] = Object.entries(definitions
 
 /** The write tools with a property_id, for the portfolio-level AI advisor. */
 export const HOTEL_WRITE_TOOLS_FOR_ADVISOR: Anthropic.Beta.BetaTool[] = Object.entries(definitions)
-  .filter(([n, d]) => d.kind === 'write' && n !== 'create_reservation')
+  .filter(([n, d]) => d.kind === 'write' && n !== 'create_reservation' && n !== 'edit_folio')
   .map(([n, d]) => toApiTool(n, d, { property_id: true }));
 
 export const isHotelWriteTool = (name: string) => isToolName(name) && definitions[name].kind === 'write';
 export const hotelToolLabel = (name: string) => (isToolName(name) ? definitions[name].label : 'Working');
 
-/** A tool input the model can fix; returned to it as an is_error result. */
-export class HarnessInputError extends Error {}
+export { HarnessInputError };
 
 function parseInput<N extends HotelToolName>(name: N, raw: unknown): z.infer<(typeof definitions)[N]['schema']> {
   const parsed = definitions[name].schema.safeParse(raw ?? {});
@@ -559,28 +614,82 @@ async function planCreateReservation(ctx: ToolCtx, raw: unknown): Promise<PlanOu
   };
 }
 
-async function planFolioCharge(ctx: ToolCtx, raw: unknown): Promise<PlanOutput> {
-  const a = parseInput('add_folio_charge', raw);
+async function planEditFolio(ctx: ToolCtx, raw: unknown, state: WriteState): Promise<PlanOutput> {
+  const a = parseInput('edit_folio', raw);
   const r = await resolveBooking(ctx, toRef(a.guest), 'any');
   if (!r.ok) return { steps: [], warnings: [], risk: 'low', blocks: [r.block], abort: true };
-  const b = r.value;
-  if (!(await canAtProperty(ctx.actor, 'folio.edit', ctx.propertyId))) {
-    return { steps: [], warnings: [], risk: 'low', blocks: [{ type: 'error', text: 'Your role can’t change folios here. The owner can allow it under Settings → Permissions.' }] };
+  return planFolioEdits(ctx, r.value, a.edits, a.reason, state);
+}
+
+const UNIT = { stay: 'STAY', night: 'NIGHT', item: 'ITEM' } as const;
+
+async function planSaveCharge(ctx: ToolCtx, raw: unknown, state: WriteState): Promise<PlanOutput> {
+  const a = parseInput('save_charge', raw);
+  if (!(await mayManageSavedCharges(ctx.actor, ctx.propertyId))) {
+    return { steps: [], warnings: [], risk: 'low', blocks: [{ type: 'error', text: 'Your role can’t change the hotel’s usual charges. A manager can, under Settings → Usual charges.' }] };
   }
-  if (b.status === 'CANCELLED' || b.status === 'NO_SHOW') throw new HarnessInputError(`${b.code} is ${b.status.toLowerCase().replace('_', '-')}; reinstate it before adding charges.`);
-  const name = `${b.user.firstName} ${b.user.lastName}`.trim();
+  const { currency } = await hotelLocale(ctx.propertyId);
+  const saved = await savedChargesFor(ctx.propertyId);
+  // Strict: "pet deposit is $100" is a new charge, not a new price for the Pet fee.
+  const existing = findSavedCharge(saved, a.name);
+  const typed = a.name.replace(/\s+/g, ' ').trim().slice(0, 80);
+  const name = existing?.name ?? typed.charAt(0).toUpperCase() + typed.slice(1);
+  const note = a.note !== undefined ? a.note.replace(/\s+/g, ' ').trim() || null : (existing?.note ?? null);
+  const next: SavedChargeView = { id: existing?.id ?? `planned:${name}`, name, amount: roundMoney(a.amount, currency), unit: UNIT[a.unit], note };
+  if (existing && existing.amount === next.amount && existing.unit === next.unit && existing.note === next.note) {
+    throw new HarnessInputError(`“${existing.name}” is already saved at ${describeSavedCharge(existing, currency)}; nothing to change.`);
+  }
+  if (!existing && saved.length >= 100) throw new HarnessInputError('The hotel already has 100 usual charges saved; remove one first.');
+  state.savedCharges = [next, ...state.savedCharges.filter((c) => c.name.toLowerCase() !== name.toLowerCase())];
   return {
     steps: [
       {
-        tool: 'add_folio_charge',
-        args: { bookingId: b.id, name: a.name, amount: a.amount, ...(a.date ? { date: a.date } : {}), ...(a.reason ? { reason: a.reason } : {}) },
-        summary: `Add ${a.name} ${money(a.amount, { currency: b.currency })} to ${name}’s folio (${b.code})`,
-        detail: `${b.roomType.name}${b.room ? ` · room ${b.room.roomNumber}` : ''} · stay total ${money(Number(b.totalPrice), { currency: b.currency })} → ${money(Number(b.totalPrice) + a.amount, { currency: b.currency })}`,
+        tool: 'save_charge',
+        args: { propertyId: ctx.propertyId, ...(existing ? { id: existing.id } : {}), name, amount: next.amount, unit: next.unit, ...(a.note !== undefined ? { note } : {}) },
+        summary: existing ? `Change the usual ${name} to ${describeSavedCharge(next, currency)} (was ${describeSavedCharge(existing, currency)})` : `Remember ${name} as ${describeSavedCharge(next, currency)}`,
+        detail: `${name} uses this price from now on${note ? ` · ${note}` : ''}. Folios that already have one keep theirs.`,
       },
     ],
     warnings: [],
     risk: 'low',
-    memory: { lastBookingId: b.id, lastBookingCode: b.code ?? undefined, lastGuestName: name, lastRoomNumber: b.room?.roomNumber },
+  };
+}
+
+async function planRemoveSavedCharge(ctx: ToolCtx, raw: unknown): Promise<PlanOutput> {
+  const a = parseInput('remove_saved_charge', raw);
+  if (!(await mayManageSavedCharges(ctx.actor, ctx.propertyId))) {
+    return { steps: [], warnings: [], risk: 'low', blocks: [{ type: 'error', text: 'Your role can’t change the hotel’s usual charges. A manager can, under Settings → Usual charges.' }] };
+  }
+  const { currency } = await hotelLocale(ctx.propertyId);
+  const saved = await savedChargesFor(ctx.propertyId);
+  const c = findSavedCharge(saved, a.name) ?? matchSavedCharge(saved, a.name);
+  if (!c) throw new HarnessInputError(`No usual charge called “${a.name}”. Saved: ${saved.map((x) => x.name).join(', ') || 'none'}.`);
+  return {
+    steps: [{ tool: 'remove_saved_charge', args: { propertyId: ctx.propertyId, id: c.id }, summary: `Forget the usual ${c.name} (${describeSavedCharge(c, currency)})`, detail: 'Folios that already have it keep it.' }],
+    warnings: [],
+    risk: 'low',
+  };
+}
+
+async function planRemember(ctx: ToolCtx, raw: unknown): Promise<PlanOutput> {
+  const a = parseInput('remember', raw);
+  if (!can(ctx.actor, 'skills.manage')) {
+    return { steps: [], warnings: [], risk: 'low', blocks: [{ type: 'error', text: 'Saved answers are kept by managers and owners, on the Skills page. Ask one to add it.' }] };
+  }
+  const question = a.question.replace(/\s+/g, ' ').trim();
+  const answer = a.answer.trim();
+  const short = answer.length > 100 ? `${answer.slice(0, 99)}…` : answer;
+  return {
+    steps: [
+      {
+        tool: 'remember',
+        args: { propertyId: ctx.propertyId, question, answer, audience: a.share_with_guests ? 'ALL' : 'STAFF' },
+        summary: `Remember: “${question}” ${short}`,
+        detail: a.share_with_guests ? 'Saved answer for staff and guests (the voice line and guest assistant)' : 'Saved answer for staff only',
+      },
+    ],
+    warnings: [],
+    risk: 'low',
   };
 }
 
@@ -603,6 +712,67 @@ async function rateCalendarResult(propertyId: string, raw: unknown): Promise<unk
 }
 
 // ---------------------------------------------------------------------------
+// What the person is looking at, and what the hotel usually charges
+// ---------------------------------------------------------------------------
+
+const PAGE_NAMES: Record<string, string> = {
+  dashboard: 'Dashboard',
+  'front-desk': 'Front desk',
+  reports: 'Reports',
+  housekeeping: 'Housekeeping',
+  bookings: 'Reservations',
+  'do-not-rent': 'Do-not-rent list',
+  'rate-calendar': 'Rate calendar',
+  channels: 'Channels',
+  'room-types': 'Room types',
+  properties: 'Property settings',
+  users: 'Team',
+  activity: 'Activity log',
+  settings: 'Settings',
+  analytics: 'Analytics',
+  advisor: 'AI advisor',
+  disputes: 'Card disputes',
+  voice: 'Voice',
+  connect: 'PMS connection',
+  skills: 'Skills (saved answers and shortcuts)',
+  assistants: 'Assistants',
+  organization: 'Organization',
+};
+
+/** The page of the console the person has open (its path), in words, and the reservation on it if there is one. */
+export async function describePage(ctx: ToolCtx, page: string | undefined): Promise<{ text: string; memory?: Partial<AgentContextState> } | null> {
+  const path = page?.split(/[?#]/)[0].replace(/\/+$/, '') ?? '';
+  const parts = path.split('/').filter(Boolean);
+  if (parts[0] !== 'admin' || !parts[1] || parts[1] === 'agent') return null;
+  if (parts[1] === 'bookings' && parts[2] && parts.length === 3) {
+    // Only a reservation at this hotel: the page path comes from the browser.
+    const b = await prisma.booking.findFirst({
+      where: { id: parts[2], propertyId: ctx.propertyId },
+      select: { id: true, code: true, status: true, checkIn: true, checkOut: true, user: { select: { firstName: true, lastName: true } }, roomType: { select: { name: true } }, room: { select: { roomNumber: true } } },
+    });
+    if (b) {
+      const name = `${b.user.firstName} ${b.user.lastName}`.trim();
+      const stay = `${b.checkIn.toISOString().slice(0, 10)} → ${b.checkOut.toISOString().slice(0, 10)}`;
+      return {
+        text: `On screen: the reservation of ${name} (#${b.code}) · ${b.roomType.name}${b.room ? ` · room ${b.room.roomNumber}` : ''} · ${stay} · ${b.status.toLowerCase().replace('_', ' ')}. “This guest”, “this reservation”, “the folio”, “him/her/them” mean this one unless the person names someone else.`,
+        memory: { lastBookingId: b.id, lastBookingCode: b.code ?? undefined, lastGuestName: name, lastRoomNumber: b.room?.roomNumber },
+      };
+    }
+  }
+  const name = PAGE_NAMES[parts[1]];
+  return name ? { text: `On screen: the ${name} page.` } : null;
+}
+
+/** The hotel's usual charges for the model, so "add a pet fee" is priced without asking. */
+async function usualChargesLine(ctx: ToolCtx): Promise<string> {
+  if (!can(ctx.actor, 'folio.view')) return '';
+  const [saved, { currency }] = await Promise.all([savedChargesFor(ctx.propertyId), hotelLocale(ctx.propertyId)]);
+  if (!saved.length) return 'The hotel has no usual charges saved yet: ask how much a charge is unless the person says, and offer to remember the price.';
+  const list = saved.slice(0, 40).map((c) => `${c.name} ${describeSavedCharge(c, currency)}${c.note ? ` (${c.note})` : ''}`);
+  return `The hotel’s usual charges: ${list.join('; ')}.`;
+}
+
+// ---------------------------------------------------------------------------
 // Planning a write (shared with the AI advisor)
 // ---------------------------------------------------------------------------
 
@@ -614,11 +784,14 @@ export interface PlannedWrite {
   isError: boolean;
 }
 
-export async function planHotelWrite(ctx: ToolCtx, name: string, raw: unknown): Promise<PlannedWrite> {
+export async function planHotelWrite(ctx: ToolCtx, name: string, raw: unknown, state: WriteState = newWriteState()): Promise<PlannedWrite> {
   if (!isToolName(name) || definitions[name].kind !== 'write') throw new HarnessInputError(`Unknown write tool: ${name}`);
   let out: PlanOutput;
   if (name === 'set_rates') out = await planSetRates(ctx, raw);
-  else if (name === 'add_folio_charge') out = await planFolioCharge(ctx, raw);
+  else if (name === 'edit_folio') out = await planEditFolio(ctx, raw, state);
+  else if (name === 'save_charge') out = await planSaveCharge(ctx, raw, state);
+  else if (name === 'remove_saved_charge') out = await planRemoveSavedCharge(ctx, raw);
+  else if (name === 'remember') out = await planRemember(ctx, raw);
   else if (name === 'create_reservation') out = await planCreateReservation(ctx, raw);
   else {
     const intent = writeIntent(name, raw);
@@ -668,8 +841,12 @@ How to work:
 - Work out what the person wants, even from rough phrasing, typos ("ped fee" = pet fee), half sentences or a pasted table. Follow-ups refer to what you showed last ("patel", "her", "the arrival guy"): resolve them from that context. Look things up with the read tools when you need facts (ids, current prices, who is arriving) and make independent calls in parallel.
 - To change anything, call the write tools. Writes are never applied directly: each call adds steps to ONE plan the person reviews and confirms with a button. So never say a change is done — say you've prepared it for them to confirm. Put everything the person asked for into this one plan; don't ask permission first.
 - For rates: map each row of a request to set_rates changes (one call with all changes). Use list_room_types for exact names. Remember \`to\` in set_rates is the last night, inclusive; use \`nights\` for scattered dates and \`weekdays\` for patterns like Sun–Thu. Read the current calendar first only if you need current prices to compute something.
+- Folios: use edit_folio, with every change for one reservation in one call. To add a charge the hotel has a usual price for (listed with the conversation), leave out the amount and it's priced for the stay. If there's no usual price and the person didn't say one, ask how much — never guess an amount. "Make the room and tax together $50" is set_total over the room and its tax lines. Call get_folio first when you need line refs or current amounts.
+- When the person says what something always costs ("pet fee is always $50", "rollaway is $20 a night"), call save_charge so it's remembered; if they also asked to charge it, do both in the same plan. A price they give for one guest only ("charge her $30 for the dog") is just that charge.
+- When they tell you something lasting about the hotel to remember (a policy, a fact, "from now on…"), call remember. For questions about hotel policies or amenities, use hotel_knowledge.
+- For any report, list, count, total or breakdown over dates (reservations, nights, occupancy, revenue, charges, payments, guests, sources…), build it with run_report: pick the dataset, filters, grouping and metrics yourself, whatever the person asked for. The table and its CSV download are shown to them; answer the question in a sentence or two from it.
+- The person may be looking at a page of the system while they talk to you (described with the conversation); "this guest", "this reservation" or "here" refer to it.
 - If a tool says something is ambiguous or impossible, fix your input and retry, or explain it plainly and ask one short question. Don't invent ids, names, rooms or prices.
-- For questions about hotel policies or amenities, use hotel_knowledge.
 
 Reply style: the cards from your tools are shown to the person automatically, so don't repeat their numbers at length. End with one or two short sentences: what you found or what's ready to confirm, plus anything that needs their attention. Plain words, no markdown headings.
 
@@ -698,18 +875,24 @@ export interface HarnessResult {
  */
 export async function* runHarness(
   ctx: ToolCtx,
-  opts: { recent?: string[]; lastReply?: string; client?: Anthropic; signal?: AbortSignal } = {}
+  opts: { recent?: string[]; lastReply?: string; page?: string; client?: Anthropic; signal?: AbortSignal } = {}
 ): AsyncGenerator<AgentEvent, HarnessResult> {
   const client = opts.client ?? new Anthropic();
   const memory: AgentContextState = { ...ctx.memory };
   const result: HarnessResult = { steps: [], warnings: [], risk: 'low', memory, toolsUsed: [] };
+  const state = newWriteState();
   const earlier = (opts.recent ?? []).filter((m) => m !== ctx.message).slice(-6);
+  const [page, usual] = await Promise.all([describePage(ctx, opts.page), usualChargesLine(ctx)]);
+  // "Add a pet fee to this guest" on a reservation's page: that reservation, unless the conversation named another.
+  if (page?.memory && !memory.lastBookingId) Object.assign(memory, page.memory);
   const context = [
     earlier.length ? `Earlier messages from the person in this conversation (oldest first):\n${earlier.map((m) => `- ${m}`).join('\n')}` : '',
     opts.lastReply?.trim() ? `What you showed them in your last reply:\n${opts.lastReply.trim().slice(0, 2000)}` : '',
     memory.lastBookingCode || memory.lastGuestName || memory.lastRoomNumber
       ? `Last guest/room discussed: ${[memory.lastGuestName, memory.lastBookingCode && `#${memory.lastBookingCode}`, memory.lastRoomNumber && `room ${memory.lastRoomNumber}`].filter(Boolean).join(', ')}.`
       : '',
+    page?.text ?? '',
+    usual,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -760,7 +943,7 @@ export async function* runHarness(
       result.toolsUsed.push(use.name);
       yield { type: 'status', text: `${hotelToolLabel(use.name)}…` };
       try {
-        const out = await runTool({ ...ctx, memory }, use.name, use.input, result);
+        const out = await runTool({ ...ctx, memory }, use.name, use.input, result, state);
         for (const b of out.blocks) yield { type: 'block', block: b };
         results.push({ type: 'tool_result', tool_use_id: use.id, content: out.forModel, ...(out.isError ? { is_error: true } : {}) });
       } catch (e) {
@@ -778,10 +961,10 @@ export async function* runHarness(
   return result;
 }
 
-async function runTool(ctx: ToolCtx, name: string, raw: unknown, acc: HarnessResult): Promise<{ blocks: AgentBlock[]; forModel: string; isError?: boolean }> {
+async function runTool(ctx: ToolCtx, name: string, raw: unknown, acc: HarnessResult, state: WriteState): Promise<{ blocks: AgentBlock[]; forModel: string; isError?: boolean }> {
   if (!isToolName(name)) throw new HarnessInputError(`Unknown tool: ${name}`);
   if (definitions[name].kind === 'write') {
-    const w = await planHotelWrite(ctx, name, raw);
+    const w = await planHotelWrite(ctx, name, raw, state);
     Object.assign(acc.memory, w.out.memory ?? {});
     acc.steps.push(...w.out.steps);
     acc.warnings.push(...w.out.warnings);
@@ -792,6 +975,24 @@ async function runTool(ctx: ToolCtx, name: string, raw: unknown, acc: HarnessRes
   if (name === 'get_rate_calendar') {
     const text = JSON.stringify(await rateCalendarResult(ctx.propertyId, raw));
     return { blocks: [], forModel: text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}… (truncated — ask for fewer nights or one room type)` : text };
+  }
+  if (name === 'run_report') {
+    if (!can(ctx.actor, 'reports.view')) return { blocks: [], forModel: 'Reports aren’t part of this person’s role: say so.', isError: true };
+    try {
+      const { result } = await runReportTool(ctx.actor, ctx.propertyId, raw);
+      return { blocks: [reportBlock(ctx.propertyId, result)], forModel: reportForModel(result) };
+    } catch (e) {
+      if (e instanceof ReportInputError) throw new HarnessInputError(e.message);
+      throw e;
+    }
+  }
+  if (name === 'get_folio') {
+    if (!can(ctx.actor, 'folio.view')) return { blocks: [], forModel: 'Folios aren’t part of this person’s role: say so.', isError: true };
+    const r = await resolveBooking(ctx, toRef(parseInput('get_folio', raw).guest), 'any');
+    if (!r.ok) return { blocks: [], forModel: blockText(r.block).join('\n') || 'No such reservation.', isError: true };
+    const out = await folioRead(ctx, r.value);
+    Object.assign(acc.memory, out.memory);
+    return { blocks: out.blocks, forModel: out.forModel };
   }
   if (name === 'hotel_knowledge') {
     const { question } = parseInput('hotel_knowledge', raw);

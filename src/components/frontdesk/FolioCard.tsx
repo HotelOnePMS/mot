@@ -3,11 +3,12 @@
 import * as React from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { toast } from 'sonner';
-import { HandCoins, Pencil, Plus } from 'lucide-react';
+import { Equal, HandCoins, Pencil, Plus } from 'lucide-react';
 import type { BookingSummary } from '@/lib/dto';
 import { CARD_NUMBER_REFUSED, containsCardNumber } from '@/lib/desk-payments';
 import { api, fetcher } from '@/lib/fetcher';
-import type { FolioAllowance, FolioDeposit, FolioLine, FolioView } from '@/lib/folio';
+import { currencyDigits, toMinorUnits } from '@/lib/currency';
+import { splitTotal, type FolioAllowance, type FolioDeposit, type FolioEdit, type FolioLine, type FolioView } from '@/lib/folio';
 import { formatMoney } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -272,6 +273,149 @@ function AllowanceDialog({
   );
 }
 
+/** The stay's lines that can be set to one total: the room, its taxes and fees, and extra charges, in folio order. */
+function stayParts(folio: FolioView) {
+  const out: { ref: string; label: string; amount: number; scales: boolean; extra: boolean; hint: string | null }[] = [];
+  const room = folio.edits.room;
+  if (room?.type === 'room') out.push({ ref: 'room', label: room.label, amount: room.amount, scales: true, extra: false, hint: 'Room' });
+  for (const [ref, e] of Object.entries(folio.edits)) {
+    if (e.type !== 'charge') continue;
+    out.push({ ref, label: e.name, amount: e.amount, scales: e.percent !== null, extra: e.extra, hint: e.percent !== null ? `${e.percent}% of the room` : e.extra ? 'Extra charge' : 'Fixed fee' });
+  }
+  return out.sort((a, b) => (a.ref === 'room' ? -1 : b.ref === 'room' ? 1 : Number(a.ref.slice(7)) - Number(b.ref.slice(7))));
+}
+
+/**
+ * Set several lines to one total ("the room and tax together $50"): the room and percentage taxes share it in their
+ * current proportions, fixed fees keep their amount. Shows the split before saving.
+ */
+function SetTotalDialog({
+  bookingId,
+  folio,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  bookingId: string;
+  folio: FolioView;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onSaved: (next: FolioView) => Promise<void>;
+}) {
+  const [base, setBase] = React.useState(folio);
+  const [picked, setPicked] = React.useState<string[]>([]);
+  const [amount, setAmount] = React.useState('');
+  const [why, setWhy] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const parts = React.useMemo(() => stayParts(base), [base]);
+  React.useEffect(() => {
+    if (!open) return;
+    setBase(folio);
+    // The room and its taxes and fees, as "room and tax together" means; extra charges only when picked.
+    setPicked(stayParts(folio).filter((p) => !p.extra).map((p) => p.ref));
+    setAmount('');
+    setWhy('');
+    setError('');
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const { currency } = base;
+  const chosen = parts.filter((p) => picked.includes(p.ref));
+  const value = toNumber(amount);
+  const typed = amount.trim() !== '';
+  const now = Math.round(chosen.reduce((s, p) => s + p.amount, 0) * 100) / 100;
+  const split = typed && value > 0 && chosen.length ? splitTotal(chosen.map((p) => ({ ref: p.ref, minor: toMinorUnits(p.amount, currency), scales: p.scales })), toMinorUnits(value, currency)) : null;
+  const digits = 10 ** currencyDigits(currency);
+  const cardNumber = containsCardNumber(why);
+  const amountError = typed && !(value > 0) ? 'Enter the total above zero.' : undefined;
+  const valid = !!split && !amountError && !cardNumber && Math.abs(value - now) > 0.004;
+
+  async function save() {
+    setBusy(true);
+    setError('');
+    const edit: FolioEdit = {
+      target: 'setTotal',
+      refs: chosen.map((p) => p.ref),
+      amount: Math.round(value * 1000) / 1000,
+      expected: Object.fromEntries(chosen.map((p) => [p.ref, p.amount])),
+      reason: why.trim() || undefined,
+    };
+    try {
+      const next = await api<FolioView>(key(bookingId), { method: 'PATCH', json: edit });
+      toast.success(`${chosen.length === 1 ? chosen[0].label : 'Those lines'} now come to ${fmt(value, currency)}`);
+      onOpenChange(false);
+      void onSaved(next).catch(() => undefined);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Set a total</DialogTitle>
+          <DialogDescription>Make the lines you pick add up to one amount, like the room and tax together. Percentage taxes stay that percentage of the room; fixed fees keep their amount.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <fieldset className="space-y-1">
+            <legend className="text-sm font-medium">Lines</legend>
+            {parts.map((p) => {
+              const id = `set-total-${p.ref}`;
+              const next = split?.get(p.ref);
+              return (
+                <label key={p.ref} htmlFor={id} className="flex min-h-10 cursor-pointer items-center gap-3 rounded-lg px-1 text-sm hover:bg-accent/40">
+                  <input
+                    id={id}
+                    type="checkbox"
+                    checked={picked.includes(p.ref)}
+                    onChange={(e) => setPicked((cur) => (e.target.checked ? [...cur, p.ref] : cur.filter((r) => r !== p.ref)))}
+                    className="size-4 shrink-0 cursor-pointer rounded-sm border-input accent-[hsl(var(--primary))]"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block break-words">{p.label}</span>
+                    {p.hint && <span className="block text-xs text-muted-foreground">{p.hint}</span>}
+                  </span>
+                  <span className="whitespace-nowrap text-right tabular">
+                    {next !== undefined && Math.abs(next / digits - p.amount) > 0.0005 ? (
+                      <>
+                        <span className="text-muted-foreground line-through">{fmt(p.amount, currency)}</span> {fmt(next / digits, currency)}
+                      </>
+                    ) : (
+                      fmt(p.amount, currency)
+                    )}
+                  </span>
+                </label>
+              );
+            })}
+          </fieldset>
+          <Field label={`Together (${currency})`} htmlFor="set-total-amount" hint={chosen.length ? `Now ${fmt(now, currency)}.` : 'Pick at least one line.'} error={amountError}>
+            <Input id="set-total-amount" inputMode="decimal" autoComplete="off" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          </Field>
+          <Field label="Why (optional)" htmlFor="set-total-why" hint="Kept with the change in the activity log." error={cardNumber ? CARD_NUMBER_REFUSED : undefined}>
+            <Input id="set-total-why" autoComplete="off" maxLength={200} value={why} onChange={(e) => setWhy(e.target.value)} />
+          </Field>
+          {error && (
+            <Callout tone="danger" role="alert">
+              {error}
+            </Callout>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={!valid} loading={busy} loadingText="Saving…" onClick={save}>
+            <Equal aria-hidden /> Set {valid ? fmt(value, currency) : 'total'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /**
  * The folio without its card: the room and taxes with any allowances, payments
  * and refunds, the totals with the balance, and security deposits apart (they
@@ -290,6 +434,7 @@ export function FolioSummary({
   const { mutate: revalidate } = useSWRConfig();
   const { data, error, mutate } = useFolio(bookingId);
   const [adding, setAdding] = React.useState(false);
+  const [settingTotal, setSettingTotal] = React.useState(false);
   const [removing, setRemoving] = React.useState<string | null>(null);
   const [editing, setEditing] = React.useState<FolioEditing | null>(null);
 
@@ -439,6 +584,11 @@ export function FolioSummary({
               <Plus aria-hidden /> Add charge…
             </Button>
           )}
+          {canEdit && (
+            <Button variant="outline" size="sm" onClick={() => setSettingTotal(true)}>
+              <Equal aria-hidden /> Set a total…
+            </Button>
+          )}
           {adjust && data.maxAllowance > 0.004 && (
             <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
               <HandCoins aria-hidden /> Add allowance…
@@ -473,6 +623,7 @@ export function FolioSummary({
 
       {adjust && <AllowanceDialog bookingId={bookingId} folio={data} open={adding} onOpenChange={setAdding} onSaved={changed} />}
       {canEdit && <FolioEditDialog bookingId={bookingId} folio={data} editing={editing} onClose={() => setEditing(null)} onSaved={changed} />}
+      {canEdit && <SetTotalDialog bookingId={bookingId} folio={data} open={settingTotal} onOpenChange={setSettingTotal} onSaved={changed} />}
     </div>
   );
 }

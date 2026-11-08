@@ -24,6 +24,13 @@ const editSchema = z.discriminatedUnion('target', [
   z.object({ target: z.literal('charge'), index: z.number().int().min(0).max(100), name: z.string().max(200).optional(), amount: amount.optional(), date: day, expected: shownCharge, reason }),
   z.object({ target: z.literal('addCharge'), name: z.string().max(200), amount, date: day, reason }),
   z.object({ target: z.literal('removeCharge'), index: z.number().int().min(0).max(100), expected: shownCharge, reason }),
+  z.object({
+    target: z.literal('setTotal'),
+    refs: z.array(z.string().regex(/^(room|charge:\d{1,3})$/)).min(1).max(51),
+    amount,
+    expected: z.record(z.string(), z.number()),
+    reason,
+  }),
   z.object({ target: z.literal('allowance'), id: z.string().min(1).max(64), amount: amount.optional(), allowanceReason: z.string().max(200).optional(), reason }),
   z.object({
     target: z.literal('payment'),
@@ -39,8 +46,9 @@ const editSchema = z.discriminatedUnion('target', [
 ]);
 
 /**
- * PATCH — change something on the folio: the room line, a tax or fee, an extra charge (add, change, remove), an
- * allowance, or a payment. folio.edit at the booking's hotel (owners, or a role the owner allowed). Returns the folio.
+ * PATCH — change something on the folio: the room line, a tax or fee, an extra charge (add, change, remove), several
+ * lines to one total ("room and tax together $50"), an allowance, or a payment. folio.edit at the booking's hotel
+ * (owners, or a role the owner allowed). Returns the folio.
  */
 export const PATCH = handleRoute(async (request: NextRequest, { params }: Params) => {
   const { bookingId } = await params;

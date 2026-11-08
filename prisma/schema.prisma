@@ -120,6 +120,7 @@ model Property {
   permissionGrants         RolePermissionGrant[]
   checkoutOverrides        CheckoutOverride[]
   photos                   PropertyPhoto[]
+  savedCharges             SavedCharge[]
   roomTypes                RoomType[]
   rooms                    Room[]
   // Users assigned to this property
@@ -1203,6 +1204,26 @@ model RolePermissionGrant {
 
   @@unique([propertyId, role, permission])
   @@map("role_permission_grants")
+}
+
+/// An extra charge the hotel adds to folios often, with its usual price ("Pet fee", $50 per stay): offered when adding a
+/// charge by hand, and used by the agent when someone asks for it by name. Taxes and fees on every stay are
+/// PropertyCharge; these are only added when someone asks.
+model SavedCharge {
+  id          String   @id @default(cuid())
+  propertyId  String
+  name        String
+  amount      Decimal  @db.Decimal(10, 2)
+  /// STAY: once per stay · NIGHT: per night of the stay · ITEM: per item (a quantity is given when it's added)
+  unit        String   @default("STAY")
+  note        String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, name])
+  @@map("saved_charges")
 }
 
 /// Lowers what a stay costs, with a reason (service recovery, unused nights, a rate correction): an allowance a manager

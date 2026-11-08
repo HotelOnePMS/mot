@@ -155,7 +155,7 @@ describe('model-driven agent harness', () => {
     const lastReply = `Arrivals today:\n- Aisha Patel (#${b.code}) · Queen · no room · ${h.today}→${addDaysISO(h.today, 1)} · confirmed`;
     const ctx = { actor, propertyId: h.property.id, propertyName: h.property.name, today: h.today, memory: {}, message: 'yreah add ped fee to patel' };
     const { client, create } = scriptedClient([
-      [{ type: 'tool_use', id: 't1', name: 'add_folio_charge', input: { guest: { name: 'patel' }, name: 'Pet fee', amount: 50 } }],
+      [{ type: 'tool_use', id: 't1', name: 'edit_folio', input: { guest: { name: 'patel' }, edits: [{ op: 'add_charge', name: 'Pet fee', amount: 50 }] } }],
       [{ type: 'text', text: 'A $50 pet fee for Aisha Patel is ready to confirm.' }],
     ]);
     const { result } = await drain(runHarness(ctx, { client, recent: ['add pet fee to the todays adrrival guy'], lastReply }));
@@ -188,7 +188,7 @@ describe('model-driven agent harness', () => {
     );
     const actor = await actorFor(desk.id);
     const ctx = { actor, propertyId: h.property.id, propertyName: h.property.name, today: h.today, memory: {}, message: 'add pet fee to patel' };
-    const { client, create } = scriptedClient([[{ type: 'tool_use', id: 't1', name: 'add_folio_charge', input: { guest: { code: b.code }, name: 'Pet fee', amount: 50 } }]]);
+    const { client, create } = scriptedClient([[{ type: 'tool_use', id: 't1', name: 'edit_folio', input: { guest: { code: b.code }, edits: [{ op: 'add_charge', name: 'Pet fee', amount: 50 }] } }]]);
     const { result } = await drain(runHarness(ctx, { client }));
     expect(toolResults(create, 1)[0]).toMatchObject({ is_error: true, content: expect.stringMatching(/can’t change folios/) });
     expect(result.steps).toHaveLength(0);

@@ -23,7 +23,11 @@ import { bookingInclude, floorNumber, toBookingSummary, type BookingWithRelation
 import { hotelLocale } from '../services/hotels';
 import { changeRates } from '../services/rates';
 import { createDeskReservation } from '../services/reservations';
-import { editFolio } from '../services/folio';
+import { addAllowance, editFolio } from '../services/folio';
+import { deleteSavedCharge, saveSavedCharge } from '../services/saved-charges';
+import { rememberAnswer } from '../skills/admin';
+import type { FolioEdit } from '@/lib/folio';
+import { isSavedChargeUnit } from '@/lib/saved-charges';
 import { roomBoard, setOutOfOrder, setRoomStatus } from '../services/rooms';
 import { listTeam } from '../services/team';
 import type { PlanStep } from './plan';
@@ -868,6 +872,22 @@ export interface StepResult {
   bridgeTask?: { id: string; system: string; instruction: string; kind: string; mode: string };
 }
 
+/** A plan step's summary as what was done: "Add Pet fee…" → "Added Pet fee…". */
+function done(summary: string): string {
+  const past: [RegExp, string][] = [
+    [/^Add /, 'Added '],
+    [/^Change /, 'Changed '],
+    [/^Remove /, 'Removed '],
+    [/^Make /, 'Made '],
+    [/^Take /, 'Took '],
+    [/^Remember /, 'Remembered '],
+    [/^Remember: /, 'Remembered: '],
+    [/^Forget /, 'Forgot '],
+  ];
+  for (const [re, to] of past) if (re.test(summary)) return summary.replace(re, to);
+  return summary;
+}
+
 export async function executeStep(ctx: OpContext, step: PlanStep): Promise<StepResult> {
   const a = step.args as Record<string, string | number | boolean | undefined>;
   try {
@@ -931,6 +951,33 @@ export async function executeStep(ctx: OpContext, step: PlanStep): Promise<StepR
           ...(a.reason ? { reason: String(a.reason) } : {}),
         });
         return { ok: true, line: step.summary.replace(/^Add /, 'Added '), bookingId: String(a.bookingId) };
+      }
+      case 'edit_folio': {
+        // Signed by the server when it was planned: the edit as the planner wrote it, checked again by editFolio.
+        await editFolio(ctx, String(a.bookingId), step.args.edit as FolioEdit);
+        return { ok: true, line: done(step.summary), bookingId: String(a.bookingId) };
+      }
+      case 'folio_allowance': {
+        await addAllowance(ctx, String(a.bookingId), { amount: Number(a.amount), reason: String(a.reason) });
+        return { ok: true, line: done(step.summary), bookingId: String(a.bookingId) };
+      }
+      case 'save_charge': {
+        await saveSavedCharge(ctx, String(a.propertyId), {
+          ...(a.id ? { id: String(a.id) } : {}),
+          name: String(a.name),
+          amount: Number(a.amount),
+          ...(isSavedChargeUnit(a.unit) ? { unit: a.unit } : {}),
+          ...('note' in step.args ? { note: a.note ? String(a.note) : null } : {}),
+        });
+        return { ok: true, line: done(step.summary) };
+      }
+      case 'remove_saved_charge': {
+        await deleteSavedCharge(ctx, String(a.propertyId), { id: String(a.id) });
+        return { ok: true, line: done(step.summary) };
+      }
+      case 'remember': {
+        await rememberAnswer(ctx, String(a.propertyId), { question: String(a.question), answer: String(a.answer), audience: a.audience === 'ALL' ? 'ALL' : 'STAFF' });
+        return { ok: true, line: done(step.summary) };
       }
       case 'create_reservation': {
         const b = await createDeskReservation(ctx, {

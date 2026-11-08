@@ -6,6 +6,7 @@ import { assertPropertyAccess, can, type Actor } from '@/server/authz';
 import { HarnessInputError, HOTEL_WRITE_TOOLS_FOR_ADVISOR, hotelToolLabel, isHotelWriteTool, planHotelWrite } from '@/server/agent/harness';
 import { signPlan, type PlanStep } from '@/server/agent/plan';
 import { maxRisk } from '@/server/agent/tools';
+import { newWriteState, type WriteState } from '@/server/agent/folio-plan';
 import { todayAt } from '@/server/services/hotels';
 import { DomainError } from '@/server/errors';
 
@@ -37,7 +38,7 @@ How to help:
 - Compare properties with each other and with their own history (previous period, same time last year). Call out small samples, such as a property with a handful of bookings, before drawing conclusions.
 - When brainstorming or recommending, be specific and prioritised: what to do, at which property, room type and dates, the evidence behind it, a rough estimate of the upside with the arithmetic shown, the main risk, and how they would know it worked. Prefer a few strong ideas over a long generic list.
 - If a goal is ambiguous and the answer would change your recommendation, ask one short clarifying question; otherwise state your assumption and proceed.
-- You can prepare changes with the write tools (rates — exact prices, percent changes or resets, by date range, specific nights or weekdays — plus room assignments, room status, out-of-order, housekeeping, notes and booking status). They never apply anything directly: each call adds to a plan per property that the person reviews and confirms with a button under your answer. When the person asks you to make or apply changes, call the write tools with every change in one go, then say it's ready to confirm — never that it's done. When you only recommend, don't call them; offer to prepare the changes. If no write tools are available to you, say where in the console to make the change: Rates, Rooms, Properties, Reservations, Housekeeping, or Front desk.
+- You can prepare changes with the write tools (rates — exact prices, percent changes or resets, by date range, specific nights or weekdays — plus room assignments, room status, out-of-order, housekeeping, notes, booking status, the hotel’s usual charges and answers to remember). They never apply anything directly: each call adds to a plan per property that the person reviews and confirms with a button under your answer. When the person asks you to make or apply changes, call the write tools with every change in one go, then say it's ready to confirm — never that it's done. When you only recommend, don't call them; offer to prepare the changes. If no write tools are available to you, say where in the console to make the change: Rates, Rooms, Properties, Reservations, Housekeeping, or Front desk.
 - Before a round of tool calls, write one short sentence saying what you are checking.
 
 Style: lead with the answer, then the supporting numbers. Use concise markdown with short paragraphs, bullet lists and small tables where they help comparison. Quote amounts in the currency the snapshot gives; never add up amounts from properties in different currencies. Refer to properties by name, not id.`;
@@ -91,7 +92,7 @@ export async function* runAdvisorTurn({
 }): AsyncGenerator<AdvisorEvent> {
   const canWrite = !!actor && can(actor, 'agent.use');
   const tools = canWrite ? [...ADVISOR_TOOLS, ...HOTEL_WRITE_TOOLS_FOR_ADVISOR] : ADVISOR_TOOLS;
-  const plans = new Map<string, { steps: PlanStep[]; warnings: string[]; risk: 'low' | 'medium' | 'high' }>();
+  const plans = new Map<string, AdvisorPlan>();
   const finish = function* (): Generator<AdvisorEvent> {
     for (const [propertyId, p] of plans) {
       if (!p.steps.length || !actor) continue;
@@ -235,11 +236,19 @@ export async function* runAdvisorTurn({
   yield* finish();
 }
 
+/** One property's changes in this turn, and what they have planned so far (so later changes build on earlier ones). */
+interface AdvisorPlan {
+  steps: PlanStep[];
+  warnings: string[];
+  risk: 'low' | 'medium' | 'high';
+  state: WriteState;
+}
+
 /** Adds a write tool call to its property's plan; nothing changes until the person confirms. */
 async function planAdvisorWrite(
   actor: Actor,
   data: PortfolioData,
-  plans: Map<string, { steps: PlanStep[]; warnings: string[]; risk: 'low' | 'medium' | 'high' }>,
+  plans: Map<string, AdvisorPlan>,
   toolUse: Anthropic.Beta.BetaToolUseBlock,
 ): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
   const { property_id: propertyId, ...input } = (toolUse.input ?? {}) as { property_id?: string } & Record<string, unknown>;
@@ -250,8 +259,8 @@ async function planAdvisorWrite(
   try {
     assertPropertyAccess(actor, propertyId);
     const ctx = { actor, propertyId, propertyName: property.name, today: await todayAt(propertyId), memory: {}, message: '' };
-    const w = await planHotelWrite(ctx, toolUse.name, input);
-    const p = plans.get(propertyId) ?? { steps: [], warnings: [], risk: 'low' as const };
+    const p: AdvisorPlan = plans.get(propertyId) ?? { steps: [], warnings: [], risk: 'low', state: newWriteState() };
+    const w = await planHotelWrite(ctx, toolUse.name, input, p.state);
     p.steps.push(...w.out.steps);
     p.warnings.push(...w.out.warnings);
     p.risk = maxRisk(p.risk, w.out.risk);

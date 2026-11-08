@@ -74,6 +74,20 @@ export function speakBlocks(blocks: AgentBlock[], currency = 'USD'): { summary: 
       case 'bridgeTask':
         parts.push(`Sent to ${b.system}. The operator is working on it — the result will appear on screen in a minute.`);
         break;
+      case 'folio':
+        parts.push(
+          `${b.guestName}’s folio comes to ${money(b.total, { cents: true, currency: b.currency })}${b.balance > 0.004 ? `, with ${money(b.balance, { cents: true, currency: b.currency })} still to pay` : b.balance < -0.004 ? `, and they’re owed ${money(-b.balance, { cents: true, currency: b.currency })}` : ', all paid'}.`
+        );
+        break;
+      case 'report': {
+        const cell = (v: unknown, format: string) =>
+          v === null || v === undefined || v === '' ? '—' : format === 'money' ? money(Number(v), { cents: true, currency: b.currency }) : format === 'percent' ? `${v}%` : String(v);
+        const row = (r: Record<string, unknown>) => b.columns.map((c) => `${c.label} ${cell(r[c.key], c.format)}`).join(', ');
+        parts.push(
+          `${b.title} (${b.totalRows} row${b.totalRows === 1 ? '' : 's'}): ${list(b.rows.map(row), 5)}${b.totals ? `. Total: ${b.columns.filter((c) => b.totals?.[c.key] !== null && b.totals?.[c.key] !== undefined).map((c) => `${c.label} ${cell(b.totals?.[c.key], c.format)}`).join(', ')}` : ''}`
+        );
+        break;
+      }
       default:
         break;
     }

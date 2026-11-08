@@ -16,6 +16,7 @@ import type {
   RoomSummary,
   TeamMember,
 } from '../dto';
+import type { ReportCell, ReportColumn } from '../reports';
 import type { Tone } from '../status';
 
 /** A one-tap follow-up. Sending `command` goes back through the agent (and the audit log). */
@@ -96,9 +97,29 @@ export type AgentBlock =
   | { type: 'navigate'; label: string; href: string; description?: string }
   | { type: 'clarify'; question: string; options: { label: string; hint?: string; command: string }[] }
   | { type: 'error'; text: string }
+  /** A custom report the agent built: the first rows, the totals, and links to the whole thing (CSV, the Reports page). */
+  | {
+      type: 'report';
+      title: string;
+      from: ISODate;
+      to: ISODate;
+      currency: string;
+      columns: ReportColumn[];
+      rows: Record<string, ReportCell>[];
+      totals: Record<string, ReportCell> | null;
+      /** Rows in the whole report (rows holds the first ones). */
+      totalRows: number;
+      /** Source rows the filters matched. */
+      matched: number;
+      truncated: boolean;
+      csvHref: string;
+      openHref: string;
+    }
   /** Work sent to the hotel's own PMS through the bridge; the card follows it live. */
   /** `mode` is how HotelOne reaches the PMS (DESKTOP | CLOUD | MCP); older messages may lack it. */
-  | { type: 'bridgeTask'; taskId: string; system: string; instruction: string; kind: string; mode?: string };
+  | { type: 'bridgeTask'; taskId: string; system: string; instruction: string; kind: string; mode?: string }
+  /** A reservation's folio, shown live (and editable by hand) from the folio API; the totals are as the agent read them. */
+  | { type: 'folio'; bookingId: string; code: string; guestName: string; currency: string; total: number; balance: number };
 
 /** Conversation memory the client sends back so "them" and "that room" resolve. */
 export interface AgentContextState {
@@ -132,6 +153,13 @@ export function replySummary(blocks: AgentBlock[], max = 1500): string {
     else if (b.type === 'result') lines.push(`${b.title}: ${b.lines.join('; ')}`);
     else if (b.type === 'error') lines.push(`Error: ${b.text}`);
     else if (b.type === 'clarify') lines.push(`Asked: ${b.question}`);
+    else if (b.type === 'folio') lines.push(`Folio of ${b.guestName} (#${b.code}): ${b.total} ${b.currency} in charges, balance ${b.balance} ${b.currency}`);
+    else if (b.type === 'report') {
+      const cols = b.columns.map((c) => c.label).join(' | ');
+      lines.push(`Report “${b.title}” (${b.from} to ${b.to}, ${b.totalRows} rows): ${cols}`);
+      for (const r of b.rows.slice(0, 8)) lines.push(`- ${b.columns.map((c) => r[c.key] ?? '').join(' | ')}`);
+      if (b.totals) lines.push(`- Total: ${b.columns.map((c) => b.totals?.[c.key] ?? '').join(' | ')}`);
+    }
   }
   const text = lines.join('\n');
   return text.length > max ? `${text.slice(0, max)}…` : text;

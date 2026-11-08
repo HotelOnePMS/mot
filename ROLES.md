@@ -36,7 +36,11 @@ Refunding cards (`payments.refund`) and handing back cash paid toward the stay a
 
 The owner (and platform admins) can change **anything on a folio** from the reservation page: the room line's description and amount, each tax or fee, extra charges (add, change, remove, with a date), allowances (amount and reason), and payments recorded at the desk (cash, the hotel's own terminal, paid another way: amount, what was handed back, method, date, note, or remove it). Card payments through Stripe keep Stripe's amount and date (give money back with Refund); only their note changes. The room and its charges are written back to the booking (subtotal = room, total = room + charges), so balances, payment status, reports and check-out all follow. A change made against a line someone else changed meanwhile is refused (409). Cancelled and no-show stays can't be edited (reinstate first).
 
+*Set a total…* makes several lines come to one amount ("room and tax together $50"): the room and percentage taxes share it in proportion (a 12% tax stays 12% of the room), fixed fees keep theirs, and the room line takes the rounding so it adds up to the cent. The agent does the same with `edit_folio`, through a plan the person confirms.
+
 Every change is in the activity log as `FOLIO_EDIT`, with who, what it was before and after, and the optional reason.
+
+**Usual charges** (*Settings → Usual charges*): a hotel's regular extras with their price, per stay, per night or each ("Pet fee", $50 per stay). Whoever has `charges.manage` (managers and owners) or `folio.edit` at the hotel can change the list; anyone who can see folios sees it. The folio's *Add charge* dialog offers them and can save a new one ("Remember this price"); the agent uses them for a charge asked for by name, and "pet fee is always $50" saves or changes one (after the person confirms). Changes are logged as `SAVED_CHARGE_CREATED` / `_UPDATED` / `_DELETED`.
 
 ## Owner-granted permissions (Settings → Permissions)
 
