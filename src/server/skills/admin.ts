@@ -5,11 +5,12 @@
  */
 import { prisma } from '@/lib/prisma';
 import type { SkillView } from '@/lib/dto';
-import { assertPropertyAccess, type Actor } from '../authz';
+import { assertPropertyAccess, requirePermission, type Actor } from '../authz';
 import { demoHotelLocked } from '../demo';
 import { badRequest, forbidden, notFound } from '../errors';
 import { ensureConfigSkills } from './config';
-import { getSkillById, listSkills } from './index';
+import { answerDescription, answerKey, getSkill, getSkillById, listSkills, recordLearnedSkill, updateSkill } from './index';
+import { recordAudit, type OpContext } from '../services/audit';
 import { inputNames } from './params';
 import { SKILL_KINDS, isSkillKind, type Skill } from './types';
 
@@ -88,6 +89,40 @@ export const guestFacing = (s: Pick<Skill, 'kind' | 'audience'>) => s.kind === '
 export async function guestAnswersLocked(actor: Actor, propertyId: string): Promise<boolean> {
   const p = await prisma.property.findUnique({ where: { id: propertyId }, select: { isDemo: true } });
   return demoHotelLocked(actor, !!p?.isDemo);
+}
+
+/**
+ * Save what someone told the agent to remember ("late check-out is $25 until 2pm") as the hotel's answer to a
+ * question, or replace the answer it already has to that question. Staff-only unless they said guests may hear it.
+ * Needs skills.manage. Every change goes in the activity log.
+ */
+export async function rememberAnswer(op: OpContext, propertyId: string, input: { question: string; answer: string; audience: 'STAFF' | 'ALL' }): Promise<Skill> {
+  requirePermission(op.actor, 'skills.manage');
+  assertPropertyAccess(op.actor, propertyId);
+  if (input.audience !== 'STAFF' && (await guestAnswersLocked(op.actor, propertyId))) throw forbidden(SKILLS_DEMO_LOCKED);
+  const question = input.question.replace(/\s+/g, ' ').trim();
+  const answer = input.answer.trim();
+  if (question.length < 3 || !answer) throw badRequest('Say what to remember.');
+  const existing = await getSkill(propertyId, answerKey(question));
+  if (existing && existing.kind === 'ANSWER') {
+    if (guestFacing(existing) && (await guestAnswersLocked(op.actor, propertyId))) throw forbidden(SKILLS_DEMO_LOCKED);
+    const skill = await updateSkill(existing.id, { body: { answer }, ...(input.audience === 'ALL' ? { audience: 'ALL' as const } : {}) });
+    await recordAudit(op, propertyId, 'SKILL_UPDATE', `Changed the saved answer “${skill.title}”`, { skillId: skill.id, skillKey: skill.key });
+    return skill;
+  }
+  const skill = await recordLearnedSkill({
+    propertyId,
+    key: answerKey(question),
+    title: question,
+    description: answerDescription(question),
+    kind: 'ANSWER',
+    audience: input.audience,
+    body: { answer },
+    status: 'ACTIVE',
+    createdById: op.actor.userId,
+  });
+  await recordAudit(op, propertyId, 'SKILL_CREATE', `Added the saved answer “${skill.title}”${skill.audience === 'STAFF' ? ' (staff only)' : ''}`, { skillId: skill.id, skillKey: skill.key });
+  return skill;
 }
 
 /**

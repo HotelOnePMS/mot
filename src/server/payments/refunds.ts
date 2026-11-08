@@ -7,10 +7,10 @@ import { prisma } from '@/lib/prisma';
 import { getStripe, isStripeConfigured } from '@/lib/stripe';
 import { CARD_NUMBER_REFUSED, containsCardNumber } from '@/lib/desk-payments';
 import { fromCents, refundableCents, suggestedRefundCents, toCents } from '@/lib/payments';
-import { requirePermission, requireStaff } from '../authz';
+import { requirePermission, requireStaff, type Actor } from '../authz';
 import { badRequest } from '../errors';
 import { toISODate } from '../dates';
-import { recordAudit } from '../services/audit';
+import { recordAudit, type OpContext } from '../services/audit';
 import { getBookingForStaff } from '../services/bookings';
 import { addAllowance, stayBalance } from '../services/folio';
 import { policyFor } from '../services/guest';
@@ -41,7 +41,12 @@ export interface RefundInfo {
 }
 
 export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
-  const actor = await requireStaff('payments.refund');
+  return refundInfoFor(await requireStaff('payments.refund'), bookingId);
+}
+
+/** getRefundInfo for a given person (the console's signed-in staff member, or the agent's). */
+export async function refundInfoFor(actor: Actor, bookingId: string): Promise<RefundInfo> {
+  requirePermission(actor, 'payments.refund');
   const booking = await getBookingForStaff(actor, bookingId);
   // Several room types booked together were paid with one payment, on the lead line.
   const lines = await paymentLines(booking);
@@ -89,12 +94,23 @@ export async function getRefundInfo(bookingId: string): Promise<RefundInfo> {
   };
 }
 
+export interface RefundInput {
+  paymentId: string;
+  amount?: number;
+  reason?: string;
+  allowance?: boolean;
+}
+
 /** Refund part or all of one payment. `amount` is in the payment's currency; omit it to refund what is left. */
-export async function refundPayment(
-  bookingId: string,
-  input: { paymentId: string; amount?: number; reason?: string; allowance?: boolean },
-): Promise<{ refunded: number; remaining: number; allowanceError?: string }> {
+export async function refundPayment(bookingId: string, input: RefundInput): Promise<{ refunded: number; remaining: number; allowanceError?: string }> {
   const actor = await requireStaff('payments.refund');
+  return refundPaymentAs({ actor, source: 'classic' }, bookingId, input);
+}
+
+/** refundPayment for a given person: the console's button, or a plan they confirmed in the agent. */
+export async function refundPaymentAs(op: OpContext, bookingId: string, input: RefundInput): Promise<{ refunded: number; remaining: number; allowanceError?: string }> {
+  const { actor } = op;
+  requirePermission(actor, 'payments.refund');
   const booking = await getBookingForStaff(actor, bookingId);
   if (!isStripeConfigured()) throw badRequest('Online payments aren’t enabled on this deployment.');
   // The payment must belong to this booking (or its reservation), which getBookingForStaff already scoped to the actor's property.
@@ -160,7 +176,7 @@ export async function refundPayment(
   await applyRefundState({ paymentIntentId: intentId, amountRefundedCents: total });
   // The webhook got there between the two: its statuses were worked out before the room types were recorded.
   if (shares) await refreshPaymentStatus(booking);
-  await recordAudit({ actor, source: 'classic' }, booking.propertyId, 'PAYMENT_REFUND', `Refunded ${fromCents(cents).toFixed(2)} ${payment.currency.toUpperCase()} on ${booking.code ?? 'booking'}${input.reason ? ` (${input.reason.slice(0, 80)})` : ''}`, {
+  await recordAudit(op, booking.propertyId, 'PAYMENT_REFUND', `Refunded ${fromCents(cents).toFixed(2)} ${payment.currency.toUpperCase()} on ${booking.code ?? 'booking'}${input.reason ? ` (${input.reason.slice(0, 80)})` : ''}`, {
     bookingId: booking.id,
     paymentId: payment.id,
   });
@@ -169,7 +185,7 @@ export async function refundPayment(
     // The money has moved: if the allowance can't be added now (another one took the charges off a moment ago), say so
     // instead of failing a refund that went through. One allowance per refund, even if the request is sent twice.
     try {
-      await addAllowance({ actor, source: 'classic' }, booking.id, { amount: fromCents(cents), reason: allowanceReason, id: `rf-${payment.id}-${already}-${cents}` });
+      await addAllowance(op, booking.id, { amount: fromCents(cents), reason: allowanceReason, id: `rf-${payment.id}-${already}-${cents}` });
     } catch (e) {
       return { ...result, allowanceError: `The refund went through, but the allowance wasn’t added: ${(e as Error).message}` };
     }

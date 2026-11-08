@@ -124,10 +124,12 @@ export function useAgent(propertyId: string | undefined, opts: { onChange?: () =
       const controller = new AbortController();
       abortRef.current = controller;
       try {
+        // The page behind the agent (it opens over any screen): "add a pet fee to this guest" on a reservation's page.
+        const page = typeof window !== 'undefined' ? (window.location.pathname + window.location.search).slice(0, 300) : undefined;
         const res = await fetch('/api/agent/command', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ propertyId, message, context, recent, ...(lastReply ? { lastReply } : {}) }),
+          body: JSON.stringify({ propertyId, message, context, recent, ...(lastReply ? { lastReply } : {}), ...(page ? { page } : {}) }),
           signal: controller.signal,
         });
         if (!res.ok || !res.body) {

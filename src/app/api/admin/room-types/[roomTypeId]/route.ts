@@ -5,8 +5,8 @@ import { assertPropertyAccess, requireStaff, type Permission } from '@/server/au
 import { badRequest, notFound } from '@/server/errors';
 import { handleRoute, json, parseJson } from '@/server/http';
 import { recordAudit } from '@/server/services/audit';
+import { updateRoomType } from '@/server/services/roomTypes';
 import { scheduleConfigSkillSync } from '@/server/skills';
-import { schedulePropertySync } from '@/server/channels/sync';
 
 type Params = { params: Promise<{ roomTypeId: string }> };
 
@@ -54,15 +54,8 @@ async function update(request: NextRequest, { params }: Params) {
     const physical = await prisma.room.count({ where: { roomTypeId } });
     if (body.totalRooms < physical) throw badRequest(`There are ${physical} room numbers set up for this type — remove some before lowering the count.`);
   }
-  const updated = await prisma.roomType.update({
-    where: { id: roomTypeId },
-    data: { ...body, description: body.description === undefined ? undefined : body.description || null },
-    include: { property: { select: { id: true, name: true } } },
-  });
-  await recordAudit({ actor, source: 'classic' }, roomType.propertyId, 'ROOM_TYPE_UPDATE', `Updated room type ${updated.name}`, { roomTypeId });
-  scheduleConfigSkillSync(roomType.propertyId);
-  // Room count and base price feed what OTAs are sent.
-  if (body.totalRooms !== undefined || body.basePrice !== undefined) schedulePropertySync(roomType.propertyId);
+  // Saved, logged with what changed, and passed on to the booking channels by the service (also used by the agent).
+  const updated = await updateRoomType({ actor, source: 'classic' }, roomType.id, body);
   return json({ ...updated, basePrice: Number(updated.basePrice) });
 }
 

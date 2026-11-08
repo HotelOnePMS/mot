@@ -6,6 +6,7 @@ import { assertPropertyAccess, can, type Actor } from '@/server/authz';
 import { HarnessInputError, HOTEL_WRITE_TOOLS_FOR_ADVISOR, hotelToolLabel, isHotelWriteTool, planHotelWrite } from '@/server/agent/harness';
 import { signPlan, type PlanStep } from '@/server/agent/plan';
 import { maxRisk } from '@/server/agent/tools';
+import { newWriteState, type WriteState } from '@/server/agent/folio-plan';
 import { todayAt } from '@/server/services/hotels';
 import { DomainError } from '@/server/errors';
 
@@ -91,7 +92,7 @@ export async function* runAdvisorTurn({
 }): AsyncGenerator<AdvisorEvent> {
   const canWrite = !!actor && can(actor, 'agent.use');
   const tools = canWrite ? [...ADVISOR_TOOLS, ...HOTEL_WRITE_TOOLS_FOR_ADVISOR] : ADVISOR_TOOLS;
-  const plans = new Map<string, { steps: PlanStep[]; warnings: string[]; risk: 'low' | 'medium' | 'high' }>();
+  const plans = new Map<string, AdvisorPlan>();
   const finish = function* (): Generator<AdvisorEvent> {
     for (const [propertyId, p] of plans) {
       if (!p.steps.length || !actor) continue;
@@ -235,11 +236,19 @@ export async function* runAdvisorTurn({
   yield* finish();
 }
 
+/** One property's changes in this turn, and what they have planned so far (so later changes build on earlier ones). */
+interface AdvisorPlan {
+  steps: PlanStep[];
+  warnings: string[];
+  risk: 'low' | 'medium' | 'high';
+  state: WriteState;
+}
+
 /** Adds a write tool call to its property's plan; nothing changes until the person confirms. */
 async function planAdvisorWrite(
   actor: Actor,
   data: PortfolioData,
-  plans: Map<string, { steps: PlanStep[]; warnings: string[]; risk: 'low' | 'medium' | 'high' }>,
+  plans: Map<string, AdvisorPlan>,
   toolUse: Anthropic.Beta.BetaToolUseBlock,
 ): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
   const { property_id: propertyId, ...input } = (toolUse.input ?? {}) as { property_id?: string } & Record<string, unknown>;
@@ -250,8 +259,8 @@ async function planAdvisorWrite(
   try {
     assertPropertyAccess(actor, propertyId);
     const ctx = { actor, propertyId, propertyName: property.name, today: await todayAt(propertyId), memory: {}, message: '' };
-    const w = await planHotelWrite(ctx, toolUse.name, input);
-    const p = plans.get(propertyId) ?? { steps: [], warnings: [], risk: 'low' as const };
+    const p: AdvisorPlan = plans.get(propertyId) ?? { steps: [], warnings: [], risk: 'low', state: newWriteState() };
+    const w = await planHotelWrite(ctx, toolUse.name, input, p.state);
     p.steps.push(...w.out.steps);
     p.warnings.push(...w.out.warnings);
     p.risk = maxRisk(p.risk, w.out.risk);

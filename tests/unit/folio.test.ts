@@ -1,7 +1,7 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { toMinorUnits } from '../../src/lib/currency';
-import { chargesJson, folioTotals, stayLines, stayModel, type FolioLine } from '../../src/lib/folio';
+import { chargesJson, folioTotals, splitTotal, stayLines, stayModel, type FolioLine } from '../../src/lib/folio';
 
 const stay = { totalPrice: 479.4, subtotalPrice: 420, charges: null as unknown, roomTypeName: 'Deluxe King', nights: 3, rooms: 1, currency: 'USD' };
 
@@ -179,4 +179,68 @@ test('extra charges added on the folio are CHARGE lines with their day, counted 
 
 test('a blank edited room label falls back to the room type', () => {
   assert.equal(stayLines({ ...stay, roomLabel: '  ' })[0].label, 'Deluxe King');
+});
+
+// ---------------------------------------------------------------------------
+// Several lines to one total ("make the room and tax together $50")
+// ---------------------------------------------------------------------------
+
+const asObject = (m: Map<string, number>) => Object.fromEntries(m);
+
+test('room and a percentage tax share a new total in proportion, to the cent', () => {
+  const split = splitTotal(
+    [
+      { ref: 'room', minor: 10000, scales: true },
+      { ref: 'charge:0', minor: 1200, scales: true },
+    ],
+    5000
+  );
+  assert.deepEqual(asObject(split), { room: 4464, 'charge:0': 536 });
+});
+
+test('fixed fees keep their amount; the room and percentage taxes take what’s left', () => {
+  const split = splitTotal(
+    [
+      { ref: 'room', minor: 10000, scales: true },
+      { ref: 'charge:0', minor: 1200, scales: true },
+      { ref: 'charge:1', minor: 300, scales: false },
+    ],
+    5000
+  );
+  assert.deepEqual(asObject(split), { 'charge:1': 300, room: 4196, 'charge:0': 504 });
+  assert.equal([...split.values()].reduce((s, v) => s + v, 0), 5000);
+});
+
+test('when fixed fees alone are more than the total, or nothing scales, every line scales', () => {
+  const over = splitTotal(
+    [
+      { ref: 'room', minor: 10000, scales: true },
+      { ref: 'charge:0', minor: 6000, scales: false },
+    ],
+    5000
+  );
+  assert.deepEqual(asObject(over), { 'charge:0': 1875, room: 3125 });
+  const fixedOnly = splitTotal(
+    [
+      { ref: 'charge:0', minor: 3000, scales: false },
+      { ref: 'charge:1', minor: 2000, scales: false },
+    ],
+    10000
+  );
+  assert.deepEqual(asObject(fixedOnly), { 'charge:1': 4000, 'charge:0': 6000 });
+});
+
+test('a split always adds up exactly, even with thirds', () => {
+  for (const total of [1, 99, 100, 101, 3333, 10001]) {
+    const split = splitTotal(
+      [
+        { ref: 'room', minor: 3333, scales: true },
+        { ref: 'charge:0', minor: 3333, scales: true },
+        { ref: 'charge:1', minor: 3334, scales: true },
+      ],
+      total
+    );
+    assert.equal([...split.values()].reduce((s, v) => s + v, 0), total);
+    assert.ok([...split.values()].every((v) => v >= 0));
+  }
 });

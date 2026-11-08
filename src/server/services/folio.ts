@@ -23,6 +23,7 @@ import {
   RECORDED_PAYMENT_METHODS,
   chargesJson,
   folioTotals,
+  splitTotal,
   stayLines,
   stayModel,
   type FolioDeposit,
@@ -41,6 +42,7 @@ import { badRequest, conflict, forbidden, notFound } from '../errors';
 import { paymentLines, refreshPaymentStatus } from '../payments/record';
 import { recordAudit, type OpContext } from './audit';
 import { getBookingForStaff } from './bookings';
+import { mayManageSavedCharges, savedChargesFor } from './saved-charges';
 import { owedAfterAllowances, personName, toBookingSummary, type BookingWithRelations } from './mappers';
 
 // The shapes live in lib/folio so client components can use them without server code.
@@ -64,7 +66,13 @@ export function stayBalance(b: BookingWithRelations): number {
 export async function getFolio(actor: Actor, bookingId: string): Promise<FolioView> {
   requirePermission(actor, 'folio.view');
   const booking = await getBookingForStaff(actor, bookingId);
-  return buildFolio(booking, { canEdit: await mayEdit(actor, booking) });
+  return buildFolio(booking, await viewerOptions(actor, booking));
+}
+
+/** What this person may do on the folio: change it, and save the usual charges they add. */
+async function viewerOptions(actor: Actor, b: BookingWithRelations) {
+  const canEdit = await mayEdit(actor, b);
+  return { canEdit, canSaveCharges: canEdit && (await mayManageSavedCharges(actor, b.propertyId)) };
 }
 
 const closed = (b: { status: string }) => b.status === 'CANCELLED' || b.status === 'NO_SHOW';
@@ -77,7 +85,7 @@ async function mayEdit(actor: Actor, b: BookingWithRelations): Promise<boolean> 
 /** The folio as this person sees it after a change. */
 async function folioFor(actor: Actor, bookingId: string): Promise<FolioView> {
   const booking = await getBookingForStaff(actor, bookingId);
-  return buildFolio(booking, { canEdit: await mayEdit(actor, booking) });
+  return buildFolio(booking, await viewerOptions(actor, booking));
 }
 
 const stayInput = (b: Pick<BookingWithRelations, 'totalPrice' | 'subtotalPrice' | 'charges' | 'folioRoomLabel' | 'checkIn' | 'checkOut' | 'rooms' | 'currency'> & { roomType: { name: string } }) => ({
@@ -91,16 +99,17 @@ const stayInput = (b: Pick<BookingWithRelations, 'totalPrice' | 'subtotalPrice' 
   currency: b.currency,
 });
 
-export async function buildFolio(b: BookingWithRelations, opts: { canEdit?: boolean } = {}): Promise<FolioView> {
+export async function buildFolio(b: BookingWithRelations, opts: { canEdit?: boolean; canSaveCharges?: boolean } = {}): Promise<FolioView> {
   const summary = toBookingSummary(b);
   const lines = await paymentLines(b);
   const shared = lines.length > 1;
   // Payments and deposits sit on the reservation's lead line.
-  const [payments, allowances, override] = await Promise.all([
+  const [payments, allowances, override, savedCharges] = await Promise.all([
     prisma.payment.findMany({ where: { bookingId: { in: lines.map((l) => l.id) } }, orderBy: { createdAt: 'asc' } }),
     // Allowances are this room type's own (each line is priced on its own).
     prisma.folioAllowance.findMany({ where: { bookingId: b.id, voidedAt: null }, orderBy: { createdAt: 'asc' } }),
     prisma.checkoutOverride.findUnique({ where: { bookingId: b.id } }),
+    opts.canEdit ? savedChargesFor(b.propertyId) : Promise.resolve([]),
   ]);
   const recorders = [
     ...new Set([...payments.map((p) => p.recordedById), ...allowances.map((a) => a.createdById), override?.approvedById].filter((id): id is string => !!id)),
@@ -165,7 +174,15 @@ export async function buildFolio(b: BookingWithRelations, opts: { canEdit?: bool
     const left = owedAfterAllowances(b.totalPrice, allowances);
     edits.room = { type: 'room', label: model.roomLabel, defaultLabel: b.roomType.name, amount: minorToAmount(model.roomMinor, b.currency) };
     model.charges.forEach((c, i) => {
-      edits[`charge:${i}`] = { type: 'charge', index: i, name: c.name, amount: minorToAmount(c.minor, b.currency), date: c.date, extra: c.kind === MANUAL_CHARGE };
+      edits[`charge:${i}`] = {
+        type: 'charge',
+        index: i,
+        name: c.name,
+        amount: minorToAmount(c.minor, b.currency),
+        date: c.date,
+        extra: c.kind === MANUAL_CHARGE,
+        percent: c.kind === 'PERCENT' && c.rate !== null ? c.rate : null,
+      };
     });
     for (const a of allowances) {
       edits[`allowance:${a.id}`] = { type: 'allowance', id: a.id, amount: Number(a.amount), reason: a.reason, max: fromCents(left + toCents(Number(a.amount))) };
@@ -187,6 +204,7 @@ export async function buildFolio(b: BookingWithRelations, opts: { canEdit?: bool
   }
   return {
     bookingId: b.id,
+    propertyId: b.propertyId,
     code: summary.code,
     currency: b.currency,
     status: b.status,
@@ -202,6 +220,10 @@ export async function buildFolio(b: BookingWithRelations, opts: { canEdit?: bool
     canEdit,
     edits,
     checkoutOverride: override ? { amount: Number(override.amount), reason: override.reason, by: nameOf(override.approvedById), at: override.createdAt.toISOString() } : null,
+    nights: summary.nights,
+    rooms: b.rooms,
+    savedCharges,
+    canSaveCharges: canEdit && !!opts.canSaveCharges,
   };
 }
 
@@ -311,6 +333,7 @@ export async function editFolio(op: OpContext, bookingId: string, edit: FolioEdi
     case 'charge':
     case 'addCharge':
     case 'removeCharge':
+    case 'setTotal':
       change = await editStay(booking, edit);
       break;
     case 'allowance':
@@ -336,7 +359,7 @@ export async function editFolio(op: OpContext, bookingId: string, edit: FolioEdi
   return folioFor(op.actor, booking.id);
 }
 
-type StayEdit = Extract<FolioEdit, { target: 'room' | 'charge' | 'addCharge' | 'removeCharge' }>;
+type StayEdit = Extract<FolioEdit, { target: 'room' | 'charge' | 'addCharge' | 'removeCharge' | 'setTotal' }>;
 
 /** Room and charges: re-read under a lock, check the line is still what the editor saw, write the booking's prices back. */
 async function editStay(booking: BookingWithRelations, edit: StayEdit) {
@@ -368,6 +391,39 @@ async function editStay(booking: BookingWithRelations, edit: StayEdit) {
       }
       if (!parts.length) return null;
       summary = parts.join(', ');
+    } else if (edit.target === 'setTotal') {
+      const refs = [...new Set(edit.refs)];
+      if (!refs.length) throw badRequest('Pick the lines that should add up to the total.');
+      const parts = refs.map((ref) => {
+        const shown = edit.expected[ref];
+        if (ref === 'room') {
+          if (shown === undefined || !sameAmount(model.roomMinor, shown)) throw stale();
+          return { ref, minor: model.roomMinor, scales: true, name: 'room' };
+        }
+        const m = /^charge:(\d+)$/.exec(ref);
+        const c = m ? charges[Number(m[1])] : undefined;
+        if (!c || shown === undefined || !sameAmount(c.minor, shown)) throw stale();
+        return { ref, minor: c.minor, scales: c.kind === 'PERCENT' && c.rate !== null, name: `“${c.name}”` };
+      });
+      const total = amountMinor(edit.amount, currency);
+      const split = splitTotal(parts, total);
+      const was = parts.reduce((s, p) => s + p.minor, 0);
+      if (parts.every((p) => split.get(p.ref) === p.minor)) return null;
+      for (const p of parts) {
+        const next = split.get(p.ref)!;
+        if (p.ref === 'room') {
+          roomMinor = next;
+          continue;
+        }
+        const c = charges[Number(p.ref.slice('charge:'.length))];
+        // A percentage tax that moved with the room is still that percentage of it; anything else is now a fixed amount.
+        if (next !== c.minor && !(p.scales && refs.includes('room'))) c.rate = null;
+        c.minor = next;
+      }
+      // A line split down to nothing is gone (the folio never shows a zero charge).
+      for (let i = charges.length - 1; i >= 0; i--) if (charges[i].minor <= 0) charges.splice(i, 1);
+      const pieces = parts.map((p) => `${p.name} ${fmt(minorToAmount(split.get(p.ref)!, currency), currency)}`);
+      summary = `${parts.map((p) => p.name).join(' + ')} together ${fmt(minorToAmount(total, currency), currency)} (was ${fmt(minorToAmount(was, currency), currency)}): ${pieces.join(', ')}`;
     } else if (edit.target === 'addCharge') {
       const name = text(edit.name, 'what the charge is for', 80);
       const minor = amountMinor(edit.amount, currency);

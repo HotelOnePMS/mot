@@ -23,7 +23,11 @@ import { bookingInclude, floorNumber, toBookingSummary, type BookingWithRelation
 import { hotelLocale } from '../services/hotels';
 import { changeRates } from '../services/rates';
 import { createDeskReservation } from '../services/reservations';
-import { editFolio } from '../services/folio';
+import { addAllowance, editFolio } from '../services/folio';
+import { deleteSavedCharge, saveSavedCharge } from '../services/saved-charges';
+import { rememberAnswer } from '../skills/admin';
+import type { FolioEdit } from '@/lib/folio';
+import { isSavedChargeUnit } from '@/lib/saved-charges';
 import { roomBoard, setOutOfOrder, setRoomStatus } from '../services/rooms';
 import { listTeam } from '../services/team';
 import type { PlanStep } from './plan';
@@ -32,6 +36,15 @@ import { resolveBooking, resolveRoom, resolveRoomTypes, resolveTeamMember, type 
 import { guessActions, HOW_TO_TEXT } from './understand';
 import { logError } from '@/server/log';
 import { paymentLines } from '../payments/record';
+import { submitDisputeEvidenceAs } from '../payments/disputes';
+import { recordCashPayment, recordExternalPayment, refundCash } from '../payments/desk';
+import { refundPaymentAs } from '../payments/refunds';
+import { requestCardAuthorization } from '../payments/cardAuthorization';
+import { publicSiteUrl } from '../public-url';
+import { addDoNotRent, removeDoNotRent } from '../services/doNotRent';
+import { setGuestRequestStatus } from '../services/guestRequests';
+import { closeBusinessDay } from '../services/nightAudit';
+import { updateRoomType, type RoomTypeUpdate } from '../services/roomTypes';
 
 export type ToolCtx = ResolveCtx;
 
@@ -868,6 +881,28 @@ export interface StepResult {
   bridgeTask?: { id: string; system: string; instruction: string; kind: string; mode: string };
 }
 
+/** A plan step's summary as what was done: "Add Pet fee…" → "Added Pet fee…". */
+function done(summary: string): string {
+  const past: [RegExp, string][] = [
+    [/^Add /, 'Added '],
+    [/^Change /, 'Changed '],
+    [/^Remove /, 'Removed '],
+    [/^Make /, 'Made '],
+    [/^Take /, 'Took '],
+    [/^Remember /, 'Remembered '],
+    [/^Remember: /, 'Remembered: '],
+    [/^Forget /, 'Forgot '],
+    [/^Submit /, 'Submitted '],
+    [/^Refund /, 'Refunded '],
+    [/^Hand back /, 'Handed back '],
+    [/^Record /, 'Recorded '],
+    [/^Email /, 'Emailed '],
+    [/^Mark /, 'Marked '],
+  ];
+  for (const [re, to] of past) if (re.test(summary)) return summary.replace(re, to);
+  return summary;
+}
+
 export async function executeStep(ctx: OpContext, step: PlanStep): Promise<StepResult> {
   const a = step.args as Record<string, string | number | boolean | undefined>;
   try {
@@ -931,6 +966,131 @@ export async function executeStep(ctx: OpContext, step: PlanStep): Promise<StepR
           ...(a.reason ? { reason: String(a.reason) } : {}),
         });
         return { ok: true, line: step.summary.replace(/^Add /, 'Added '), bookingId: String(a.bookingId) };
+      }
+      case 'edit_folio': {
+        // Signed by the server when it was planned: the edit as the planner wrote it, checked again by editFolio.
+        await editFolio(ctx, String(a.bookingId), step.args.edit as FolioEdit);
+        return { ok: true, line: done(step.summary), bookingId: String(a.bookingId) };
+      }
+      case 'folio_allowance': {
+        await addAllowance(ctx, String(a.bookingId), { amount: Number(a.amount), reason: String(a.reason) });
+        return { ok: true, line: done(step.summary), bookingId: String(a.bookingId) };
+      }
+      case 'save_charge': {
+        await saveSavedCharge(ctx, String(a.propertyId), {
+          ...(a.id ? { id: String(a.id) } : {}),
+          name: String(a.name),
+          amount: Number(a.amount),
+          ...(isSavedChargeUnit(a.unit) ? { unit: a.unit } : {}),
+          ...('note' in step.args ? { note: a.note ? String(a.note) : null } : {}),
+        });
+        return { ok: true, line: done(step.summary) };
+      }
+      case 'remove_saved_charge': {
+        await deleteSavedCharge(ctx, String(a.propertyId), { id: String(a.id) });
+        return { ok: true, line: done(step.summary) };
+      }
+      case 'remember': {
+        await rememberAnswer(ctx, String(a.propertyId), { question: String(a.question), answer: String(a.answer), audience: a.audience === 'ALL' ? 'ALL' : 'STAFF' });
+        return { ok: true, line: done(step.summary) };
+      }
+      case 'submit_dispute_evidence': {
+        // Checked again here: the person confirming may manage disputes, and it still waits for evidence.
+        await submitDisputeEvidenceAs(ctx, String(a.disputeId));
+        return { ok: true, line: done(step.summary), bookingId: String(a.bookingId) };
+      }
+      case 'record_payment': {
+        const bookingId = String(a.bookingId);
+        const kind = a.kind === 'SECURITY_DEPOSIT' ? 'SECURITY_DEPOSIT' : 'PAYMENT';
+        if (a.method === 'CASH') {
+          await recordCashPayment(ctx, bookingId, { kind, amount: Number(a.amount), ...(a.tendered !== undefined ? { tendered: Number(a.tendered) } : {}), ...(a.note ? { note: String(a.note) } : {}) });
+        } else {
+          await recordExternalPayment(ctx, bookingId, {
+            kind,
+            method: a.method === 'EXTERNAL_CARD' ? 'EXTERNAL_CARD' : 'OTHER',
+            amount: Number(a.amount),
+            cardBrand: a.cardBrand ? String(a.cardBrand) : null,
+            cardLast4: a.cardLast4 ? String(a.cardLast4) : null,
+            reference: a.reference ? String(a.reference) : null,
+            note: a.note ? String(a.note) : null,
+          });
+        }
+        return { ok: true, line: done(step.summary), bookingId };
+      }
+      case 'refund_payment': {
+        // Checked again as the person confirming: their right to refund, and what is still left on the payment.
+        const bookingId = String(a.bookingId);
+        const amount = Number(a.amount);
+        const reason = String(a.reason);
+        if (a.via === 'card') {
+          const r = await refundPaymentAs(ctx, bookingId, { paymentId: String(a.paymentId), amount, reason, allowance: !!a.allowance });
+          return r.allowanceError ? { ok: false, line: `${done(step.summary)}. ${r.allowanceError}`, bookingId } : { ok: true, line: done(step.summary), bookingId };
+        }
+        await refundCash(ctx, String(a.paymentId), { amount, note: reason });
+        if (a.allowance) {
+          try {
+            await addAllowance(ctx, bookingId, { amount, reason });
+          } catch (e) {
+            return { ok: false, line: `${done(step.summary)}, but the stay’s price wasn’t lowered: ${e instanceof DomainError ? e.message : 'something went wrong'}`, bookingId };
+          }
+        }
+        return { ok: true, line: done(step.summary), bookingId };
+      }
+      case 'request_card_authorization': {
+        const bookingId = String(a.bookingId);
+        const origin = publicSiteUrl();
+        if (!origin) return { ok: false, line: `${step.summary}: this site has no public address set, so the form’s link can’t be made. Send it from the reservation instead.`, bookingId };
+        // The link carries a one-time token: it goes to the cardholder's inbox, never into the conversation.
+        const r = await requestCardAuthorization(
+          ctx,
+          bookingId,
+          {
+            cardholderName: String(a.cardholderName),
+            cardholderEmail: String(a.cardholderEmail),
+            guestNames: (step.args.guestNames as string[] | undefined) ?? [],
+            coversIncidentals: !!a.coversIncidentals,
+            incidentalsLimit: a.incidentalsLimit != null ? Number(a.incidentalsLimit) : null,
+            sendEmail: true,
+          },
+          origin
+        );
+        return r.emailed
+          ? { ok: true, line: done(step.summary), bookingId }
+          : { ok: false, line: `The card authorization for ${a.cardholderName} was set up, but the email didn’t go out. Send a new link from the reservation’s card authorization section.`, bookingId };
+      }
+      case 'add_do_not_rent': {
+        await addDoNotRent(ctx, {
+          propertyId: String(a.propertyId),
+          guestName: String(a.guestName),
+          email: a.email ? String(a.email) : null,
+          phone: a.phone ? String(a.phone) : null,
+          reason: String(a.reason),
+          bookingId: a.bookingId ? String(a.bookingId) : null,
+        });
+        return { ok: true, line: done(step.summary), ...(a.bookingId ? { bookingId: String(a.bookingId) } : {}) };
+      }
+      case 'remove_do_not_rent': {
+        await removeDoNotRent(ctx, String(a.id));
+        return { ok: true, line: done(step.summary) };
+      }
+      case 'mark_guest_request': {
+        await setGuestRequestStatus(ctx, String(a.requestId), a.status === 'DONE' ? 'DONE' : 'NEW');
+        return { ok: true, line: done(step.summary) };
+      }
+      case 'close_business_day': {
+        const r = await closeBusinessDay(ctx, String(a.propertyId), {
+          businessDate: String(a.businessDate),
+          noShowBookingIds: (step.args.noShowBookingIds as string[] | undefined) ?? [],
+          flagOccupiedRooms: !!a.flagOccupiedRooms,
+          notes: a.notes ? String(a.notes) : null,
+        });
+        const n = r.summary.noShowsMarked.length;
+        return { ok: true, line: `Closed ${formatDay(r.businessDate, 'weekday')}: ${n} no-show${n === 1 ? '' : 's'} marked, ${r.summary.numbers.occupancyPct}% occupancy` };
+      }
+      case 'update_room_type': {
+        const { roomTypeId, ...changes } = step.args as Record<string, unknown>;
+        await updateRoomType(ctx, String(roomTypeId), changes as RoomTypeUpdate);
+        return { ok: true, line: `Updated ${step.summary}` };
       }
       case 'create_reservation': {
         const b = await createDeskReservation(ctx, {

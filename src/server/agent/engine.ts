@@ -49,6 +49,8 @@ export interface AgentRunInput {
   recent?: string[];
   /** A summary of the agent's previous reply in this conversation (blocks.ts replySummary). */
   lastReply?: string;
+  /** The console page the person has open (its path), so "this guest" means the reservation on screen. */
+  page?: string;
 }
 
 /** What a run gathers while it works through intents: memory, planned changes, and whether anything needed a person. */
@@ -145,7 +147,7 @@ async function* runModel(
   audit: (summary: string, data: Record<string, unknown>) => Promise<unknown>,
   started: number
 ): AsyncGenerator<AgentEvent, boolean> {
-  const gen = runHarness({ ...ctx, message }, { recent: input.recent, lastReply: input.lastReply });
+  const gen = runHarness({ ...ctx, message }, { recent: input.recent, lastReply: input.lastReply, page: input.page });
   let shown = false;
   let result: Awaited<ReturnType<typeof gen.next>>;
   try {
@@ -463,6 +465,8 @@ export async function confirmPlan(actor: Actor, token: string): Promise<ConfirmR
   const ctx = { actor, source: 'agent' as const };
   const lines: string[] = [];
   const touched = new Set<string>();
+  // Reservations whose folio changed: shown as their folio rather than the reservation card.
+  const folios = new Set<string>();
   const bridged: NonNullable<Awaited<ReturnType<typeof executeStep>>['bridgeTask']>[] = [];
   let failed = false;
   for (const [i, step] of plan.steps.entries()) {
@@ -473,6 +477,7 @@ export async function confirmPlan(actor: Actor, token: string): Promise<ConfirmR
     const r = await executeStep(ctx, step);
     lines.push(`${r.ok ? '✓' : '✗'} ${r.line}`);
     if (r.bookingId) touched.add(r.bookingId);
+    if (r.bookingId && ['edit_folio', 'folio_allowance', 'add_folio_charge'].includes(step.tool)) folios.add(r.bookingId);
     if (r.bridgeTask) bridged.push(r.bridgeTask);
     if (!r.ok) {
       failed = true;
@@ -512,7 +517,8 @@ export async function confirmPlan(actor: Actor, token: string): Promise<ConfirmR
     const b = await prisma.booking.findUnique({ where: { id }, include: bookingInclude });
     if (!b) continue;
     const summary = toBookingSummary(b);
-    blocks.push({ type: 'booking', booking: summary, actions: bookingActions(summary, today) });
+    if (folios.has(id)) blocks.push({ type: 'folio', bookingId: summary.id, code: summary.code, guestName: summary.guest.name, currency: b.currency, total: Number(b.totalPrice), balance: summary.balance });
+    else blocks.push({ type: 'booking', booking: summary, actions: bookingActions(summary, today) });
     Object.assign(context, { lastBookingId: summary.id, lastBookingCode: summary.code, lastGuestName: summary.guest.name, lastRoomNumber: summary.room?.number });
   }
   const tools = new Set(plan.steps.map((s) => s.tool));
@@ -523,6 +529,8 @@ export async function confirmPlan(actor: Actor, token: string): Promise<ConfirmR
   if (tools.has('adjust_rates') || tools.has('set_rates')) next.push('forecast the next 3 weekends');
   if (tools.has('create_reservation')) next.push('who’s arriving today?');
   if (tools.has('set_out_of_order')) next.push('show out-of-order rooms');
+  if (tools.has('edit_folio') || tools.has('folio_allowance')) next.push('who still owes money?');
+  if (tools.has('save_charge')) next.push('what are our usual charges?');
   if (!next.length) next.push('brief me');
   blocks.push({ type: 'suggestions', items: [...new Set(next)].slice(0, 3) });
   if (suggested) blocks.push(...suggestionBlocks(actor, suggested));

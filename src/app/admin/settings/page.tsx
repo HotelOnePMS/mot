@@ -17,6 +17,7 @@ import { useConsole } from '@/components/console/ConsoleProvider';
 import { PaymentSettings } from '@/components/payments/PaymentSettings';
 import { DeskSettings } from '@/components/payments/DeskSettings';
 import { PricingSettings } from '@/components/setup/PricingSettings';
+import { SavedChargeSettings } from '@/components/setup/SavedChargeSettings';
 import { PermissionSettings } from '@/components/setup/PermissionSettings';
 
 const FRAME = 'mx-auto w-full max-w-7xl px-4 pb-12 pt-5 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8';
@@ -215,11 +216,11 @@ export default function SettingsPage() {
                 <div className="flex items-start gap-3 rounded-xl border p-4">
                   <Sparkles className="mt-0.5 size-4 shrink-0 text-agent" aria-hidden />
                   <div className="text-sm">
-                    <p className="font-medium">{ctx?.agent.llmEnabled ? 'Language model connected' : 'Built-in command understanding'}</p>
+                    <p className="font-medium">{ctx?.agent.llmEnabled ? 'Claude runs the agent' : 'Built-in command understanding'}</p>
                     <p className="mt-0.5 text-muted-foreground">
                       {ctx?.agent.llmEnabled
-                        ? 'Free-form requests the built-in parser can’t handle are interpreted by the connected model — it never touches data directly.'
-                        : 'Runs entirely on your server: fast, private and deterministic. Every answer comes from live reservations, rooms and rates.'}
+                        ? 'Ask in your own words, typos and pasted tables included. It reads live reservations, folios, rates and rooms through the same tools as these screens, builds any report you describe, and remembers your usual charges and notes. It never touches data directly.'
+                        : 'Runs on your server: fast, private and predictable, for common requests. Add an Anthropic key to understand anything you ask, build custom reports and edit folios in plain words.'}
                     </p>
                   </div>
                 </div>
@@ -251,6 +252,12 @@ export default function SettingsPage() {
           {can('charges.manage') && property && (
             <Section title="Prices and time" description={`${property.name}’s clock, currency, and the taxes and fees on every stay.`}>
               <PricingSettings key={property.id} propertyId={property.id} onSaved={() => void mutate('/api/admin/context')} />
+            </Section>
+          )}
+
+          {can('charges.manage') && property && (
+            <Section title="Usual charges" description={`Extras ${property.name} adds to folios often, like a pet fee or late check-out, with their usual price.`}>
+              <SavedChargeSettings key={property.id} propertyId={property.id} />
             </Section>
           )}
 
