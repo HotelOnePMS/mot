@@ -24,7 +24,9 @@ import type { BookingSummary } from '@/lib/dto';
 import { ApiError, api, fetcher } from '@/lib/fetcher';
 import { fmtRange, formatMoney } from '@/lib/format';
 import { idLast4Of, idWarnings } from '@/lib/guest-id';
+import { cameraSupported, crop, prepareForOcr, readBarcodes, readMrzText, releaseMrz } from '@/lib/id-camera';
 import { parseIdScan, type ScannedId } from '@/lib/id-scan';
+import { readMrzOcr } from '@/lib/mrz-ocr';
 import { RISK_FLAG_INFO } from '@/lib/risk';
 import { shrinkImage } from '@/lib/shrink-image';
 import { cn } from '@/lib/utils';
@@ -41,6 +43,7 @@ import { CollectPaymentDialog } from '@/components/payments/DeskPayments';
 import { SignaturePad } from '@/components/payments/SignaturePad';
 import { DoNotRentCallout } from './DoNotRent';
 import { FolioSummary, useFolio } from './FolioCard';
+import { IdCameraScanner } from './IdCameraScanner';
 import { RoomPicker } from './RoomPicker';
 
 /** What GET /check-in returns (server/services/checkin.ts), as far as this screen uses it. */
@@ -109,12 +112,8 @@ const addressLine = (a: Address | null) => (a ? [a.line1, [a.city, a.region, a.p
 
 const fmt = (n: number, c: string) => formatMoney(n, c, { cents: true });
 
-/** Browsers that can read a PDF417 barcode (the back of a North American licence) from a photo. */
-type Detector = { detect: (image: ImageBitmapSource) => Promise<{ rawValue: string }[]> };
-type DetectorCtor = { new (opts: { formats: string[] }): Detector; getSupportedFormats?: () => Promise<string[]> };
-function barcodeDetector(): DetectorCtor | null {
-  return typeof window !== 'undefined' && 'BarcodeDetector' in window ? (window as unknown as { BarcodeDetector: DetectorCtor }).BarcodeDetector : null;
-}
+/** What a scan read, in a note to staff. */
+const scanSource = (scan: ScannedId) => (scan.format === 'AAMVA' ? 'license barcode' : scan.idType === 'PASSPORT' ? 'passport lines' : 'lines on the card');
 
 function NativeSelect({ className, children, ...props }: React.SelectHTMLAttributes<HTMLSelectElement>) {
   const a11y = useFieldControl(props);
@@ -155,6 +154,10 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
   const [scanText, setScanText] = React.useState('');
   const [scanNote, setScanNote] = React.useState<{ tone: 'success' | 'warning'; text: string } | null>(null);
   const [photoBusy, setPhotoBusy] = React.useState(false);
+  const [scanPhotoBusy, setScanPhotoBusy] = React.useState(false);
+  const [camera, setCamera] = React.useState(false);
+  const [canUseCamera, setCanUseCamera] = React.useState(false);
+  React.useEffect(() => setCanUseCamera(cameraSupported()), []);
   const [guestAddress, setGuestAddress] = React.useState('');
   const [roomId, setRoomId] = React.useState<string | null>(null);
   const [option, setOption] = React.useState<RoomOption | null>(null);
@@ -183,6 +186,7 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
     setId(EMPTY_ID);
     setScanText('');
     setScanNote(null);
+    setCamera(false);
     setGuestAddress('');
     setRoomId(booking?.room?.id ?? null);
     setOption(null);
@@ -287,8 +291,8 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
     if (scan.address) setGuestAddress(addressLine(scan.address));
     setScanNote(
       scan.problems.length
-        ? { tone: 'warning', text: `Read the ${scan.format === 'AAMVA' ? 'licence barcode' : 'passport lines'}, but check it: ${scan.problems.join(' ')}` }
-        : { tone: 'success', text: `Read the ${scan.format === 'AAMVA' ? 'licence barcode' : 'passport lines'}. Check the details against the ID.` }
+        ? { tone: 'warning', text: `Read the ${scanSource(scan)}, but check it: ${scan.problems.join(' ')}` }
+        : { tone: 'success', text: `Read the ${scanSource(scan)}. Check the details against the ID.` }
     );
   }
 
@@ -308,20 +312,23 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
     }, 300);
   }
 
-  async function readBarcodePhoto(file: File) {
-    const Ctor = barcodeDetector();
-    if (!Ctor) return;
-    setPhotoBusy(true);
+  // A photo of the barcode or the MRZ, for a device with no live camera (or a guest who hands over a picture): barcode first, then the MRZ lines.
+  async function readIdPhoto(file: File) {
+    setScanPhotoBusy(true);
     try {
       const bitmap = await createImageBitmap(file);
-      const found = await new Ctor({ formats: ['pdf417', 'qr_code'] }).detect(bitmap);
-      const scan = found.map((f) => parseIdScan(f.rawValue)).find(Boolean);
-      if (scan) applyScan(scan);
-      else setScanNote({ tone: 'warning', text: 'Couldn’t read a barcode in that photo. Try again closer and in good light, or type the details.' });
+      const picture = crop(bitmap, 0, 0, bitmap.width, bitmap.height, 2400);
+      bitmap.close();
+      const barcode = (await readBarcodes(picture, { still: true })).map((t) => parseIdScan(t)).find(Boolean);
+      if (barcode) return applyScan(barcode);
+      const mrz = readMrzOcr(await readMrzText(prepareForOcr(picture)));
+      if (mrz) applyScan(mrz.scan);
+      else setScanNote({ tone: 'warning', text: 'Couldn’t read a barcode or passport lines in that photo. Try again closer, flat and in good light, or type the details.' });
     } catch {
       setScanNote({ tone: 'warning', text: 'Couldn’t read that photo. Type the details instead.' });
     } finally {
-      setPhotoBusy(false);
+      releaseMrz();
+      setScanPhotoBusy(false);
     }
   }
 
@@ -498,7 +505,7 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
                     <h3 id="ci-scan-title" className="flex items-center gap-2 text-sm font-semibold">
                       <ScanLine className="size-4 text-muted-foreground" aria-hidden /> Scan the ID
                     </h3>
-                    <Field label="Scanner input" htmlFor="ci-scan" hint="Click here, then scan the barcode on the back of a driver’s licence or the lines at the bottom of a passport with the desk scanner.">
+                    <Field label="Scanner input" htmlFor="ci-scan" hint="With a desk scanner: click here, then scan the barcode on the back of a driver’s license or the lines at the bottom of a passport. No scanner? Use the camera or a photo below.">
                       <Textarea
                         id="ci-scan"
                         value={scanText}
@@ -515,13 +522,26 @@ export function CheckInWizard({ booking, open, onOpenChange }: { booking: Bookin
                         Clear
                       </Button>
                     )}
-                    {barcodeDetector() && (
-                      <>
-                        <input ref={barcodeInput} type="file" accept="image/*" capture="environment" className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => e.target.files?.[0] && void readBarcodePhoto(e.target.files[0])} />
-                        <Button type="button" size="sm" variant="outline" loading={photoBusy} onClick={() => barcodeInput.current?.click()}>
-                          <Camera aria-hidden /> Photograph the barcode
+                    {camera ? (
+                      <IdCameraScanner
+                        onClose={() => setCamera(false)}
+                        onScan={(scan) => {
+                          setCamera(false);
+                          applyScan(scan);
+                        }}
+                      />
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {canUseCamera && (
+                          <Button type="button" size="sm" variant="outline" onClick={() => { setScanNote(null); setCamera(true); }}>
+                            <ScanLine aria-hidden /> Scan with the camera
+                          </Button>
+                        )}
+                        <input ref={barcodeInput} type="file" accept="image/*" className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void readIdPhoto(f); }} />
+                        <Button type="button" size="sm" variant="ghost" loading={scanPhotoBusy} onClick={() => barcodeInput.current?.click()}>
+                          <Camera aria-hidden /> Read a photo
                         </Button>
-                      </>
+                      </div>
                     )}
                     {scanNote && (
                       <Callout tone={scanNote.tone} role="status">

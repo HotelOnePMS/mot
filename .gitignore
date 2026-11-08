@@ -43,3 +43,6 @@ next-env.d.ts
 
 /src/generated/prisma
 .test-build/
+
+# camera ID scanner decoders, copied from node_modules on install (scripts/copy-id-scan-assets.mjs)
+/public/vendor/id-scan/
