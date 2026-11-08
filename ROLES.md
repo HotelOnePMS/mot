@@ -32,9 +32,19 @@ Front desk takes payments and deposits (`payments.collect`), sees the folio (`fo
 
 Refunding cards (`payments.refund`) and handing back cash paid toward the stay are owner/manager/admin too.
 
+## Editing the folio (`folio.edit`)
+
+The owner (and platform admins) can change **anything on a folio** from the reservation page: the room line's description and amount, each tax or fee, extra charges (add, change, remove, with a date), allowances (amount and reason), and payments recorded at the desk (cash, the hotel's own terminal, paid another way: amount, what was handed back, method, date, note, or remove it). Card payments through Stripe keep Stripe's amount and date (give money back with Refund); only their note changes. The room and its charges are written back to the booking (subtotal = room, total = room + charges), so balances, payment status, reports and check-out all follow. A change made against a line someone else changed meanwhile is refused (409). Cancelled and no-show stays can't be edited (reinstate first).
+
+Every change is in the activity log as `FOLIO_EDIT`, with who, what it was before and after, and the optional reason.
+
+## Owner-granted permissions (Settings → Permissions)
+
+Owners can give other roles, **at their own hotel only**, permissions that are owner-only by default. The list is fixed in code (`GRANTABLE_PERMISSIONS` in `src/server/authz.ts`, with the roles each can go to); today it is `folio.edit` for managers and the front desk. Grants are stored per hotel and role (`RolePermissionGrant`), checked with `canAtProperty` / `requirePropertyPermission`, and sent to the console per hotel (`StaffProperty.grantedPermissions`, so `can()` reflects them). Giving or taking one back is logged as `PERMISSION_GRANT` / `PERMISSION_REVOKE`. Only owners and platform admins (`permissions.manage`) can change them.
+
 ## Free-text PMS driving (`bridge.use`)
 
-`bridge.use` lets someone send free-text instructions to the hotel's own PMS through the connected browser/MCP session, which acts with the hotel's PMS login and bypasses HotelOne's per-action roles. It is **owner/manager/admin only** by default, and so is the *Your PMS* page (`/admin/connect`). The front-desk agent at PMS-bridge hotels will say it can't send work to the PMS. To give a specific front-desk role this access, add `'FRONT_DESK'` to `bridge.use` in `PERMISSIONS` and to `/admin/connect` in `CONSOLE_ACCESS` (owner-configurable roles arrive in the follow-up permissions PR).
+`bridge.use` lets someone send free-text instructions to the hotel's own PMS through the connected browser/MCP session, which acts with the hotel's PMS login and bypasses HotelOne's per-action roles. It is **owner/manager/admin only** by default, and so is the *Your PMS* page (`/admin/connect`). The front-desk agent at PMS-bridge hotels will say it can't send work to the PMS. To give a specific front-desk role this access, add `'FRONT_DESK'` to `bridge.use` in `PERMISSIONS` and to `/admin/connect` in `CONSOLE_ACCESS` (or, once it is in `GRANTABLE_PERMISSIONS`, an owner can allow it under Settings → Permissions).
 
 ## Reports (`reports.view`)
 

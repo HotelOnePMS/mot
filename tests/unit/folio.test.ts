@@ -1,7 +1,7 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { toMinorUnits } from '../../src/lib/currency';
-import { folioTotals, stayLines, type FolioLine } from '../../src/lib/folio';
+import { chargesJson, folioTotals, stayLines, stayModel, type FolioLine } from '../../src/lib/folio';
 
 const stay = { totalPrice: 479.4, subtotalPrice: 420, charges: null as unknown, roomTypeName: 'Deluxe King', nights: 3, rooms: 1, currency: 'USD' };
 
@@ -158,4 +158,25 @@ test('an allowance lowers the balance without changing the charges', () => {
 test('a balance in a currency without decimals stays whole', () => {
   const lines = [...stayLines({ ...stay, totalPrice: 30000, subtotalPrice: 27273, charges: null, currency: 'JPY' }), paymentLine('cash', 'PAYMENT', -10000)];
   assert.equal(folioTotals(lines, 'JPY').balance, 20000);
+});
+
+test('extra charges added on the folio are CHARGE lines with their day, counted in the charges', () => {
+  const input = { ...stay, totalPrice: 490, subtotalPrice: 450, roomLabel: 'King, late check-out', charges: [{ name: 'VAT', kind: 'PERCENT', rate: 5, amount: 22.5 }, { name: 'Parking', kind: 'MANUAL', amount: 17.5, date: '2026-11-07' }] };
+  const lines = stayLines(input);
+  assert.deepEqual(
+    lines.map((l) => [l.kind, l.label, l.amount, l.at, l.ref]),
+    [
+      ['ROOM', 'King, late check-out', 450, null, 'room'],
+      ['TAX', 'VAT', 22.5, null, 'charge:0'],
+      ['CHARGE', 'Parking', 17.5, '2026-11-07', 'charge:1'],
+    ]
+  );
+  assert.equal(folioTotals(lines, 'USD').charges, 490);
+  // Written back as it was read.
+  const model = stayModel(input);
+  assert.deepEqual(chargesJson(model.charges, 'USD'), input.charges);
+});
+
+test('a blank edited room label falls back to the room type', () => {
+  assert.equal(stayLines({ ...stay, roomLabel: '  ' })[0].label, 'Deluxe King');
 });
