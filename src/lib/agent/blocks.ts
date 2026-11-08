@@ -115,3 +115,24 @@ export type AgentEvent =
   | { type: 'context'; context: AgentContextState }
   | { type: 'done'; engine: 'deterministic' | 'llm'; ms: number }
   | { type: 'error'; message: string };
+
+/**
+ * A short plain-text account of what the agent showed in a reply (its text and the reservations on its cards), sent
+ * back with the next message so the model can follow up on "her", "that guest" or "patel".
+ */
+export function replySummary(blocks: AgentBlock[], max = 1500): string {
+  const lines: string[] = [];
+  const booking = (b: { guest: { name: string }; code: string; status: string; roomType: { name: string }; room: { number: string } | null; checkIn: string; checkOut: string }) =>
+    `${b.guest.name} (#${b.code}) · ${b.roomType.name}${b.room ? ` · room ${b.room.number}` : ' · no room'} · ${b.checkIn}→${b.checkOut} · ${b.status.toLowerCase()}`;
+  for (const b of blocks) {
+    if (b.type === 'text') lines.push(b.text);
+    else if (b.type === 'bookings') lines.push(`${b.title}:`, ...b.items.slice(0, 12).map((i) => `- ${booking(i)}`));
+    else if (b.type === 'booking') lines.push(`Reservation: ${booking(b.booking)}`);
+    else if (b.type === 'plan') lines.push(`Prepared for confirmation: ${b.plan.title}`);
+    else if (b.type === 'result') lines.push(`${b.title}: ${b.lines.join('; ')}`);
+    else if (b.type === 'error') lines.push(`Error: ${b.text}`);
+    else if (b.type === 'clarify') lines.push(`Asked: ${b.question}`);
+  }
+  const text = lines.join('\n');
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}

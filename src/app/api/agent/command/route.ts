@@ -12,7 +12,7 @@ export const maxDuration = 60;
 
 const schema = z.object({
   propertyId: z.string().min(1),
-  message: z.string().trim().min(1).max(600),
+  message: z.string().trim().min(1).max(6000),
   context: z
     .object({
       lastBookingId: z.string().optional(),
@@ -23,6 +23,8 @@ const schema = z.object({
     .default({}),
   /** Earlier messages in this conversation, oldest first — what "save that as a shortcut" saves. */
   recent: z.array(z.string().trim().min(1).max(600)).max(12).default([]),
+  /** What the agent showed in its previous reply (text and reservations), for follow-ups. */
+  lastReply: z.string().max(2000).optional(),
 });
 
 /**
@@ -40,7 +42,7 @@ export const POST = handleRoute(async (request: NextRequest) => {
     async start(controller) {
       const send = (e: AgentEvent) => controller.enqueue(encoder.encode(JSON.stringify(e) + '\n'));
       try {
-        for await (const event of runAgent({ actor, propertyId: body.propertyId, message: body.message, memory: body.context, recent: body.recent })) {
+        for await (const event of runAgent({ actor, propertyId: body.propertyId, message: body.message, memory: body.context, recent: body.recent, lastReply: body.lastReply })) {
           send(event);
         }
       } catch (e) {

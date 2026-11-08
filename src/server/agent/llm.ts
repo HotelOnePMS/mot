@@ -1,22 +1,18 @@
 /**
- * Language-model plug-in point for the agent.
+ * Language-model engine switch.
  *
- * The deterministic engine (nlu.ts + tools.ts) handles the front-desk
- * vocabulary today with no model and no API key. A model can be added here
- * later to cover open-ended phrasing. Whatever provider is chosen, it MUST:
- *   • call only the tools in TOOL_CATALOG (tools.ts) — never touch the DB;
+ * The model-driven harness lives in harness.ts: one Claude tool loop over
+ * the hotel's tools, used whenever an Anthropic key is configured (set
+ * AGENT_LLM_ENABLED=false to force the deterministic engine). It keeps the
+ * contract the deterministic engine follows:
+ *   • call only catalog tools — never touch the DB;
  *   • build UI blocks from tool results, never from model-written numbers;
- *   • route every write through planWrite() → signPlan() → confirmPlan(),
- *     so nothing changes without the person confirming.
- *
- * Returning null falls back to the deterministic engine.
+ *   • route every write through one signed plan → confirmPlan(), so
+ *     nothing changes without the person confirming.
+ * If the model call fails before anything is shown, the engine falls back to
+ * the deterministic parser (nlu.ts).
  */
-import type { AgentEvent } from '@/lib/agent/blocks';
-import type { ResolveCtx } from './resolve';
+import { llmConfigured } from './harness';
 
-/** Set to a real provider check (plus AGENT_LLM_ENABLED=true) once one is wired below. */
-export const LLM_AGENT_AVAILABLE = false;
-
-export async function runWithLLM(_ctx: ResolveCtx): Promise<AgentEvent[] | null> {
-  return null;
-}
+export const LLM_AGENT_AVAILABLE = llmConfigured();
+export { llmConfigured, runHarness } from './harness';

@@ -23,7 +23,7 @@ The repo deploys as-is: `vercel.json` runs `scripts/vercel-build.mjs`, which
    | `HOTEL_TIMEZONE` | e.g. `America/Los_Angeles` |
    | `ELEVENLABS_API_KEY` | voice front desk on ElevenLabs (preferred when set); then Console → Voice → *Check connection* creates the agents |
    | `OPENAI_API_KEY` | voice on GPT-Live (when ElevenLabs isn't set) and the PMS bridge operator |
-   | `ANTHROPIC_API_KEY` | the AI business advisor for owners and admins (Console → *AI advisor*); without it the page explains that it isn't configured (sensitive) |
+   | `ANTHROPIC_API_KEY` | the AI business advisor for owners and admins (Console → *AI advisor*) and the model-driven console agent (chat, voice, owner WhatsApp; `AGENT_LLM_ENABLED=false` keeps the phrase parser); without it the advisor page explains that it isn't configured and the console agent uses the phrase parser (sensitive) |
    | `STRIPE_*`, `RESEND_API_KEY`, `EMAIL_FROM`, `BLOB_READ_WRITE_TOKEN`, `GOOGLE_CLIENT_*` | optional — confirmation emails come from `HotelOne <bookings@hotelone.site>` unless `EMAIL_FROM` says otherwise, so verify that domain in Resend first |
 
    Leave `NEXTAUTH_URL` unset: auth trusts the request host, which keeps preview URLs working. `NEXT_PUBLIC_SITE_URL` and `HOTELONE_PUBLIC_URL` are covered under *Custom domain* below.

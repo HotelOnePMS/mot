@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
-import { requireStaff } from '@/server/authz';
+import { requireStaff, type Actor } from '@/server/authz';
 import { errorResponse, handleRoute, json } from '@/server/http';
 import { AdvisorError, runAdvisorTurn, type AdvisorEvent, type ChatTurn } from '@/lib/business-agent/agent';
 import { PortfolioData, resolvePortfolioScope, type PortfolioScope } from '@/lib/business-agent/portfolio-data';
@@ -14,8 +14,7 @@ export const maxDuration = 300;
 
 // Admins and owners only: the advisor reads revenue across the whole portfolio.
 async function loadScope(): Promise<PortfolioScope> {
-  const actor = await requireStaff('advisor.use');
-  return resolvePortfolioScope(actor);
+  return resolvePortfolioScope(await requireStaff('advisor.use'));
 }
 
 // GET portfolio overview for the advisor page header
@@ -53,8 +52,10 @@ function describeError(error: unknown): string {
 export async function POST(request: NextRequest) {
   let scope: PortfolioScope;
   let history: ChatTurn[];
+  let actor: Actor;
   try {
-    scope = await loadScope();
+    actor = await requireStaff('advisor.use');
+    scope = await resolvePortfolioScope(actor);
 
     const body = chatRequestSchema.safeParse(await request.json().catch(() => null));
     if (!body.success) {
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest) {
         const snapshot = await buildPortfolioSnapshot(data);
         const client = new Anthropic();
 
-        for await (const event of runAdvisorTurn({ client, data, snapshot, history, signal: request.signal })) {
+        for await (const event of runAdvisorTurn({ client, data, snapshot, history, signal: request.signal, actor })) {
           send(event);
         }
       } catch (error) {
