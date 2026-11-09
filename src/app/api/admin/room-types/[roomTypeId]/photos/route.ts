@@ -127,8 +127,9 @@ export async function DELETE(
     }
 
     // Find the photo
-    const photo = await prisma.roomTypePhoto.findUnique({
-      where: { id: photoId },
+    // Scoped to this room type: photo ids are public on booking pages.
+    const photo = await prisma.roomTypePhoto.findFirst({
+      where: { id: photoId, roomTypeId },
     });
 
     if (!photo) {
@@ -196,6 +197,12 @@ export async function PATCH(
         { error: 'Photo ID is required' },
         { status: 400 }
       );
+    }
+
+    // The photo must belong to this room type (photo ids are public on booking pages).
+    const owned = await prisma.roomTypePhoto.findFirst({ where: { id: String(photoId), roomTypeId }, select: { id: true } });
+    if (!owned) {
+      return NextResponse.json({ error: 'Photo not found' }, { status: 404 });
     }
 
     // First, unset all photos as main for this room type
