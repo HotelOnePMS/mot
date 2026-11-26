@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /**
- * Run by scripts/vercel-build.mjs after migrations (only with PROPERTY_DOMAIN_BASE set).
+ * Run after migrations (only with PROPERTY_DOMAIN_BASE set): by scripts/vercel-build.mjs on
+ * Vercel, and by .github/workflows/deploy-cloudflare.yml on Cloudflare, where step 2 is not
+ * needed because the zone's *.hotelone.site route covers every subdomain.
  *
  * 1. Gives every property without one a default subdomain from its name
  *    (properties created by the seed, or before the subdomain migration ran).

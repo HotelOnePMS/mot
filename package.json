@@ -7,6 +7,9 @@
     "build": "prisma generate && next build",
     "build:clean": "bash enhanced-cleanup.sh && prisma generate && next build",
     "start": "next start",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "lint": "next lint",
     "db:seed": "node prisma/seed.js",
     "db:setup": "prisma migrate dev && prisma db seed",
@@ -26,7 +29,9 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
     "@elevenlabs/client": "^1.27.0",
-    "@prisma/client": "^6.11.1",
+    "@opennextjs/cloudflare": "^1.20.19",
+    "@prisma/adapter-pg": "^6.19.3",
+    "@prisma/client": "^6.19.3",
     "@radix-ui/react-dialog": "^1.1.14",
     "@radix-ui/react-dropdown-menu": "^2.1.15",
     "@radix-ui/react-label": "^2.1.7",
@@ -51,8 +56,9 @@
     "next-themes": "^0.4.6",
     "oauth4webapi": "^3.8.3",
     "openai": "^7.32.0",
+    "pg": "^8.23.1",
     "postcss": "^8.5.6",
-    "prisma": "^6.11.1",
+    "prisma": "^6.19.3",
     "qrcode": "^1.5.4",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -79,6 +85,7 @@
     "eslint-config-next": "^15.5.29",
     "puppeteer": "^24.17.0",
     "typescript": "^5",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "wrangler": "^4.168.0"
   }
 }

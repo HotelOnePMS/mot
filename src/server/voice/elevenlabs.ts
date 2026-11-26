@@ -49,7 +49,7 @@ type Audience = 'guest' | 'staff';
  * the deployment environment, so switching keys provisions fresh agents and
  * Preview deployments sharing the database never rewrite Production's agents.
  */
-const ENVIRONMENT = process.env.ELEVENLABS_NAMESPACE || process.env.VERCEL_ENV || 'local';
+const ENVIRONMENT = process.env.ELEVENLABS_NAMESPACE || process.env.APP_ENV || process.env.VERCEL_ENV || 'local';
 function namespace(): string {
   const account = createHash('sha256').update(`${BASE}|${process.env.ELEVENLABS_API_KEY ?? ''}`).digest('hex').slice(0, 10);
   return `elevenlabs:${account}:${ENVIRONMENT}`;

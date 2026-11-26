@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 import { canAccessConsolePath, homeForRole, isStaffRole } from '@/lib/routes';
 import { getAppOrigin, getPropertyDomainBase, getPropertySubdomain, isAppHost, normalizeDomain } from '@/lib/domain-utils';
+import { cloudflareContext } from '@/lib/cloudflare';
 
 // Property domains (default subdomain or the property's own): hostname -> property it serves
 type PropertySite = { propertyId: string; customDomain: string | null };
@@ -19,7 +20,10 @@ async function resolvePropertySite(request: NextRequest, hostname: string): Prom
   // stays public even where Deployment Protection covers per-deployment URLs)
   const origin = process.env.INTERNAL_APP_URL || request.nextUrl.origin;
   try {
-    const response = await fetch(`${origin}/api/domains/resolve?host=${encodeURIComponent(hostname)}`, { cache: 'no-store' });
+    const url = `${origin}/api/domains/resolve?host=${encodeURIComponent(hostname)}`;
+    // On Cloudflare a Worker can't fetch its own zone's routes; the self service binding goes straight in.
+    const self = cloudflareContext()?.env.WORKER_SELF_REFERENCE;
+    const response = self ? await self.fetch(url, { cache: 'no-store' }) : await fetch(url, { cache: 'no-store' });
     if (!response.ok && response.status !== 404) return undefined;
 
     const { propertyId, customDomain } = await response.json();

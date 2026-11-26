@@ -60,7 +60,7 @@ export function getAppOrigin(): string | null {
 
 /** Whether a hostname is the main site itself rather than a property's domain. */
 export function isAppHost(hostname: string): boolean {
-  if (hostname.endsWith('.vercel.app')) return true;
+  if (hostname.endsWith('.vercel.app') || hostname.endsWith('.workers.dev')) return true;
 
   const hosts = [
     process.env.NEXT_PUBLIC_SITE_URL,
