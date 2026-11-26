@@ -7,7 +7,7 @@ if (dsn) {
   void import('@sentry/nextjs').then((Sentry) =>
     Sentry.init({
       dsn,
-      environment: process.env.NEXT_PUBLIC_VERCEL_ENV || process.env.NODE_ENV,
+      environment: process.env.NEXT_PUBLIC_APP_ENV || process.env.NEXT_PUBLIC_VERCEL_ENV || process.env.NODE_ENV,
       tracesSampleRate: Number(process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE || 0),
       sendDefaultPii: false,
     })

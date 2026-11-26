@@ -1,0 +1,68 @@
+/**
+ * Cloudflare Workers config for HotelOne (OpenNext). See CLOUDFLARE.md.
+ *
+ * The top level is the staging Worker on workers.dev; `env.production` is
+ * the live site and only gets routes on hotelone.site at cutover.
+ * Secrets (NEXTAUTH_SECRET, HOTELONE_VAULT_KEY, API keys, DATABASE_URL, …)
+ * are not here: they are set with `wrangler secret put` (or
+ * scripts/cloudflare-secrets.mjs) and never committed.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hotelone-staging",
+  "main": "worker.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+  "services": [{ "binding": "WORKER_SELF_REFERENCE", "service": "hotelone-staging" }],
+  "images": { "binding": "IMAGES" },
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "hotelone-media-staging" }],
+  // Hyperdrive in front of Neon (optional, recommended): create it with
+  //   npx wrangler hyperdrive create hotelone-db --connection-string="<Neon direct URL>"
+  // and uncomment with the id it prints. Without it the Worker connects to DATABASE_URL.
+  // "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<hyperdrive id>" }],
+  "limits": { "cpu_ms": 300000 },
+  "triggers": { "crons": ["0 10 * * *", "*/15 * * * *"] },
+  "observability": { "enabled": true },
+  "workers_dev": true,
+  "preview_urls": true,
+  "vars": {
+    "HOSTING": "cloudflare",
+    "APP_ENV": "staging",
+    "NEXT_PUBLIC_APP_ENV": "staging"
+  },
+
+  "env": {
+    "production": {
+      "name": "hotelone",
+      "services": [{ "binding": "WORKER_SELF_REFERENCE", "service": "hotelone" }],
+      "images": { "binding": "IMAGES" },
+      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "hotelone-media" }],
+      // "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<hyperdrive id>" }],
+      "limits": { "cpu_ms": 300000 },
+      "triggers": { "crons": ["0 10 * * *", "*/15 * * * *"] },
+      "observability": { "enabled": true },
+      "workers_dev": true,
+      "preview_urls": false,
+      "vars": {
+        "HOSTING": "cloudflare",
+        // Same value Vercel production had in VERCEL_ENV, so ElevenLabs agents keep their names.
+        "APP_ENV": "production",
+        "NEXT_PUBLIC_APP_ENV": "production",
+        "NEXT_PUBLIC_SITE_URL": "https://hotelone.site",
+        "HOTELONE_PUBLIC_URL": "https://hotelone.site",
+        "NEXTAUTH_URL": "https://hotelone.site",
+        "PROPERTY_DOMAIN_BASE": "hotelone.site",
+        "MEDIA_PUBLIC_URL": "https://media.hotelone.site",
+        "CUSTOM_DOMAIN_CNAME_TARGET": "hotels.hotelone.site"
+      }
+      // Routes are added at DNS cutover, once hotelone.site is on Cloudflare (CLOUDFLARE.md, step 7):
+      // "routes": [
+      //   { "pattern": "hotelone.site", "custom_domain": true },
+      //   { "pattern": "www.hotelone.site", "custom_domain": true },
+      //   { "pattern": "*.hotelone.site/*", "zone_name": "hotelone.site" },
+      //   { "pattern": "*/*", "zone_name": "hotelone.site" }
+      // ]
+    }
+  }
+}

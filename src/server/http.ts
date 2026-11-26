@@ -70,6 +70,8 @@ function trustedProxyHops(): number {
 
 /**
  * The caller's IP for rate limits.
+ * - On Cloudflare (HOSTING=cloudflare), CF-Connecting-IP: Cloudflare's edge
+ *   sets it on every request and overwrites any value the client sent.
  * - On Vercel (process.env.VERCEL), x-vercel-forwarded-for, then x-real-ip:
  *   Vercel's edge sets and overwrites both, so they can't be forged there.
  * - Anywhere else those two headers are whatever the client sent, so they're
@@ -79,6 +81,10 @@ function trustedProxyHops(): number {
  */
 export function clientIp(request: Request): string {
   const h = request.headers;
+  if (process.env.HOSTING === 'cloudflare') {
+    const cf = h.get('cf-connecting-ip')?.trim();
+    if (cf) return cf;
+  }
   if (process.env.VERCEL) {
     const vercel = h.get('x-vercel-forwarded-for')?.split(',')[0]?.trim();
     if (vercel) return vercel;

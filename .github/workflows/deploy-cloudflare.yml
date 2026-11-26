@@ -1,0 +1,75 @@
+name: Deploy to Cloudflare
+
+# Builds the app with OpenNext and deploys the Worker. See CLOUDFLARE.md.
+# Runs by hand (Actions → Deploy to Cloudflare → Run workflow), and on every
+# push to main once the repository variable CLOUDFLARE_AUTO_DEPLOY is "true"
+# (staging until cutover, then switch CLOUDFLARE_AUTO_DEPLOY_ENV to production).
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Which Worker to deploy
+        type: choice
+        options: [staging, production]
+        default: staging
+  push:
+    branches: [main]
+
+concurrency:
+  group: cloudflare-deploy-${{ github.event.inputs.environment || vars.CLOUDFLARE_AUTO_DEPLOY_ENV || 'staging' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || vars.CLOUDFLARE_AUTO_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TARGET: ${{ github.event.inputs.environment || vars.CLOUDFLARE_AUTO_DEPLOY_ENV || 'staging' }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Migrations run here, not inside the Worker build. Production uses
+      # DATABASE_URL; staging uses STAGING_DATABASE_URL (a Neon branch) and
+      # skips migrations when it isn't set.
+      - name: Apply database migrations
+        env:
+          PROD_DB: ${{ secrets.DATABASE_URL }}
+          STAGING_DB: ${{ secrets.STAGING_DATABASE_URL }}
+          SEED_DEMO: ${{ vars.SEED_DEMO }}
+          PROPERTY_DOMAIN_BASE: ${{ vars.PROPERTY_DOMAIN_BASE }}
+        run: |
+          if [ "$TARGET" = production ]; then DB="$PROD_DB"; else DB="$STAGING_DB"; fi
+          if [ -z "$DB" ]; then echo "No database secret for $TARGET, skipping migrations."; exit 0; fi
+          export DATABASE_URL="$DB" DIRECT_URL="$DB"
+          npx prisma migrate deploy
+          if [ "$SEED_DEMO" = true ]; then NODE_ENV=production node prisma/seed.js; fi
+          if [ -n "$PROPERTY_DOMAIN_BASE" ]; then node scripts/sync-property-subdomains.mjs; fi
+
+      # NEXT_PUBLIC_* values are baked into the browser bundle at build time,
+      # so they come from repository variables, not Worker vars.
+      - name: Build
+        env:
+          NEXT_PUBLIC_APP_ENV: ${{ env.TARGET }}
+          NEXT_PUBLIC_SITE_URL: ${{ env.TARGET == 'production' && 'https://hotelone.site' || vars.STAGING_SITE_URL }}
+          NEXT_PUBLIC_DEMO_MODE: ${{ vars.NEXT_PUBLIC_DEMO_MODE }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+          NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE: ${{ vars.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE }}
+          MEDIA_PUBLIC_URL: ${{ env.TARGET == 'production' && 'https://media.hotelone.site' || vars.STAGING_MEDIA_PUBLIC_URL }}
+        run: npx opennextjs-cloudflare build
+
+      - name: Deploy
+        run: |
+          if [ "$TARGET" = production ]; then ENV_FLAG="--env production"; else ENV_FLAG=""; fi
+          npx opennextjs-cloudflare deploy $ENV_FLAG -- --var GIT_SHA:${{ github.sha }}

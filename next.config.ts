@@ -1,5 +1,14 @@
 import type { NextConfig } from "next";
 
+// Photo host on Cloudflare R2 (see src/lib/cloudinary.ts), e.g. https://media.hotelone.site
+const mediaHost = (() => {
+  try {
+    return process.env.MEDIA_PUBLIC_URL ? new URL(process.env.MEDIA_PUBLIC_URL).hostname : null;
+  } catch {
+    return null;
+  }
+})();
+
 const nextConfig: NextConfig = {
   /* Build errors are NOT ignored — fix them instead of hiding them. */
   images: {
@@ -7,6 +16,8 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: 'images.unsplash.com' },
       { protocol: 'https', hostname: 'res.cloudinary.com' },
       { protocol: 'https', hostname: '**.public.blob.vercel-storage.com' },
+      { protocol: 'https', hostname: '**.r2.dev' },
+      ...(mediaHost ? [{ protocol: 'https' as const, hostname: mediaHost }] : []),
     ],
   },
   // Older portal URLs now live inside the unified staff console.

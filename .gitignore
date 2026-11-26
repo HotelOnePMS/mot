@@ -46,3 +46,9 @@ next-env.d.ts
 
 # camera ID scanner decoders, copied from node_modules on install (scripts/copy-id-scan-assets.mjs)
 /public/vendor/id-scan/
+
+# cloudflare (OpenNext + wrangler)
+/.open-next/
+/.wrangler/
+.dev.vars*
+!.dev.vars.example

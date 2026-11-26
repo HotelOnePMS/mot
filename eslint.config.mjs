@@ -10,6 +10,7 @@ const compat = new FlatCompat({
 });
 
 const eslintConfig = [
+  { ignores: [".open-next/**", ".wrangler/**", "worker.ts"] },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
     // Specific rules for build time

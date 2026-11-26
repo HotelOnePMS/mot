@@ -11,7 +11,8 @@ export function configuredPublicUrl(): string | null {
  * staff messages) and for callbacks (phone webhooks): HOTELONE_PUBLIC_URL
  * (or STAYOS_PUBLIC_URL), else NEXT_PUBLIC_SITE_URL, else the Vercel
  * production domain (or this preview's URL), else NEXTAUTH_URL. Null when
- * none is known.
+ * none is known. On Cloudflare there are no platform URLs, so one of the
+ * explicit ones must be set (wrangler.jsonc vars).
  */
 export function publicSiteUrl(): string | null {
   const vercel = process.env.VERCEL_ENV === 'production' ? process.env.VERCEL_PROJECT_PRODUCTION_URL : process.env.VERCEL_URL;

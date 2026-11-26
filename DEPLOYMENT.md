@@ -1,3 +1,5 @@
+> **Moving to Cloudflare:** see [CLOUDFLARE.md](CLOUDFLARE.md). Until cutover, production stays on Vercel as described below.
+
 # Deploying HotelOne on Vercel
 
 The repo deploys as-is: `vercel.json` runs `scripts/vercel-build.mjs`, which
